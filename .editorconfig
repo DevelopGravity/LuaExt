@@ -1,0 +1,47 @@
+# EditorConfig: https://editorconfig.org
+# Enforced in CI by lint.yml via editorconfig-checker.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Vendored upstream Lua keeps its own upstream formatting untouched.
+[third_party/**]
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
+# C/C++ sources and headers (extension code + vendored Lua): tabs, Zend/PHP-src style.
+[*.{c,h,cc,cpp,hpp}]
+indent_style = tab
+indent_size = 4
+
+# PHP: tabs, matching the C side and PHP-src's own coding standard.
+[*.php]
+indent_style = tab
+indent_size = 4
+
+# Shell scripts.
+[*.sh]
+indent_style = tab
+indent_size = 4
+
+# Makefiles require tab indentation for recipes.
+[Makefile*]
+indent_style = tab
+
+# YAML/JSON/config: 2-space indentation.
+[*.{yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+[.gitmodules]
+indent_style = tab

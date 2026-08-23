@@ -1,0 +1,80 @@
+name: Windows build
+
+# Reusable workflow: builds php_luaext.dll for every (php-version, arch, ts)
+# combination using php/php-windows-builder, since PIE cannot build this
+# extension from source on Windows (v1) — only pre-compiled DLLs, published
+# as GitHub Release assets, are ever installed there. x64 only for v1 (the
+# php-windows-builder pipeline has no arm64 support yet; WoA users get x64
+# under emulation).
+#
+# Called by:
+#   - ci.yml (PR validation): builds and runs tests, discards the DLLs.
+#   - release.yml: builds, then a caller step attaches the DLLs to the
+#     draft GitHub Release with php/php-windows-builder/release.
+#
+# Because this runs as a `workflow_call` job inside the caller's own
+# workflow run, `actions/checkout` steps below (inside the composite
+# php-windows-builder actions, and inside get-extension-matrix) resolve
+# `github.sha`/`github.ref` from the *caller's* triggering event — a PR
+# merge ref for ci.yml, or the release's target_commitish/sha for
+# release.yml. No explicit ref needs to be threaded through.
+
+on:
+  workflow_call:
+    inputs:
+      php-version-list:
+        description: 'Comma-separated PHP versions to build for (php/php-windows-builder/extension-matrix input).'
+        type: string
+        default: '8.5'
+      arch-list:
+        description: 'Comma-separated architectures to build for. x64 only for v1.'
+        type: string
+        default: 'x64'
+      ts-list:
+        description: 'Comma-separated thread-safety modes to build for.'
+        type: string
+        default: 'nts, ts'
+      run-tests:
+        description: 'Whether php/php-windows-builder/extension should run the .phpt suite after building.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  get-extension-matrix:
+    name: Compute Windows build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.extension-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Get the extension matrix
+        id: extension-matrix
+        uses: php/php-windows-builder/extension-matrix@29352c0ef9e8ce65264ea9e287881a6f7758a953 # v1 (1.9.0)
+        with:
+          php-version-list: ${{ inputs.php-version-list }}
+          arch-list: ${{ inputs.arch-list }}
+          ts-list: ${{ inputs.ts-list }}
+
+  build:
+    name: "Build DLL (${{ matrix.php-version }}, ${{ matrix.ts }}, ${{ matrix.arch }})"
+    needs: get-extension-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.get-extension-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the extension
+        uses: php/php-windows-builder/extension@29352c0ef9e8ce65264ea9e287881a6f7758a953 # v1 (1.9.0)
+        with:
+          php-version: ${{ matrix.php-version }}
+          arch: ${{ matrix.arch }}
+          ts: ${{ matrix.ts }}
+          run-tests: ${{ inputs.run-tests }}

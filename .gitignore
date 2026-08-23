@@ -1,0 +1,76 @@
+# phpize / autoconf build tree
+/autom4te.cache/
+/build/
+/configure
+/configure.ac.bak
+/config.h.in
+/config.h.in~
+/config.cache
+/config.log
+/config.nice
+/config.status
+/main/php_config.h
+/Makefile
+/Makefile.fragments
+/Makefile.objects
+/mkinstalldirs
+/install-sh
+/missing
+/ltmain.sh
+/libtool
+/run-tests.php
+/scripts/phpize
+
+# Compiled objects / build output
+*.lo
+*.o
+*.la
+*.a
+*.so
+*.dll
+*.dylib
+*.exp
+*.pdb
+*.gcno
+*.gcda
+.libs/
+modules/
+ide-stubs/
+
+# .phpt test run artifacts (run-tests.php leaves these next to the .phpt)
+tests/*.out
+tests/*.diff
+tests/*.log
+tests/*.exp
+tests/*.php
+tests/*.sh
+tests/*.mem
+!tests/**/*.phpt
+tmp-php.ini
+
+# Windows build output (php-windows-builder / local BuildPhpExtension runs)
+artifacts/
+
+# Tooling caches (gen-stubs.sh, check-lua-upstream.sh, etc.) — never committed
+.tools-cache/
+
+# gen_stub.php writes *_arginfo.h next to each stubs/*.stub.php it processes;
+# tools/gen-stubs.sh then copies those into src/, which is the committed
+# generated artifact per the repo layout. The stubs/ copies are intermediate.
+stubs/*_arginfo.h
+stubs/**/*_arginfo.h
+
+# Fuzzing corpora/crashes (kept out of the tree; fuzz.yml uploads them as
+# workflow artifacts instead)
+fuzz/corpus/
+fuzz/crashes/
+fuzz/*.o
+fuzz/*_fuzzer
+!fuzz/*.c
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

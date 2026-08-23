@@ -1,0 +1,64 @@
+---
+# clang-format style for luaext's own C sources (src/, fuzz/).
+# Deliberately close to the Zend Engine / php-src coding style: tabs for
+# indentation, Allman braces on functions, attached braces on control
+# statements, pointers bound to the declarator.
+#
+# Vendored Lua under third_party/ is EXCLUDED from formatting (see
+# .gitattributes / lint.yml) — it keeps upstream's own style byte-for-byte
+# so that patches/*.patch stay minimal and reviewable.
+Language: Cpp
+BasedOnStyle: LLVM
+
+UseTab: Always
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 100
+
+# Zend-style: function definitions open on their own line, control
+# statements (if/for/while/switch) keep the brace attached.
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeElse: false
+  BeforeWhile: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+
+PointerAlignment: Right
+ReferenceAlignment: Right
+DerivePointerAlignment: false
+
+IndentCaseLabels: false
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortBlocksOnASingleLine: Never
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Right
+AlignTrailingComments: true
+
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpaceBeforeAssignmentOperators: true
+
+IndentPPDirectives: None
+SortIncludes: Never
+ReflowComments: false
+
+Cpp11BracedListStyle: true
+BinPackArguments: true
+BinPackParameters: true

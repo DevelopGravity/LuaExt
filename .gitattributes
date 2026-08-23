@@ -1,0 +1,23 @@
+# Normalize line endings for everything text-ish; let git decide binaries.
+* text=auto eol=lf
+
+# Keep these out of PIE/Packagist source archives (git archive / GitHub
+# release tarballs / `composer create-project`-style downloads). None of
+# this is needed to build or run the extension from a tagged release.
+tests/         export-ignore
+fuzz/          export-ignore
+tools/         export-ignore
+.github/       export-ignore
+docs/          export-ignore
+
+.gitattributes    export-ignore
+.gitignore        export-ignore
+.editorconfig     export-ignore
+.clang-format     export-ignore
+
+# Vendored upstream Lua: never let git's autocrlf/whitespace normalization
+# touch it — it must stay byte-identical to the pinned upstream tarball so
+# tools/vendor-lua.sh --check can diff it exactly. Text diffing stays on
+# (unlike a blanket -diff) since patches/*.patch review depends on it.
+third_party/lua-5.5.1/src/** -text
+third_party/lua-5.5.1/patches/** -text

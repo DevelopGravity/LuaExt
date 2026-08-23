@@ -1,0 +1,21 @@
+# Valgrind suppressions for luaext's best-effort CI leg
+# (.github/workflows/ci.yml, job "best-effort" / "valgrind").
+#
+# Empty for now — there's no extension code to have known-safe findings
+# against yet. As real false positives are identified (e.g. from PHP's own
+# persistent allocations, OS-level one-time initialization, or intentional
+# leaks in Zend startup) add suppressions here with a comment explaining
+# WHY the leak is expected/safe, not just what it is. Never add a
+# suppression to make a genuine leak in luaext's own code disappear.
+#
+# Format reference: https://valgrind.org/docs/manual/manual-core.html#manual-core.suppress
+#
+# Example shape (commented out — nothing suppressed yet):
+#
+# {
+#   example_suppression_name
+#   Memcheck:Leak
+#   match-leak-kinds: reachable
+#   ...
+#   fun:example_function_name
+# }
