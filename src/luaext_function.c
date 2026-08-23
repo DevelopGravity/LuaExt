@@ -8,6 +8,8 @@
 
 #include "luaext_function.h"
 
+#include "luaext_convert.h"
+
 #include <Zend/zend_exceptions.h>
 
 static zend_object_handlers luaext_function_handlers;
@@ -33,11 +35,22 @@ static void luaext_function_free_object(zend_object *object)
 	luaext_function_obj *function = luaext_function_from_obj(object);
 
 	/*
-	 * TODO: release function->ref back to the owning sandbox's registry
-	 * freelist once the reference subsystem exists. Dropping the sandbox
-	 * reference is already correct: the handle must not keep an interpreter
-	 * alive on its own.
+	 * Return the registry slot before dropping the sandbox reference, because
+	 * releasing it needs the interpreter this handle is the last owner of.
+	 *
+	 * Skipped once the sandbox is closed: lua_close() has already destroyed the
+	 * registry, so there is no table left to write to and nothing to leak.
 	 */
+	if (function->ref >= 0 && Z_TYPE(function->sandbox_zv) == IS_OBJECT) {
+		luaext_sandbox *sandbox = Z_LUAEXT_SANDBOX_P(&function->sandbox_zv);
+
+		if (!sandbox->closed && sandbox->L != NULL) {
+			luaext_convert_ref_release(sandbox, sandbox->L, function->ref);
+		}
+	}
+
+	function->ref = -1;
+
 	zval_ptr_dtor(&function->sandbox_zv);
 	ZVAL_UNDEF(&function->sandbox_zv);
 

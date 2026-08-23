@@ -338,9 +338,6 @@ struct luaext_sandbox {
 	/* Keeps the FileSystem, ModuleResolver and output callback alive. */
 	zval config_zv;
 
-	/* The Sandbox object itself, for handles that must reference it. */
-	zval self_zv;
-
 	/*
 	 * Slots in the registry refs table. Released slots are reused: a
 	 * long-lived worker sandbox would otherwise walk next_ref to INT_MAX.
