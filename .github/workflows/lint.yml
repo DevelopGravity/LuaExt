@@ -45,11 +45,15 @@ jobs:
             exit 0
           fi
 
-          # Ubuntu runner images ship clang-format-16/17/18; pin the newest.
-          CLANG_FORMAT=clang-format-18
-          command -v "$CLANG_FORMAT" >/dev/null 2>&1 || CLANG_FORMAT=clang-format
-          "$CLANG_FORMAT" --version
-          "$CLANG_FORMAT" --dry-run --Werror "${files[@]}"
+          # Pinned exactly, via pip rather than the runner image. clang-format
+          # changes its output between releases -- 18.1.3 and 18.1.8 already
+          # disagree about brace spacing in a macro -- so "whatever the image
+          # ships" makes this gate fail on the runner's upgrade schedule rather
+          # than on anything a contributor did. Bump deliberately, and reformat
+          # in the same commit. Keep in step with Makefile.dev.
+          pip install --quiet 'clang-format==18.1.8'
+          clang-format --version
+          clang-format --dry-run --Werror "${files[@]}"
 
   # -------------------------------------------------------------------
   # editorconfig-checker: everything git-tracked, minus vendored Lua and
