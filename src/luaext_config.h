@@ -27,13 +27,23 @@ void luaext_config_startup(void);
  *     its own debug hook can displace the one the limit depends on;
  *   - a fixed seed without deterministic mode, because pinning the string
  *     hash seed forfeits hash-flooding protection and must be asked for;
- *   - the vfs capability with no FileSystem to back it.
+ *   - the vfs capability with no FileSystem to back it;
+ *   - a negative limit, because (size_t)-1 is the widest possible budget and a
+ *     typo must not quietly become one.
+ *
+ * Resolution is pure, so it is cheap to run more than once. SandboxConfig's own
+ * constructor runs it over its arguments before committing them, which is what
+ * makes a refusal land on the line that built the bad configuration; the
+ * sandbox runs it again to obtain the policy it will actually enforce.
  */
 bool luaext_config_resolve(zval *config, luaext_policy *policy);
 
 /*
- * Build a Capabilities object with the given flags, for untrusted()/trusted()
- * and for with(). Returns the new object in `out`.
+ * Build a Capabilities object with the given flags, for untrusted()/trusted().
+ * Returns the new object in `out`.
+ *
+ * Not used by with(), which copies the source object's fields directly: a
+ * bitset cannot carry osEnvAllowList, so a round trip through one would drop it.
  */
 void luaext_config_capabilities_create(uint32_t caps, zval *out);
 
@@ -41,9 +51,14 @@ void luaext_config_capabilities_create(uint32_t caps, zval *out);
  * Apply a with(...$overrides) argument list to an existing value object.
  *
  * `named` is the caller's named arguments; each key must name a declared
- * property of `ce` or a ConfigurationError is thrown naming the offender.
- * Positional arguments are refused: with() exists to change one field by
- * name, and a positional form would silently depend on declaration order.
+ * property of `ce` or a ConfigurationError is thrown naming the offender, and
+ * each value must satisfy that property's declared type. On failure `out` is
+ * set to null and an exception is pending.
+ *
+ * Positional arguments are refused as well — with() exists to change one field
+ * by name, and a positional form would silently depend on declaration order —
+ * but that check lives in the with() methods themselves, which are the only
+ * things that can see an argument's position.
  */
 bool luaext_config_with(zend_class_entry *ce, zend_object *source, HashTable *named, zval *out);
 
