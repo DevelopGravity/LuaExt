@@ -53,8 +53,16 @@ extern const char luaext_key_zvalmt;  /* metatable of zval-holding userdata */
 /* -------------------------------------------------------------------------
  * Interrupt reasons
  *
- * Stored in luaext_irq::reason. Written before the interrupted flag is set, so
- * a reader that observes the flag also observes a valid reason.
+ * Stored in luaext_irq::reason, which lives in the vendored hook header so the
+ * patched interpreter can read it without a PHP include.
+ *
+ * Ordering contract for whoever sets an interrupt (the watchdog, and
+ * Sandbox::interrupt()): store the reason with memory_order_relaxed FIRST,
+ * then store the flag with memory_order_release. LUAEXT_CHECK loads the flag
+ * relaxed on the hot path and executes an acquire fence before acting, so a
+ * reader that observes the flag also observes the matching reason. Storing
+ * them in the other order, or with relaxed ordering on the flag, lets a
+ * weakly-ordered CPU report the wrong reason.
  * ---------------------------------------------------------------------- */
 
 typedef enum {
