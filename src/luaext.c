@@ -8,6 +8,7 @@
 
 #include "php_luaext.h"
 
+#include "luaext_config.h"
 #include "luaext_function.h"
 #include "luaext_sandbox.h"
 #include "luaext_types.h"
@@ -234,6 +235,7 @@ static PHP_MINIT_FUNCTION(luaext)
 	luaext_register_exceptions();
 	luaext_sandbox_startup();
 	luaext_function_startup();
+	luaext_config_startup();
 
 	return SUCCESS;
 }
