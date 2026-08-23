@@ -113,7 +113,7 @@ typedef struct {
 	zval php_exception;
 } luaext_error_ud;
 
-#define LUAEXT_ERROR_MAGIC 0x4C58457Ru /* "LXEr" */
+#define LUAEXT_ERROR_MAGIC 0x4C584572u /* "LXEr" */
 
 /* -------------------------------------------------------------------------
  * Capabilities
