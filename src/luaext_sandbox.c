@@ -12,6 +12,7 @@
 #include "luaext_sandbox.h"
 
 #include "luaext_alloc.h"
+#include "luaext_config.h"
 #include "luaext_error.h"
 
 #include <lauxlib.h>
@@ -274,51 +275,6 @@ static unsigned int luaext_sandbox_seed(void)
 	return seed;
 }
 
-/*
- * The untrusted baseline, applied to every sandbox until SandboxConfig is
- * plumbed through.
- *
- * TODO: derive this from the SandboxConfig the caller passed.
- */
-static void luaext_sandbox_default_policy(luaext_policy *policy)
-{
-	memset(policy, 0, sizeof(*policy));
-
-	policy->caps = LUAEXT_CAPS_UNTRUSTED;
-
-	/*
-	 * The coroutine library is deliberately absent: it is only ever installed
-	 * through our own wrapper, which caps live coroutines and stops resume from
-	 * swallowing a fatal error. The debug library is absent because untrusted
-	 * code gets debug.traceback and nothing else.
-	 */
-	policy->open_libs =
-		LUAEXT_LIB_BASE | LUAEXT_LIB_TABLE | LUAEXT_LIB_STR | LUAEXT_LIB_MATH | LUAEXT_LIB_UTF8;
-
-	policy->limits.memory_bytes = 32 * 1024 * 1024;
-	policy->limits.cpu_ns = 1000000000ull;
-	policy->limits.wall_ns = 5000000000ull;
-	policy->limits.output_bytes = 1024 * 1024;
-	policy->limits.output_overflow = LUAEXT_OVERFLOW_FAIL;
-	policy->limits.max_live_coroutines = 64;
-	policy->limits.max_coroutine_depth = 16;
-	policy->limits.max_call_depth = 200;
-	policy->limits.max_modules = 64;
-	policy->limits.max_require_depth = 16;
-	policy->limits.max_string_length = 64 * 1024 * 1024;
-	policy->limits.max_source_bytes = 1024 * 1024;
-	policy->limits.max_conversion_depth = 64;
-
-	policy->vfs_quota.max_open_handles = 16;
-	policy->vfs_quota.max_file_bytes = 1024 * 1024;
-	policy->vfs_quota.max_total_bytes = 8 * 1024 * 1024;
-	policy->vfs_quota.max_files = 128;
-	policy->vfs_quota.max_operations = 10000;
-	policy->vfs_quota.max_path_length = 255;
-	policy->vfs_quota.max_path_depth = 16;
-	policy->vfs_quota.bill_wall_time = false;
-}
-
 void luaext_sandbox_close(luaext_sandbox *sandbox)
 {
 	lua_State *L;
@@ -410,12 +366,17 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	}
 
 	/*
-	 * TODO: read capabilities, limits, the filesystem, the module resolver and
-	 * the output settings off the config instead of ignoring it. The zval is
-	 * already retained because those objects must outlive the call.
+	 * A NULL config resolves to the untrusted baseline, so an unconfigured
+	 * sandbox is the safe one. Resolution can refuse — an unsatisfiable
+	 * combination throws here rather than producing a sandbox whose limits
+	 * quietly do not mean what the host asked for.
 	 */
-	luaext_sandbox_default_policy(&sandbox->policy);
+	if (!luaext_config_resolve(config, &sandbox->policy)) {
+		RETURN_THROWS();
+	}
 
+	/* Retained because the filesystem, resolver and output callback it holds
+	 * must outlive this call. */
 	if (config != NULL) {
 		ZVAL_COPY(&sandbox->config_zv, config);
 	}
@@ -713,7 +674,21 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, interrupt)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "stats");
+	const luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * A snapshot, not a live view: the counters keep moving, and a host holding
+	 * one of these expects the numbers it read to stay put.
+	 */
+	luaext_config_stats_create(sandbox, return_value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getCpuUsage)
