@@ -1,0 +1,251 @@
+<?php
+
+/**
+ * Exception hierarchy of the luaext extension.
+ *
+ * Two families matter to callers:
+ *
+ *  - RuntimeError and its subclasses are ordinary script-level failures. A Lua
+ *    script may catch them with pcall, and a host callback throws one to raise
+ *    an error the script is meant to handle.
+ *  - FatalError and its subclasses are not catchable inside Lua. The sandbox
+ *    re-raises them through its own pcall, xpcall and coroutine.resume, so a
+ *    script cannot swallow a limit breach or a host failure.
+ *
+ * The remaining classes report host misuse and never cross into Lua.
+ *
+ * @generate-class-entries
+ */
+
+declare(strict_types=1);
+
+namespace DevelopGravity\LuaExt\Exception;
+
+use DevelopGravity\LuaExt\Sandbox;
+
+/**
+ * Implemented by everything this extension throws, so a host can catch the lot
+ * with a single clause.
+ */
+interface LuaThrowable extends \Throwable
+{
+    /**
+     * The Lua call stack at the point of failure, innermost frame first.
+     *
+     * @return list<array{
+     *     source: string,
+     *     what: string,
+     *     currentLine: int,
+     *     name: ?string,
+     *     nameWhat: string,
+     *     lineDefined: int
+     * }>|null Null when the failure did not originate inside Lua.
+     */
+    public function getLuaTrace(): ?array;
+
+    /** The Lua call stack formatted the way the interpreter prints it. */
+    public function getLuaTraceAsString(): string;
+
+    /** Null once the sandbox has been closed or the failure preceded it. */
+    public function getSandbox(): ?Sandbox;
+
+    /** Chunk in which the failure occurred. */
+    public function getChunkName(): ?string;
+
+    /**
+     * Line within the Lua chunk.
+     *
+     * Distinct from getLine(), which reports the PHP file that entered the
+     * sandbox.
+     */
+    public function getLuaLine(): ?int;
+}
+
+/**
+ * Base class for failures originating inside a sandbox.
+ */
+abstract class LuaException extends \RuntimeException implements LuaThrowable
+{
+    /** @inheritDoc */
+    public function getLuaTrace(): ?array {}
+
+    /** @inheritDoc */
+    public function getLuaTraceAsString(): string {}
+
+    /** @inheritDoc */
+    public function getSandbox(): ?Sandbox {}
+
+    /** @inheritDoc */
+    public function getChunkName(): ?string {}
+
+    /** @inheritDoc */
+    public function getLuaLine(): ?int {}
+}
+
+/**
+ * Base class for host misuse of the API.
+ *
+ * These report a mistake in the calling PHP code rather than a failure of the
+ * script, are raised before or around execution, and never cross into Lua.
+ * Catch this to separate "I configured it wrong" from "the script failed".
+ */
+abstract class LuaLogicException extends \LogicException implements LuaThrowable
+{
+    /** @inheritDoc */
+    public function getLuaTrace(): ?array {}
+
+    /** @inheritDoc */
+    public function getLuaTraceAsString(): string {}
+
+    /** @inheritDoc */
+    public function getSandbox(): ?Sandbox {}
+
+    /** @inheritDoc */
+    public function getChunkName(): ?string {}
+
+    /** @inheritDoc */
+    public function getLuaLine(): ?int {}
+}
+
+/**
+ * A script-level error a Lua script may catch with pcall.
+ *
+ * Throw this from a host callback to raise an error the script is expected to
+ * handle; anything else you throw aborts the script.
+ */
+class RuntimeError extends LuaException
+{
+}
+
+/**
+ * A filesystem condition a script should handle, such as a missing file or an
+ * exhausted quota. Scripts see the usual `nil, message` result.
+ */
+class VfsError extends RuntimeError
+{
+}
+
+/**
+ * require() could not resolve a module through preloads, search paths or the
+ * module resolver.
+ */
+class ModuleNotFoundError extends RuntimeError
+{
+}
+
+/**
+ * A failure a script is not allowed to intercept.
+ *
+ * Re-raised through the sandbox's pcall, xpcall and coroutine.resume so no
+ * script can continue past its own limits or hide a host failure.
+ */
+abstract class FatalError extends LuaException
+{
+}
+
+/**
+ * A chunk did not compile.
+ */
+class SyntaxError extends FatalError
+{
+}
+
+/**
+ * The script reached its memory ceiling.
+ */
+class MemoryLimitError extends FatalError
+{
+}
+
+/**
+ * The script exhausted its CPU budget.
+ */
+class CpuLimitError extends FatalError
+{
+}
+
+/**
+ * The script exceeded its wall-clock deadline, including time spent waiting on
+ * host callbacks.
+ */
+class WallClockLimitError extends FatalError
+{
+}
+
+/**
+ * The script produced more output than its budget allowed and the configured
+ * overflow behaviour was OverflowBehavior::Fail.
+ */
+class OutputLimitError extends FatalError
+{
+}
+
+/**
+ * The script exceeded its live-coroutine or coroutine-nesting cap.
+ */
+class CoroutineLimitError extends FatalError
+{
+}
+
+/**
+ * The host called Sandbox::interrupt().
+ */
+class HostAbortError extends FatalError
+{
+}
+
+/**
+ * A Lua error handler failed while handling another error.
+ */
+class ErrorHandlerError extends FatalError
+{
+}
+
+/**
+ * The interpreter reported an unrecoverable internal fault. The sandbox is
+ * closed and must not be reused.
+ */
+class PanicError extends FatalError
+{
+}
+
+/**
+ * A value could not be converted between PHP and Lua: an unsupported type, a
+ * circular reference, colliding table keys, or excessive nesting.
+ */
+class ConversionError extends FatalError
+{
+}
+
+/**
+ * The configuration is contradictory or malformed.
+ *
+ * Raised at construction rather than on first use, so an unsatisfiable
+ * combination such as debug hooks alongside a CPU limit fails immediately.
+ */
+class ConfigurationError extends LuaLogicException
+{
+}
+
+/**
+ * An operation requires a capability the sandbox was not granted.
+ */
+class CapabilityError extends LuaLogicException
+{
+}
+
+/**
+ * The sandbox has been closed.
+ */
+class ClosedSandboxError extends LuaLogicException
+{
+}
+
+/**
+ * A sandbox was used from a thread other than the one that created it.
+ *
+ * Only Sandbox::interrupt() is safe to call across threads.
+ */
+class ThreadAffinityError extends LuaLogicException
+{
+}
