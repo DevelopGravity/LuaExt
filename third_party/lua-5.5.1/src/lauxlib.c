@@ -959,7 +959,21 @@ LUALIB_API const char *luaL_tolstring (lua_State *L, int idx, size_t *len) {
         int tt = luaL_getmetafield(L, idx, "__name");  /* try name */
         const char *kind = (tt == LUA_TSTRING) ? lua_tostring(L, -1) :
                                                  luaL_typename(L, idx);
+#if defined(LUAEXT_LUA_HOOKS) && LUAEXT_LUA_HOOKS
+        /* Upstream prints the raw heap address here. That is the primary
+        ** pointer-disclosure path in the whole library -- it backs tostring(),
+        ** print() and every "attempt to index a ..." error message -- and it
+        ** defeats ASLR for a script that can read its own output. Patch 0003
+        ** closed string.format("%p"); this closes the far more common caller.
+        ** Identity is deliberately not preserved: two distinct tables now
+        ** stringify alike. Restoring per-object identity, if ever needed, is a
+        ** job for the sandbox's own tostring replacement, which can map
+        ** objects to opaque ids without exposing the layout. */
+        (void)lua_topointer;
+        lua_pushfstring(L, "%s: (address hidden)", kind);
+#else
         lua_pushfstring(L, "%s: %p", kind, lua_topointer(L, idx));
+#endif
         if (tt != LUA_TNIL)
           lua_remove(L, -2);  /* remove '__name' */
         break;
