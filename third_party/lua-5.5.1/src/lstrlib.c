@@ -37,6 +37,17 @@
 #endif
 
 
+#if LUAEXT_LUA_HOOKS
+/*
+** How many bytes 'str_rep' may copy between two interrupt checks. The
+** copy loop is pure 'memcpy' traffic, so checking per iteration would
+** be measurable; 64KiB keeps the worst-case latency well under a
+** millisecond on any machine that can run PHP.
+*/
+#define LUAEXT_REP_CHUNK	((size_t)0x10000)
+#endif
+
+
 static int str_len (lua_State *L) {
   size_t l;
   luaL_checklstring(L, 1, &l);
@@ -150,11 +161,22 @@ static int str_rep (lua_State *L) {
     size_t totallen = (cast_sizet(n) * (len + lsep)) - lsep;
     luaL_Buffer b;
     char *p = luaL_buffinitsize(L, &b, totallen);
+#if LUAEXT_LUA_HOOKS
+    size_t left = LUAEXT_REP_CHUNK;  /* bytes to copy before next check */
+#endif
     while (n-- > 1) {  /* first n-1 copies (followed by separator) */
       memcpy(p, s, len * sizeof(char)); p += len;
       if (lsep > 0) {  /* empty 'memcpy' is not that cheap */
         memcpy(p, sep, lsep * sizeof(char)); p += lsep;
       }
+#if LUAEXT_LUA_HOOKS
+      if (len + lsep < left)  /* still inside the current chunk? */
+        left -= len + lsep;
+      else {  /* one full chunk copied; look for a pending interrupt */
+        left = LUAEXT_REP_CHUNK;
+        LUAEXT_CHECK(L);
+      }
+#endif
     }
     memcpy(p, s, len * sizeof(char));  /* last copy without separator */
     luaL_pushresultsize(&b, totallen);
@@ -508,11 +530,19 @@ static const char *matchbalance (MatchState *ms, const char *s,
 static const char *max_expand (MatchState *ms, const char *s,
                                  const char *p, const char *ep) {
   ptrdiff_t i = 0;  /* counts maximum expand for item */
-  while (singlematch(ms, s + i, p, ep))
+  while (singlematch(ms, s + i, p, ep)) {
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(ms->L);
+#endif
     i++;
+  }
   /* keeps trying to match with the maximum repetitions */
   while (i>=0) {
-    const char *res = match(ms, (s+i), ep+1);
+    const char *res;
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(ms->L);
+#endif
+    res = match(ms, (s+i), ep+1);
     if (res) return res;
     i--;  /* else didn't match; reduce 1 repetition to try again */
   }
@@ -523,7 +553,11 @@ static const char *max_expand (MatchState *ms, const char *s,
 static const char *min_expand (MatchState *ms, const char *s,
                                  const char *p, const char *ep) {
   for (;;) {
-    const char *res = match(ms, s, ep+1);
+    const char *res;
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(ms->L);
+#endif
+    res = match(ms, s, ep+1);
     if (res != NULL)
       return res;
     else if (singlematch(ms, s, p, ep))
@@ -573,6 +607,10 @@ static const char *match (MatchState *ms, const char *s, const char *p) {
   if (l_unlikely(ms->matchdepth-- == 0))
     luaL_error(ms->L, "pattern too complex");
   init: /* using goto to optimize tail recursion */
+#if LUAEXT_LUA_HOOKS
+  /* covers both entry and every 'goto init' tail-recursion round */
+  LUAEXT_CHECK(ms->L);
+#endif
   if (p != ms->p_end) {  /* end of pattern? */
     switch (*p) {
       case '(': {  /* start capture */
@@ -672,8 +710,20 @@ static const char *match (MatchState *ms, const char *s, const char *p) {
 
 
 
+#if LUAEXT_LUA_HOOKS
+/*
+** The plain-search branch of 'str_find_aux' lands here, and this loop is
+** O(l1 * l2) in the worst case (for example finding ("a"):rep(1e6) .. "b"
+** inside ("a"):rep(1e7)), so it needs the interrupt check as much as the
+** pattern matcher does. Taking 'L' costs an extra argument, hence the
+** two declarations.
+*/
+static const char *lmemfind (lua_State *L, const char *s1, size_t l1,
+                               const char *s2, size_t l2) {
+#else
 static const char *lmemfind (const char *s1, size_t l1,
                                const char *s2, size_t l2) {
+#endif
   if (l2 == 0) return s1;  /* empty strings are everywhere */
   else if (l2 > l1) return NULL;  /* avoids a negative 'l1' */
   else {
@@ -681,6 +731,9 @@ static const char *lmemfind (const char *s1, size_t l1,
     l2--;  /* 1st char will be checked by 'memchr' */
     l1 = l1-l2;  /* 's2' cannot be found after that */
     while (l1 > 0 && (init = (const char *)memchr(s1, *s2, l1)) != NULL) {
+#if LUAEXT_LUA_HOOKS
+      LUAEXT_CHECK(L);
+#endif
       init++;   /* 1st char is already checked */
       if (memcmp(init, s2+1, l2) == 0)
         return init-1;
@@ -791,7 +844,11 @@ static int str_find_aux (lua_State *L, int find) {
   /* explicit request or no special characters? */
   if (find && (lua_toboolean(L, 4) || nospecials(p, lp))) {
     /* do a plain search */
+#if LUAEXT_LUA_HOOKS
+    const char *s2 = lmemfind(L, s + init, ls - init, p, lp);
+#else
     const char *s2 = lmemfind(s + init, ls - init, p, lp);
+#endif
     if (s2) {
       lua_pushinteger(L, ct_diff2S(s2 - s) + 1);
       lua_pushinteger(L, cast_st2S(ct_diff2sz(s2 - s) + lp));
@@ -808,6 +865,9 @@ static int str_find_aux (lua_State *L, int find) {
     prepstate(&ms, L, s, ls, p, lp);
     do {
       const char *res;
+#if LUAEXT_LUA_HOOKS
+      LUAEXT_CHECK(L);
+#endif
       reprepstate(&ms);
       if ((res=match(&ms, s1, p)) != NULL) {
         if (find) {
@@ -850,6 +910,9 @@ static int gmatch_aux (lua_State *L) {
   gm->ms.L = L;
   for (src = gm->src; src <= gm->ms.src_end; src++) {
     const char *e;
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(L);
+#endif
     reprepstate(&gm->ms);
     if ((e = match(&gm->ms, src, gm->p)) != NULL && e != gm->lastmatch) {
       gm->src = gm->lastmatch = e;
@@ -971,6 +1034,9 @@ static int str_gsub (lua_State *L) {
   prepstate(&ms, L, src, srcl, p, lp);
   while (n < max_s) {
     const char *e;
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(L);
+#endif
     reprepstate(&ms);  /* (re)prepare state for new match */
     if ((e = match(&ms, src, p)) != NULL && e != lastmatch) {  /* match? */
       n++;
