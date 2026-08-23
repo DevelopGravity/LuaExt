@@ -2,7 +2,7 @@
 
 Practical recipes for building a host around `Sandbox`. Each recipe assumes you've read the [capabilities/limits overview in the README](../README.md#capabilities-and-limits) and, for anything touching the filesystem or module loading, [docs/lua-api.md](lua-api.md).
 
-> **Status: pre-1.0, no working build yet.** These recipes are written against the approved API design, not a tested build — treat method and namespace names as the intended target, cross-check against `developgravity/lua-extension-stubs` once it's published, and expect exact field/parameter names on `SandboxStats`, `FileStat`, and similar plain data objects to be confirmed rather than assumed from this document alone.
+> **Status: pre-1.0, no working build yet.** These recipes are written against the pinned public API in `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` — class, method, and parameter names below, including on `SandboxStats` and `FileStat`, are accurate and will not drift. What isn't yet true is the runtime: only the build skeleton exists, so nothing below has run against a working, tested binary.
 
 ## Exposing host services via `registerObject()`
 
@@ -112,6 +112,9 @@ final class InMemoryFileSystem implements FileSystem
     /** @var array<string, string> */
     private array $fileContentsByPath = [];
 
+    /** @var array<string, int> */
+    private array $fileModifiedAtByPath = [];
+
     public function exists(string $path): bool
     {
         return array_key_exists($path, $this->fileContentsByPath);
@@ -123,7 +126,10 @@ final class InMemoryFileSystem implements FileSystem
             return null;
         }
 
-        return new FileStat(sizeInBytes: strlen($this->fileContentsByPath[$path]));
+        return new FileStat(
+            size: strlen($this->fileContentsByPath[$path]),
+            mtime: $this->fileModifiedAtByPath[$path],
+        );
     }
 
     public function read(string $path): string
@@ -135,17 +141,19 @@ final class InMemoryFileSystem implements FileSystem
     public function write(string $path, string $contents): void
     {
         $this->fileContentsByPath[$path] = $contents;
+        $this->fileModifiedAtByPath[$path] = time();
     }
 
     public function delete(string $path): void
     {
-        unset($this->fileContentsByPath[$path]);
+        unset($this->fileContentsByPath[$path], $this->fileModifiedAtByPath[$path]);
     }
 
     public function rename(string $fromPath, string $toPath): void
     {
         $this->fileContentsByPath[$toPath] = $this->read($fromPath);
-        unset($this->fileContentsByPath[$fromPath]);
+        $this->fileModifiedAtByPath[$toPath] = $this->fileModifiedAtByPath[$fromPath];
+        unset($this->fileContentsByPath[$fromPath], $this->fileModifiedAtByPath[$fromPath]);
     }
 
     /** @return array<int, string> */
@@ -179,39 +187,53 @@ use Redis;
 
 final class RedisFileSystem implements FileSystem
 {
+    private readonly string $contentHashKey;
+
+    private readonly string $modifiedAtHashKey;
+
     public function __construct(
         private readonly Redis $redisConnection,
         private readonly string $tenantKeyPrefix,
     ) {
+        $this->contentHashKey = "{$this->tenantKeyPrefix}:content";
+        $this->modifiedAtHashKey = "{$this->tenantKeyPrefix}:mtime";
     }
 
     public function exists(string $path): bool
     {
-        return (bool) $this->redisConnection->hExists($this->tenantKeyPrefix, $path);
+        return (bool) $this->redisConnection->hExists($this->contentHashKey, $path);
     }
 
     public function stat(string $path): ?FileStat
     {
-        $contents = $this->redisConnection->hGet($this->tenantKeyPrefix, $path);
+        $contents = $this->redisConnection->hGet($this->contentHashKey, $path);
 
-        return $contents === false ? null : new FileStat(sizeInBytes: strlen($contents));
+        if ($contents === false) {
+            return null;
+        }
+
+        $modifiedAtUnixTimestamp = (int) $this->redisConnection->hGet($this->modifiedAtHashKey, $path);
+
+        return new FileStat(size: strlen($contents), mtime: $modifiedAtUnixTimestamp);
     }
 
     public function read(string $path): string
     {
-        $contents = $this->redisConnection->hGet($this->tenantKeyPrefix, $path);
+        $contents = $this->redisConnection->hGet($this->contentHashKey, $path);
 
         return $contents !== false ? $contents : throw new VfsError("No such file: {$path}");
     }
 
     public function write(string $path, string $contents): void
     {
-        $this->redisConnection->hSet($this->tenantKeyPrefix, $path, $contents);
+        $this->redisConnection->hSet($this->contentHashKey, $path, $contents);
+        $this->redisConnection->hSet($this->modifiedAtHashKey, $path, (string) time());
     }
 
     public function delete(string $path): void
     {
-        $this->redisConnection->hDel($this->tenantKeyPrefix, $path);
+        $this->redisConnection->hDel($this->contentHashKey, $path);
+        $this->redisConnection->hDel($this->modifiedAtHashKey, $path);
     }
 
     public function rename(string $fromPath, string $toPath): void
@@ -224,7 +246,7 @@ final class RedisFileSystem implements FileSystem
     public function list(string $directoryPath): array
     {
         $directoryPrefix = rtrim($directoryPath, '/') . '/';
-        $allPaths = array_keys($this->redisConnection->hGetAll($this->tenantKeyPrefix) ?: []);
+        $allPaths = array_keys($this->redisConnection->hGetAll($this->contentHashKey) ?: []);
 
         return array_values(array_filter(
             $allPaths,
@@ -234,7 +256,7 @@ final class RedisFileSystem implements FileSystem
 }
 ```
 
-`$tenantKeyPrefix` — one Redis hash per tenant — is what keeps one host's sandboxes from ever seeing another's files; construct a fresh `RedisFileSystem` per tenant rather than sharing one across sandboxes with different owners.
+`$tenantKeyPrefix` — a pair of Redis hashes per tenant, one for content and one for modification times — is what keeps one host's sandboxes from ever seeing another's files; construct a fresh `RedisFileSystem` per tenant rather than sharing one across sandboxes with different owners.
 
 For a backend that can stream ranges instead of buffering whole files, implement the optional `RangedFileSystem extends FileSystem` (`readRange`, `writeRange`, `truncate`) instead — worth doing once files can meaningfully exceed `VfsQuota::maxFileBytes` and buffering the whole blob per operation stops being cheap.
 
@@ -259,7 +281,7 @@ final readonly class VendoredLuaLibraryResolver implements ModuleResolver
     ) {
     }
 
-    public function resolve(string $moduleName, ?string $requestedByChunkName): ?ModuleSource
+    public function resolve(string $moduleName, string $requestedByChunkName): ?ModuleSource
     {
         $relativeSourcePath = str_replace('.', '/', $moduleName) . '.lua';
         $absoluteSourcePath = "{$this->vendorDirectoryPath}/{$relativeSourcePath}";
@@ -316,7 +338,8 @@ use DevelopGravity\LuaExt\SandboxConfig;
 
 $sandbox = new Sandbox(new SandboxConfig(outputMode: OutputMode::Buffer));
 
-$sandbox->eval('print("hello from lua")');
+// eval() is #[\NoDiscard]; cast to (void) when its multi-return array isn't needed.
+(void) $sandbox->eval('print("hello from lua")');
 
 $capturedOutput = $sandbox->takeOutput();
 ```
@@ -336,15 +359,17 @@ use DevelopGravity\LuaExt\SandboxConfig;
 
 $sandbox = new Sandbox(new SandboxConfig(
     outputMode: OutputMode::Callback,
-    outputCallback: static function (string $outputChunk): void {
+    outputCallback: static function (string $outputChunk, bool $isStandardError): void {
         // Flush immediately — e.g. onto an open SSE or WebSocket connection.
-        echo $outputChunk;
+        // $isStandardError distinguishes io.stderr writes from print()/io.stdout ones.
+        fwrite($isStandardError ? STDERR : STDOUT, $outputChunk);
         flush();
     },
     outputChunkBytes: 4096,
 ));
 
-$sandbox->call('run');
+// call() is #[\NoDiscard]; cast to (void) when its multi-return array isn't needed.
+(void) $sandbox->call('run');
 ```
 
 Callback chunks flush at whichever comes first: the `outputChunkBytes` threshold, a newline, the outermost `call()`/`eval()` returning, or `close()`. If `Limits::outputOverflow` is `OverflowBehavior::Fail` instead of `Truncate`, exceeding `outputBytes` raises an *uncatchable* `OutputLimitError` — a script can't wrap its own `print` calls in `pcall` to buy itself unlimited output.
@@ -373,11 +398,11 @@ final class MeteredLuaRunner
 
         $usageSnapshot = $sandbox->stats();
 
-        // SandboxStats is JsonSerializable, so it can be logged or billed
-        // without hand-mapping fields — the plan guarantees at least: memory
-        // usage/peak/limit, cpuSeconds, wallClockSeconds, outputBytes (+
-        // truncated flag), live/peak coroutine counts, modulesLoaded,
-        // vfsOperations/vfsBytes, gcCollections, and luaCallsIn/phpCallsOut.
+        // SandboxStats is JsonSerializable, so it can be logged or billed without
+        // hand-mapping fields: memoryBytes, peakMemoryBytes, memoryLimitBytes,
+        // cpuSeconds, wallClockSeconds, outputBytes, outputTruncated,
+        // liveCoroutines, peakCoroutineDepth, modulesLoaded, vfsOperations,
+        // vfsBytes, gcCollections, luaCallsIn, and phpCallsOut.
         $this->metricsClient->record('lua.sandbox.usage', $usageSnapshot);
 
         return $returnValues;
