@@ -74,7 +74,7 @@ Exposing an existing PHP object instead of a closure table uses `registerObject(
 
 declare(strict_types=1);
 
-use DevelopGravity\LuaExt\Attribute\LuaMethod;
+use DevelopGravity\LuaExt\LuaMethod;
 use DevelopGravity\LuaExt\Sandbox;
 
 final class TextService
