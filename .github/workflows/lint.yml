@@ -185,7 +185,8 @@ jobs:
             "${{ needs.editorconfig.result }}" \
             "${{ needs.shellcheck.result }}" \
             "${{ needs.actionlint.result }}" \
-            "${{ needs.drift-checks.result }}"; do
+            "${{ needs.drift-checks.result }}" \
+            "${{ needs.docs-api.result }}"; do
             if [ "$result" != "success" ]; then
               echo "::error::A required lint job did not succeed: $result" >&2
               exit 1
