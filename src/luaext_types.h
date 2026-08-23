@@ -154,7 +154,28 @@ typedef enum {
 	 LUAEXT_CAP_REQUIRE | LUAEXT_CAP_VFS | LUAEXT_CAP_VFS_WRITE | LUAEXT_CAP_DEBUG_INTROSPECT |    \
 	 LUAEXT_CAP_GC_CONTROL | LUAEXT_CAP_WARN)
 
-/* Which standard libraries to open; mirrors Lua's own LUA_*LIBK bits. */
+/*
+ * Which standard libraries to open wholesale; mirrors Lua's own LUA_*LIBK bits.
+ *
+ * A bit here means "install the upstream library exactly as shipped". That is
+ * NOT the same claim as "the matching capability is granted", and conflating
+ * the two is a privilege escalation:
+ *
+ *   LUAEXT_LIB_DEBUG must stay clear even when debugTraceback is granted.
+ *   debugTraceback is part of the untrusted baseline, so mapping it to this bit
+ *   would hand every untrusted sandbox the whole debug library — including
+ *   debug.sethook, which displaces the hook the CPU limit depends on, and
+ *   debug.setupvalue, which walks straight out of the sandbox. Only a filtered
+ *   table built by the library policy may satisfy that capability.
+ *
+ *   LUAEXT_LIB_CORO has the same trap. The coroutine library is only ever
+ *   installed through our own wrapper, which caps live coroutines and stops
+ *   resume from swallowing a fatal error; upstream luaopen_coroutine does
+ *   neither.
+ *
+ * Set a bit only when opening the upstream library unmodified is genuinely
+ * safe for the least-privileged sandbox that can reach it.
+ */
 typedef enum {
 	LUAEXT_LIB_BASE = 1u << 0,
 	LUAEXT_LIB_CORO = 1u << 1,
