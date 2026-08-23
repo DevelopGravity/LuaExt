@@ -56,6 +56,27 @@ jobs:
           php -v
           php -i | grep -i "thread safety"
 
+          # The extension decides threadSafe from the ZTS macro, which reaches it
+          # through the INSTALLED php_config.h -- not from what php-config claims.
+          # If a distribution ships ZTS binaries alongside non-ZTS headers those
+          # two disagree, the module is built with the wrong flavour, and the
+          # mismatch only surfaces later as a puzzling test failure. Fail here
+          # instead, where the cause is visible.
+          INCLUDE_DIR="$(php-config --include-dir)"
+          echo "include-dir: $INCLUDE_DIR"
+          if grep -qE '^[[:space:]]*#define[[:space:]]+ZTS[[:space:]]+1' "$INCLUDE_DIR/main/php_config.h"; then
+            HEADER_ZTS=1
+          else
+            HEADER_ZTS=0
+          fi
+          RUNTIME_ZTS="$(php -r 'echo PHP_ZTS;')"
+          echo "php_config.h ZTS=$HEADER_ZTS   runtime PHP_ZTS=$RUNTIME_ZTS   matrix=${{ matrix.ts }}"
+
+          if [ "$HEADER_ZTS" != "$RUNTIME_ZTS" ]; then
+            echo "::error::Header/runtime thread-safety mismatch: php_config.h says ZTS=$HEADER_ZTS but the runtime reports PHP_ZTS=$RUNTIME_ZTS. An extension built here would not match the PHP loading it." >&2
+            exit 1
+          fi
+
       - name: phpize
         run: phpize
 
