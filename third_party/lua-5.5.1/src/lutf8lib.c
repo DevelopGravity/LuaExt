@@ -33,6 +33,16 @@
 #define iscontp(p)	iscont(*(p))
 
 
+#if LUAEXT_LUA_HOOKS
+/*
+** How many loop rounds the scanning functions below may run between two
+** interrupt checks. Every round consumes at least one byte of the
+** subject string, so this bounds the check interval at ~4KiB.
+*/
+#define LUAEXT_UTF8_CHUNK	4096
+#endif
+
+
 /* from strlib */
 /* translate a relative string position: negative means back from end */
 static lua_Integer u_posrelat (lua_Integer pos, size_t len) {
@@ -94,12 +104,22 @@ static int utflen (lua_State *L) {
   lua_Integer posi = u_posrelat(luaL_optinteger(L, 2, 1), len);
   lua_Integer posj = u_posrelat(luaL_optinteger(L, 3, -1), len);
   int lax = lua_toboolean(L, 4);
+#if LUAEXT_LUA_HOOKS
+  unsigned left = LUAEXT_UTF8_CHUNK;  /* rounds before next check */
+#endif
   luaL_argcheck(L, 1 <= posi && --posi <= (lua_Integer)len, 2,
                    "initial position out of bounds");
   luaL_argcheck(L, --posj < (lua_Integer)len, 3,
                    "final position out of bounds");
   while (posi <= posj) {
-    const char *s1 = utf8_decode(s + posi, NULL, !lax);
+    const char *s1;
+#if LUAEXT_LUA_HOOKS
+    if (left-- == 0) {
+      left = LUAEXT_UTF8_CHUNK;
+      LUAEXT_CHECK(L);
+    }
+#endif
+    s1 = utf8_decode(s + posi, NULL, !lax);
     if (s1 == NULL) {  /* conversion error? */
       luaL_pushfail(L);  /* return fail ... */
       lua_pushinteger(L, posi + 1);  /* ... and current position */
@@ -125,6 +145,9 @@ static int codepoint (lua_State *L) {
   int lax = lua_toboolean(L, 4);
   int n;
   const char *se;
+#if LUAEXT_LUA_HOOKS
+  unsigned left = LUAEXT_UTF8_CHUNK;  /* rounds before next check */
+#endif
   luaL_argcheck(L, posi >= 1, 2, "out of bounds");
   luaL_argcheck(L, pose <= (lua_Integer)len, 3, "out of bounds");
   if (posi > pose) return 0;  /* empty interval; return no values */
@@ -136,6 +159,12 @@ static int codepoint (lua_State *L) {
   se = s + pose;  /* string end */
   for (s += posi - 1; s < se;) {
     l_uint32 code;
+#if LUAEXT_LUA_HOOKS
+    if (left-- == 0) {
+      left = LUAEXT_UTF8_CHUNK;
+      LUAEXT_CHECK(L);
+    }
+#endif
     s = utf8_decode(s, &code, !lax);
     if (s == NULL)
       return luaL_error(L, MSGInvalid);
@@ -183,12 +212,23 @@ static int byteoffset (lua_State *L) {
   const char *s = luaL_checklstring(L, 1, &len);
   lua_Integer n  = luaL_checkinteger(L, 2);
   lua_Integer posi = (n >= 0) ? 1 : cast_st2S(len) + 1;
+#if LUAEXT_LUA_HOOKS
+  unsigned left = LUAEXT_UTF8_CHUNK;  /* rounds before next check */
+#endif
   posi = u_posrelat(luaL_optinteger(L, 3, posi), len);
   luaL_argcheck(L, 1 <= posi && --posi <= (lua_Integer)len, 3,
                    "position out of bounds");
   if (n == 0) {
     /* find beginning of current byte sequence */
-    while (posi > 0 && iscontp(s + posi)) posi--;
+    while (posi > 0 && iscontp(s + posi)) {
+#if LUAEXT_LUA_HOOKS
+      if (left-- == 0) {
+        left = LUAEXT_UTF8_CHUNK;
+        LUAEXT_CHECK(L);
+      }
+#endif
+      posi--;
+    }
   }
   else {
     if (iscontp(s + posi))
@@ -196,6 +236,12 @@ static int byteoffset (lua_State *L) {
     if (n < 0) {
       while (n < 0 && posi > 0) {  /* move back */
         do {  /* find beginning of previous character */
+#if LUAEXT_LUA_HOOKS
+          if (left-- == 0) {
+            left = LUAEXT_UTF8_CHUNK;
+            LUAEXT_CHECK(L);
+          }
+#endif
           posi--;
         } while (posi > 0 && iscontp(s + posi));
         n++;
@@ -205,6 +251,12 @@ static int byteoffset (lua_State *L) {
       n--;  /* do not move for 1st character */
       while (n > 0 && posi < (lua_Integer)len) {
         do {  /* find beginning of next character */
+#if LUAEXT_LUA_HOOKS
+          if (left-- == 0) {
+            left = LUAEXT_UTF8_CHUNK;
+            LUAEXT_CHECK(L);
+          }
+#endif
           posi++;
         } while (iscontp(s + posi));  /* (cannot pass final '\0') */
         n--;
@@ -219,8 +271,15 @@ static int byteoffset (lua_State *L) {
   if ((s[posi] & 0x80) != 0) {  /* multi-byte character? */
     if (iscont(s[posi]))
       return luaL_error(L, "initial position is a continuation byte");
-    while (iscontp(s + posi + 1))
+    while (iscontp(s + posi + 1)) {
+#if LUAEXT_LUA_HOOKS
+      if (left-- == 0) {
+        left = LUAEXT_UTF8_CHUNK;
+        LUAEXT_CHECK(L);
+      }
+#endif
       posi++;  /* skip to last continuation byte */
+    }
   }
   /* else one-byte character: final position is the initial one */
   lua_pushinteger(L, posi + 1);  /* 'posi' now is the final position */

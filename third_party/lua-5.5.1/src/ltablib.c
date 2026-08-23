@@ -141,12 +141,22 @@ static int tmove (lua_State *L) {
                   "destination wrap around");
     if (t > e || t <= f || (tt != 1 && !lua_compare(L, 1, tt, LUA_OPEQ))) {
       for (i = 0; i < n; i++) {
+#if LUAEXT_LUA_HOOKS
+        /* 'n' is attacker controlled up to LUA_MAXINTEGER (for example
+           table.move(t, 1, 1 << 40, 1, {})), and neither 'lua_geti' nor
+           'lua_seti' has to run any Lua code, so the count hook may
+           never fire inside this loop. */
+        LUAEXT_CHECK(L);
+#endif
         lua_geti(L, 1, f + i);
         lua_seti(L, tt, t + i);
       }
     }
     else {
       for (i = n - 1; i >= 0; i--) {
+#if LUAEXT_LUA_HOOKS
+        LUAEXT_CHECK(L);
+#endif
         lua_geti(L, 1, f + i);
         lua_seti(L, tt, t + i);
       }
@@ -175,6 +185,12 @@ static int tconcat (lua_State *L) {
   last = luaL_optinteger(L, 4, last);
   luaL_buffinit(L, &b);
   for (; i < last; i++) {
+#if LUAEXT_LUA_HOOKS
+    /* 'last' comes straight from argument 4, so the range is attacker
+       controlled; a proxy object with '__index' keeps 'addfield' happy
+       for every index. */
+    LUAEXT_CHECK(L);
+#endif
     addfield(L, &b, i);
     luaL_addlstring(&b, sep, lsep);
   }
@@ -299,10 +315,17 @@ static IdxT partition (lua_State *L, IdxT lo, IdxT up) {
   IdxT j = up - 1;  /* will be decremented before first use */
   /* loop invariant: a[lo .. i] <= P <= a[j .. up] */
   for (;;) {
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(L);
+#endif
     /* next loop: repeat ++i while a[i] < P */
     while ((void)geti(L, 1, ++i), sort_comp(L, -1, -2)) {
       if (l_unlikely(i == up - 1))  /* a[up - 1] < P == a[up - 1] */
         luaL_error(L, "invalid order function for sorting");
+#if LUAEXT_LUA_HOOKS
+      /* a comparator-less sort of numbers never leaves C in here */
+      LUAEXT_CHECK(L);
+#endif
       lua_pop(L, 1);  /* remove a[i] */
     }
     /* after the loop, a[i] >= P and a[lo .. i - 1] < P  (a) */
@@ -310,6 +333,9 @@ static IdxT partition (lua_State *L, IdxT lo, IdxT up) {
     while ((void)geti(L, 1, --j), sort_comp(L, -3, -1)) {
       if (l_unlikely(j < i))  /* j <= i - 1 and a[j] > P, contradicts (a) */
         luaL_error(L, "invalid order function for sorting");
+#if LUAEXT_LUA_HOOKS
+      LUAEXT_CHECK(L);
+#endif
       lua_pop(L, 1);  /* remove a[j] */
     }
     /* after the loop, a[j] <= P and a[j + 1 .. up] >= P */
@@ -345,6 +371,9 @@ static void auxsort (lua_State *L, IdxT lo, IdxT up, unsigned rnd) {
   while (lo < up) {  /* loop for tail recursion */
     IdxT p;  /* Pivot index */
     IdxT n;  /* to be used later */
+#if LUAEXT_LUA_HOOKS
+    LUAEXT_CHECK(L);
+#endif
     /* sort elements 'lo', 'p', and 'up' */
     geti(L, 1, lo);
     geti(L, 1, up);
