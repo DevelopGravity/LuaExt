@@ -1,0 +1,105 @@
+name: Upstream Lua watch
+
+# Lua isn't published to any package registry we can subscribe to, so this
+# is the only automated way to notice when lua/lua cuts a new stable
+# release. Files a deduped, labelled tracking issue rather than failing a
+# build — vendoring a new Lua release is a deliberate, reviewed act
+# (tools/vendor-lua.sh), never something CI should do unattended.
+
+on:
+  schedule:
+    # Mondays at 09:00 UTC.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+env:
+  LUAEXT_UPSTREAM_LABEL: upstream-lua
+
+jobs:
+  check:
+    name: Check for a newer stable Lua release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare vendored Lua against lua/lua tags
+        id: check
+        run: tools/check-lua-upstream.sh --github-output
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Open or update a tracking issue
+        if: steps.check.outputs.outdated == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LUAEXT_CURRENT: ${{ steps.check.outputs.current }}
+          LUAEXT_LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Vendor Lua ${LUAEXT_LATEST} (currently on ${LUAEXT_CURRENT})"
+
+          # Dedupe: if an open issue already tracks this exact latest
+          # version, do nothing rather than filing a duplicate every week.
+          EXISTING="$(gh issue list \
+            --label "$LUAEXT_UPSTREAM_LABEL" \
+            --state open \
+            --search "in:title \"${LUAEXT_LATEST}\"" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "$EXISTING" ]; then
+            echo "Tracking issue #$EXISTING already open for Lua ${LUAEXT_LATEST}; nothing to do."
+            exit 0
+          fi
+
+          # `gh issue create --label` fails if the label doesn't already
+          # exist in the repo; create it idempotently first.
+          gh label create "$LUAEXT_UPSTREAM_LABEL" \
+            --color "8250df" \
+            --description "Tracks vendoring a new upstream Lua release" \
+            --force
+
+          BODY_FILE="$(mktemp)"
+          {
+            # shellcheck disable=SC2016 # single-quoted on purpose: backticks
+            # below are literal markdown, not command substitution.
+            printf 'lua/lua has tagged **%s**; this repo currently vendors **%s** in `third_party/lua-%s/`.\n\n' \
+              "$LUAEXT_LATEST" "$LUAEXT_CURRENT" "$LUAEXT_CURRENT"
+            # shellcheck disable=SC2016
+            printf 'Filed automatically by `.github/workflows/upstream-watch.yml` — closing this without vendoring the new release is fine if it'"'"'s not warranted yet (e.g. a point release with nothing security-relevant); the next weekly run won'"'"'t re-file for the same version once this issue exists, open or closed within its search window.\n\n'
+            printf 'Checklist for whoever picks this up:\n\n'
+            printf -- '- [ ] Read the [Lua changelog](https://www.lua.org/versions.html) / release notes for %s.\n' "$LUAEXT_LATEST"
+            # shellcheck disable=SC2016
+            printf -- '- [ ] Re-run `tools/vendor-lua.sh` against the new tarball and re-apply `third_party/lua-*/patches/`.\n'
+            # shellcheck disable=SC2016
+            printf -- '- [ ] Re-run `tools/gen-stubs.sh` if the C API surface changed in a way that touches arginfo.\n'
+            # shellcheck disable=SC2016
+            printf -- '- [ ] Update `third_party/lua-*/UPSTREAM_VERSION` and this repo'"'"'s version references.\n'
+            printf -- '- [ ] Full CI matrix green, including sanitizers, before merging.\n'
+          } >"$BODY_FILE"
+
+          gh issue create \
+            --title "$TITLE" \
+            --label "$LUAEXT_UPSTREAM_LABEL" \
+            --body-file "$BODY_FILE"
+
+  # Ensure a bad upstream-watch run (e.g. GitHub API hiccup) is visible as a
+  # failed workflow, not just a silently-skipped step.
+  ensure-success:
+    name: Upstream watch completed
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check result
+        run: |
+          if [ "${{ needs.check.result }}" != "success" ]; then
+            echo "::error::upstream-watch check job did not succeed (${{ needs.check.result }})." >&2
+            exit 1
+          fi
