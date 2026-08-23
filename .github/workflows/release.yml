@@ -1,0 +1,323 @@
+name: Release
+
+# --------------------------------------------------------------------------
+# DRAFT-FIRST RELEASE PROCESS — read this before cutting a release.
+#
+# Packagist/Composer resolve versions from git *tags*, not from the GitHub
+# "Releases" feature — completely independently of whether a Release object
+# exists, is a draft, or is published. Meanwhile GitHub does NOT create the
+# underlying git tag for a brand-new tag name until a release referencing it
+# is *published* (a draft release just stores the intended tag_name/
+# target_commitish; verified against GitHub's release-drafting behavior).
+# Those two facts together are what make the draft-first flow work:
+#
+#   1. Bump PHP_LUAEXT_VERSION in src/php_luaext.h on the commit/branch you
+#      intend to release (normally the tip of `main`), and merge that.
+#   2. Create a DRAFT release pointing at that commit, with tag_name set to
+#      the plain-semver version (NO "v" prefix, e.g. "1.2.0") and
+#      target_commitish set to that commit/branch:
+#        gh release create 1.2.0 --draft --target main \
+#          --title 1.2.0 --generate-notes
+#      Do NOT `git tag`/`git push` the version yourself — that would create
+#      the tag immediately and let Packagist see it before Windows DLLs
+#      exist, defeating the entire point of this workflow.
+#   3. This fires `release: created`, which runs everything below up to and
+#      including a smoke test, entirely against the draft's target commit —
+#      no git tag exists yet, so nothing under this file needs one.
+#   4. Once "attach-release-assets" and the smoke tests are green, a
+#      maintainer clicks "Publish release" (or `gh release edit --draft=false`).
+#      Publishing is the moment GitHub actually creates the git tag — which
+#      is also the moment Packagist's webhook (if configured on this repo)
+#      first sees the version. `post-publish-verify` then runs a real
+#      `pie install developgravity/lua-extension:<tag>` end-to-end.
+#
+# RC/pre-releases use the same flow with a `-rc.N` suffix (still no "v"
+# prefix) and the GitHub "set as a pre-release" checkbox.
+# --------------------------------------------------------------------------
+
+on:
+  release:
+    types: [created, released, prereleased]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Existing release tag to re-run the gate/build/smoke-test steps for
+          (does not publish anything). Dispatch this from the branch the
+          release's target_commitish points to — smoke-test-source's
+          dev-<branch>#<sha> constraint uses the dispatch context's own
+          branch/sha, not the tag object itself.
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  LUAEXT_PACKAGE_NAME: developgravity/lua-extension
+  LUAEXT_VERSION_HEADER: src/php_luaext.h
+  LUAEXT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  # -------------------------------------------------------------------
+  # Gate: tag must be plain semver (no "v" prefix, per project convention)
+  # and must match PHP_LUAEXT_VERSION baked into the extension header at
+  # the commit the release points to.
+  # -------------------------------------------------------------------
+  version-gate:
+    name: Version consistency gate
+    if: github.event.action == 'created' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # For a real release event this is the draft/release's target
+          # commitish. For a manual workflow_dispatch re-run there is no
+          # release event context, so fall back to the tag itself (assumed
+          # to already exist, per the workflow_dispatch input's description).
+          ref: ${{ github.event.release.target_commitish || inputs.tag || github.sha }}
+
+      - name: Validate tag shape and header version match
+        env:
+          LUAEXT_RELEASE_REF: ${{ github.event.release.target_commitish || inputs.tag || github.sha }}
+        run: |
+          set -euo pipefail
+          TAG="${LUAEXT_TAG}"
+
+          if [ -z "$TAG" ]; then
+            echo "::error::No tag resolved (LUAEXT_TAG empty)." >&2
+            exit 1
+          fi
+
+          if [[ "$TAG" == v* ]]; then
+            echo "::error::Tag '$TAG' has a 'v' prefix. This project's tags are plain semver (e.g. 1.2.0, not v1.2.0)." >&2
+            exit 1
+          fi
+
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not plain semver (expected X.Y.Z or X.Y.Z-rc.N)." >&2
+            exit 1
+          fi
+
+          if [ ! -f "$LUAEXT_VERSION_HEADER" ]; then
+            echo "::error::$LUAEXT_VERSION_HEADER not found at $LUAEXT_RELEASE_REF." >&2
+            exit 1
+          fi
+
+          # TODO(verify): confirm the exact macro name/quoting once
+          # src/php_luaext.h lands (Wave 1, agent ②). Standard PECL/PIE
+          # convention is `#define PHP_LUAEXT_VERSION "X.Y.Z"`.
+          HEADER_VERSION="$(grep -oP '(?<=#define PHP_LUAEXT_VERSION ")[^"]+' "$LUAEXT_VERSION_HEADER" || true)"
+
+          if [ -z "$HEADER_VERSION" ]; then
+            echo "::error::Could not find PHP_LUAEXT_VERSION in $LUAEXT_VERSION_HEADER." >&2
+            exit 1
+          fi
+
+          if [ "$HEADER_VERSION" != "$TAG" ]; then
+            echo "::error::PHP_LUAEXT_VERSION ($HEADER_VERSION) != release tag ($TAG)." >&2
+            exit 1
+          fi
+
+          echo "Version gate OK: $TAG"
+
+  # -------------------------------------------------------------------
+  # Build Windows DLLs from the release's target commit (the tag itself
+  # need not exist yet — see header comment).
+  # -------------------------------------------------------------------
+  windows-build:
+    name: Build Windows DLLs
+    needs: version-gate
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      php-version-list: '8.5'
+      arch-list: 'x64'
+      ts-list: 'nts, ts'
+      run-tests: true
+
+  # -------------------------------------------------------------------
+  # Attach the built DLL zips to the (draft) release.
+  # -------------------------------------------------------------------
+  attach-release-assets:
+    name: Attach DLLs to release
+    needs: windows-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Upload artifacts to the release
+        uses: php/php-windows-builder/release@29352c0ef9e8ce65264ea9e287881a6f7758a953 # v1 (1.9.0)
+        with:
+          release: ${{ env.LUAEXT_TAG }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # draft: false (default) — the release already exists as our draft;
+          # TODO(verify): confirm this action attaches to an *existing* draft
+          # release by tag_name without needing `draft: true`, since the
+          # README only documents `draft` as "create a draft release if the
+          # release does not exist" and doesn't say what happens when it does.
+
+  # -------------------------------------------------------------------
+  # Pre-publish smoke test, part 1: source build via PIE on Unix.
+  # The tag doesn't exist yet, so we point PIE at the exact commit through
+  # a VCS repository + `dev-<branch>#<sha>` constraint instead of at a
+  # version string.
+  # -------------------------------------------------------------------
+  smoke-test-source:
+    name: "pie install smoke test (source) / ${{ matrix.os }}"
+    needs: attach-release-assets
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Setup PHP 8.5
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          tools: none
+          extensions: none
+
+      - name: Install PIE
+        run: |
+          curl -fL --output /tmp/pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
+          gh attestation verify --owner php /tmp/pie.phar
+          chmod +x /tmp/pie.phar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: pie install from this commit via a VCS repository
+        env:
+          LUAEXT_TARGET_REF: ${{ github.event.release.target_commitish || github.ref_name }}
+          LUAEXT_TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
+          php /tmp/pie.phar install "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" --no-interaction
+
+      - name: Verify extension loaded
+        run: php -m | grep -qi luaext
+
+  # -------------------------------------------------------------------
+  # Pre-publish smoke test, part 2: the built DLLs actually load on
+  # Windows. A real `pie install <tag>` isn't possible here yet — PIE's
+  # Windows path resolves pre-packaged binaries against a real tagged
+  # release, and the git tag doesn't exist until publish (see header
+  # comment) — so this validates the artifact directly instead.
+  # -------------------------------------------------------------------
+  smoke-test-windows-dll:
+    name: DLL load smoke test / windows-latest
+    needs: attach-release-assets
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ts: [nts, ts]
+    steps:
+      - name: Setup PHP 8.5 (${{ matrix.ts }})
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          tools: none
+          extensions: none
+        env:
+          phpts: ${{ matrix.ts }}
+
+      # TODO(verify): confirm the exact asset filename convention produced
+      # by php/php-windows-builder/release once a real release has been run
+      # — the plan's `php_luaext-{tag}-{php}-{ts|nts}-{vs}-x64.zip` shape is
+      # unverified against the action's actual output. This step downloads
+      # every zip asset and filters by substring rather than assuming one
+      # exact name.
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$env:LUAEXT_TAG" `
+            --repo "${{ github.repository }}" `
+            --pattern "*.zip" `
+            --dir dll-assets
+
+      - name: Extract matching (${{ matrix.ts }}, x64) zip
+        shell: pwsh
+        run: |
+          $ts = "${{ matrix.ts }}"
+          $zips = Get-ChildItem dll-assets -Filter *.zip | Where-Object {
+            $_.Name -match "x64" -and (
+              ($ts -eq "ts"  -and $_.Name -match "(?<!n)ts") -or
+              ($ts -eq "nts" -and $_.Name -match "nts")
+            )
+          }
+          if ($zips.Count -eq 0) {
+            Write-Error "No release asset matched ts=$ts, arch=x64. Assets found: $(Get-ChildItem dll-assets -Filter *.zip | Select-Object -ExpandProperty Name)"
+            exit 1
+          }
+          Expand-Archive -Path $zips[0].FullName -DestinationPath dll-extracted -Force
+          $dll = Get-ChildItem dll-extracted -Recurse -Filter php_luaext.dll | Select-Object -First 1
+          if (-not $dll) {
+            Write-Error "php_luaext.dll not found in $($zips[0].Name)"
+            exit 1
+          }
+          echo "LUAEXT_DLL_PATH=$($dll.FullName)" >> $env:GITHUB_ENV
+
+      - name: Load the DLL and verify the extension registers
+        shell: pwsh
+        run: |
+          php -d "extension=$env:LUAEXT_DLL_PATH" -m | Select-String -Pattern luaext -Quiet
+          if (-not $?) {
+            Write-Error "luaext did not appear in 'php -m' with the built DLL loaded."
+            exit 1
+          }
+
+  # -------------------------------------------------------------------
+  # Post-publish confirmation: now that the maintainer has published the
+  # release, the git tag genuinely exists. Run the real, literal
+  # `pie install developgravity/lua-extension:<tag>` this whole pipeline
+  # exists to protect, on all three OSes. We still add the VCS repository
+  # so this doesn't depend on Packagist's webhook having already fired —
+  # Composer's VCS driver sees a pushed tag immediately.
+  # -------------------------------------------------------------------
+  post-publish-verify:
+    name: "pie install <tag> / ${{ matrix.os }}"
+    if: github.event.action == 'released' || github.event.action == 'prereleased'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Setup PHP 8.5
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          tools: none
+          extensions: none
+
+      - name: Install PIE
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fL --output pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
+          else
+            curl -fL --output /tmp/pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
+            gh attestation verify --owner php /tmp/pie.phar
+            chmod +x /tmp/pie.phar
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: pie install (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
+          php /tmp/pie.phar install "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
+          php -m | grep -qi luaext
+
+      - name: pie install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          php pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
+          php pie.phar install "$env:LUAEXT_PACKAGE_NAME`:$env:LUAEXT_TAG" --no-interaction
+          php -m | Select-String -Pattern luaext -Quiet
