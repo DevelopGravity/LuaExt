@@ -1,0 +1,98 @@
+name: Fuzz
+
+# Short libFuzzer regression pass on PRs touching src/ or third_party/ (the
+# code the fuzz targets actually exercise). fuzz/ itself (fuzz_vfs_path.c,
+# fuzz_conversion.c, fuzz_run_lua.c + a standalone Makefile) is a Phase-8
+# deliverable of a different workstream — this workflow is written now, per
+# the project plan, but must skip cleanly rather than fail until fuzz/
+# lands. A 24h fuzzing pass is a separate, later concern (pre-1.0, not this
+# file).
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'third_party/**'
+      - 'fuzz/**'
+  workflow_dispatch:
+    inputs:
+      seconds_per_target:
+        description: 'Seconds to run each fuzz target for.'
+        type: string
+        default: '300'
+
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: libFuzzer regression
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Probe for fuzz targets
+        id: probe
+        run: |
+          shopt -s nullglob
+          sources=(fuzz/fuzz_*.c)
+          if [ ! -f fuzz/Makefile ] || [ "${#sources[@]}" -eq 0 ]; then
+            echo "has_targets=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_targets=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: No fuzz targets yet
+        if: steps.probe.outputs.has_targets == 'false'
+        run: echo "::notice::fuzz/ targets haven't landed yet (a later project phase) — skipping cleanly."
+
+      - name: Install clang toolchain
+        if: steps.probe.outputs.has_targets == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang llvm
+
+      - name: Build fuzz targets
+        if: steps.probe.outputs.has_targets == 'true'
+        working-directory: fuzz
+        env:
+          CC: clang
+          CXX: clang++
+        run: make
+
+      - name: Run each target for a short regression pass
+        if: steps.probe.outputs.has_targets == 'true'
+        env:
+          LUAEXT_FUZZ_SECONDS: ${{ inputs.seconds_per_target || '300' }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          status=0
+          for src in fuzz/fuzz_*.c; do
+            target="${src%.c}"
+            name="$(basename "$target")"
+            if [ ! -x "$target" ]; then
+              echo "::warning::expected fuzz binary '$target' not found after 'make' in fuzz/ — check fuzz/Makefile's output naming convention."
+              continue
+            fi
+            mkdir -p "fuzz/corpus/$name"
+            echo "::group::$name (${LUAEXT_FUZZ_SECONDS}s)"
+            "$target" -max_total_time="$LUAEXT_FUZZ_SECONDS" "fuzz/corpus/$name" || status=$?
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashes
+          path: |
+            fuzz/crash-*
+            fuzz/leak-*
+            fuzz/timeout-*
+          if-no-files-found: ignore
+          retention-days: 14
