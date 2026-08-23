@@ -42,14 +42,14 @@ format:
 	@dirs=""; \
 	for d in src fuzz; do [ -d "$$d" ] && dirs="$$dirs $$d"; done; \
 	if [ -z "$$dirs" ]; then echo "No src/ or fuzz/ yet — nothing to format."; exit 0; fi; \
-	find $$dirs -type f \( -name '*.c' -o -name '*.h' \) ! -name 'luaext_arginfo.h' -exec clang-format -i {} +
+	find $$dirs -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_arginfo.h' -exec clang-format -i {} +
 
 ## Check formatting without writing (what lint.yml runs).
 format-check:
 	@dirs=""; \
 	for d in src fuzz; do [ -d "$$d" ] && dirs="$$dirs $$d"; done; \
 	if [ -z "$$dirs" ]; then echo "No src/ or fuzz/ yet — nothing to format-check."; exit 0; fi; \
-	find $$dirs -type f \( -name '*.c' -o -name '*.h' \) ! -name 'luaext_arginfo.h' -exec clang-format --dry-run --Werror {} +
+	find $$dirs -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_arginfo.h' -exec clang-format --dry-run --Werror {} +
 
 ## Verify third_party/lua-5.5.1 still matches the pinned upstream tarball
 ## plus patches/*.patch (tools/vendor-lua.sh belongs to the vendoring
