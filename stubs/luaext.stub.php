@@ -57,19 +57,6 @@ enum ProfilerUnit
 }
 
 /**
- * Why a script was interrupted.
- */
-enum InterruptReason
-{
-    case CpuLimit;
-    case WallClockLimit;
-    case OutputLimit;
-
-    /** Sandbox::interrupt() was called by the host. */
-    case HostAbort;
-}
-
-/**
  * How well the running platform can enforce a given limit.
  *
  * Reported by Sandbox::features() so a host can react to a weak platform

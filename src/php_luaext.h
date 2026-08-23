@@ -54,7 +54,6 @@ extern zend_class_entry *luaext_ce_lua_method_attribute;
 extern zend_class_entry *luaext_ce_output_mode;
 extern zend_class_entry *luaext_ce_overflow_behavior;
 extern zend_class_entry *luaext_ce_profiler_unit;
-extern zend_class_entry *luaext_ce_interrupt_reason;
 extern zend_class_entry *luaext_ce_limit_support;
 
 /*

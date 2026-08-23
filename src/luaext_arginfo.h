@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 86f6fdb453eeb359fd8aae7b6be79966d29ca3c1 */
+ * Stub hash: 60f28e41b53cba3d7ceb7d51b1c260c2f5e83949 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -495,21 +495,6 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_ProfilerUnit(void)
 	zend_enum_add_case_cstr(class_entry, "Seconds", NULL);
 
 	zend_enum_add_case_cstr(class_entry, "Percent", NULL);
-
-	return class_entry;
-}
-
-static zend_class_entry *register_class_DevelopGravity_LuaExt_InterruptReason(void)
-{
-	zend_class_entry *class_entry = zend_register_internal_enum("DevelopGravity\\LuaExt\\InterruptReason", IS_UNDEF, NULL);
-
-	zend_enum_add_case_cstr(class_entry, "CpuLimit", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "WallClockLimit", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "OutputLimit", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "HostAbort", NULL);
 
 	return class_entry;
 }

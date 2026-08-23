@@ -5,7 +5,6 @@ luaext
 --FILE--
 <?php
 
-use DevelopGravity\LuaExt\InterruptReason;
 use DevelopGravity\LuaExt\LimitSupport;
 use DevelopGravity\LuaExt\OutputMode;
 use DevelopGravity\LuaExt\OverflowBehavior;
@@ -15,7 +14,6 @@ $enums = [
 	OutputMode::class => ['Buffer', 'Callback', 'Discard'],
 	OverflowBehavior::class => ['Truncate', 'Fail'],
 	ProfilerUnit::class => ['Samples', 'Seconds', 'Percent'],
-	InterruptReason::class => ['CpuLimit', 'WallClockLimit', 'OutputLimit', 'HostAbort'],
 	LimitSupport::class => ['Enforced', 'Degraded', 'Unsupported'],
 ];
 
@@ -35,5 +33,4 @@ foreach ($enums as $enum => $expected) {
 OutputMode       pure=true cases=Buffer,Callback,Discard matches=true
 OverflowBehavior pure=true cases=Truncate,Fail matches=true
 ProfilerUnit     pure=true cases=Samples,Seconds,Percent matches=true
-InterruptReason  pure=true cases=CpuLimit,WallClockLimit,OutputLimit,HostAbort matches=true
 LimitSupport     pure=true cases=Enforced,Degraded,Unsupported matches=true
