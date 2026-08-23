@@ -16,6 +16,39 @@
 
 #include "luaext_types.h"
 
+/* -------------------------------------------------------------------------
+ * Raising is a longjmp
+ *
+ * lua_error() unwinds the C stack without running any cleanup, so a frame that
+ * still owns a zval, a zend_string or any other resource whose release is not
+ * itself on the Lua stack must not raise. Bracket such a region with these:
+ * debug builds then assert, at the raise site, that nothing is being leaked.
+ *
+ * Release builds compile both to nothing.
+ * ---------------------------------------------------------------------- */
+
+#ifdef LUAEXT_DEBUG
+#define LUAEXT_NO_RAISE_BEGIN(L)                                                                   \
+	do {                                                                                           \
+		luaext_sandbox *luaext_no_raise_sandbox_ = LUAEXT_SB(L);                                   \
+		if (luaext_no_raise_sandbox_ != NULL) {                                                    \
+			luaext_no_raise_sandbox_->no_raise_depth++;                                            \
+		}                                                                                          \
+	} while (0)
+
+#define LUAEXT_NO_RAISE_END(L)                                                                     \
+	do {                                                                                           \
+		luaext_sandbox *luaext_no_raise_sandbox_ = LUAEXT_SB(L);                                   \
+		if (luaext_no_raise_sandbox_ != NULL) {                                                    \
+			ZEND_ASSERT(luaext_no_raise_sandbox_->no_raise_depth > 0);                             \
+			luaext_no_raise_sandbox_->no_raise_depth--;                                            \
+		}                                                                                          \
+	} while (0)
+#else
+#define LUAEXT_NO_RAISE_BEGIN(L) ((void)(L))
+#define LUAEXT_NO_RAISE_END(L) ((void)(L))
+#endif
+
 /* Install the error metatable in the registry. Called once per lua_State. */
 void luaext_error_init(luaext_sandbox *sandbox);
 
@@ -28,7 +61,8 @@ void luaext_error_init(luaext_sandbox *sandbox);
  * always fatal.
  */
 ZEND_COLD ZEND_NORETURN void luaext_error_raise(lua_State *L, luaext_err_kind kind, bool fatal,
-												const char *format, ...);
+												const char *format, ...)
+	ZEND_ATTRIBUTE_FORMAT(printf, 4, 5);
 
 /*
  * Wrap a pending PHP exception as a Lua error and raise it. Does not return.
