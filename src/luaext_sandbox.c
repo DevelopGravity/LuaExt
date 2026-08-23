@@ -2,13 +2,16 @@
  * luaext — the Sandbox object: an isolated lua_State with its own policy,
  * budget and output sink.
  *
- * This file currently covers the lifecycle only: creating the interpreter,
- * opening a library subset, and tearing it down again. Compilation, calls,
- * value conversion, limits and the output sink arrive with their own
- * subsystems; the methods that need them throw until then.
+ * This file currently covers the lifecycle and the memory budget: creating the
+ * interpreter, opening a library subset, reporting and re-ceiling what it may
+ * allocate, and tearing it down again. Compilation, calls, value conversion,
+ * the timing limits and the output sink arrive with their own subsystems; the
+ * methods that need them throw until then.
  */
 
 #include "luaext_sandbox.h"
+
+#include "luaext_alloc.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -162,27 +165,6 @@ static void luaext_sandbox_unlink(luaext_sandbox *sandbox)
 /* -------------------------------------------------------------------------
  * Interpreter
  * ---------------------------------------------------------------------- */
-
-/*
- * Lua's heap is plain malloc rather than the Zend allocator: a sandbox may
- * legally outlive the request that built it in a worker SAPI, and request-local
- * memory would be freed underneath it.
- *
- * TODO: replace with the accounting allocator that enforces Limits::memoryBytes
- * and feeds luaext_alloc_charge()/discharge().
- */
-static void *luaext_sandbox_allocate(void *ud, void *ptr, size_t osize, size_t nsize)
-{
-	(void)ud;
-	(void)osize;
-
-	if (nsize == 0) {
-		free(ptr);
-		return NULL;
-	}
-
-	return realloc(ptr, nsize);
-}
 
 /*
  * Reached only when Lua raises outside a protected call. Nothing in Wave 1 runs
@@ -438,15 +420,15 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	}
 
 	/*
-	 * Recorded, NOT enforced: luaext_sandbox_allocate is still a bare realloc
-	 * that never consults this. Sandbox::getMemoryUsage() is pending for the
-	 * same reason, so nothing reports a budget that does not exist yet.
+	 * Set before the interpreter exists, so the state's own allocations already
+	 * count against the budget and a limit too small to hold an interpreter
+	 * fails construction rather than being discovered later.
 	 */
 	sandbox->alloc.limit = sandbox->policy.limits.memory_bytes;
 	sandbox->owner_thread = luaext_current_thread();
 	sandbox->seed = luaext_sandbox_seed();
 
-	sandbox->L = lua_newstate(luaext_sandbox_allocate, sandbox, (unsigned int)sandbox->seed);
+	sandbox->L = lua_newstate(luaext_lua_alloc, sandbox, (unsigned int)sandbox->seed);
 
 	if (sandbox->L == NULL) {
 		zval_ptr_dtor(&sandbox->config_zv);
@@ -554,6 +536,88 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 }
 
 /* -------------------------------------------------------------------------
+ * Memory accounting
+ *
+ * The counters behind these live in luaext_alloc.c and cover the Lua heap plus
+ * whatever the host holds on the script's behalf, so the numbers reported here
+ * are the same ones the ceiling is enforced against.
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Guard shared by the memory methods: a closed sandbox has no counters left to
+ * read, and reading them from another thread would race the allocator.
+ */
+static bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox)
+{
+	return luaext_sandbox_check_thread(sandbox) && luaext_sandbox_check_open(sandbox);
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getMemoryUsage)
+{
+	const luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	RETURN_LONG((zend_long)luaext_alloc_usage(sandbox));
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getPeakMemoryUsage)
+{
+	const luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	RETURN_LONG((zend_long)luaext_alloc_peak(sandbox));
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setMemoryLimit)
+{
+	luaext_sandbox *sandbox;
+	zend_long bytes = 0;
+	bool unlimited = true;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_LONG_OR_NULL(bytes, unlimited)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Null is the one spelling of "no ceiling". Zero would be a second, and a
+	 * limit that no allocation could ever satisfy is far likelier to be a
+	 * mistake than an intention, so both it and a negative are refused rather
+	 * than quietly reinterpreted.
+	 */
+	if (!unlimited && bytes <= 0) {
+		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
+		RETURN_THROWS();
+	}
+
+	/*
+	 * A limit below current usage is accepted and does not unwind anything: the
+	 * next allocation that would grow the heap is refused instead. See
+	 * luaext_alloc_set_limit().
+	 */
+	luaext_alloc_set_limit(sandbox, unlimited ? 0 : (size_t)bytes);
+}
+
+/* -------------------------------------------------------------------------
  * Pending methods
  *
  * Each of these belongs to a subsystem that has not landed yet. They report a
@@ -611,11 +675,6 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "preloadModule");
 }
 
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setMemoryLimit)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "setMemoryLimit");
-}
-
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setCpuLimit)
 {
 	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "setCpuLimit");
@@ -644,16 +703,6 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, interrupt)
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats)
 {
 	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "stats");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getMemoryUsage)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getMemoryUsage");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getPeakMemoryUsage)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getPeakMemoryUsage");
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getCpuUsage)
