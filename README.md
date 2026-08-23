@@ -8,7 +8,7 @@ A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run
 
 Package: `developgravity/lua-extension` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
-> **Status: pre-1.0, no working build yet.** This repository does not have a tagged release. Everything in this document — the API surface, the platform matrix, the migration table — describes the target design from the approved project plan. Code samples are illustrative, not tested against a shipped binary. Treat unimplemented behavior as such until a release exists.
+> **Status: pre-1.0, no working build yet.** This repository does not have a tagged release, and only the build skeleton exists — no sandboxing behavior has been implemented or tested. The API surface below (classes, methods, parameters, defaults) is pinned and machine-validated against `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php`, the same files that generate the extension's C arginfo, so it will not drift further. What isn't yet true is the runtime: treat every code sample as accurate against that API, not as tested against a working binary.
 
 ## Why this exists
 
@@ -123,13 +123,15 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `memoryBytes` | 32 MiB |
 | `cpuSeconds` | 1.0 |
 | `wallClockSeconds` | 5.0 |
-| `outputBytes` (+ `outputOverflow`) | 1 MiB |
+| `outputBytes` (+ `outputOverflow`) | 1 MiB, overflow `Fail` |
 | `maxLiveCoroutines` | 64 |
 | `maxCoroutineDepth` | 16 |
 | `maxCallDepth` | 200 |
 | `maxModules` | 64 |
 | `maxRequireDepth` | 16 |
+| `maxStringLength` | 64 MiB |
 | `maxSourceBytes` | 1 MiB |
+| `maxConversionDepth` | 64 |
 
 Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend.
 
@@ -150,7 +152,7 @@ Native Windows arm64 (rather than x64-under-emulation) and further calibration w
 
 ## Migrating from LuaSandbox
 
-There is no compatibility shim; call sites need a mechanical rename plus a couple of behavior changes. Names below are as specified in the approved project plan; a few (exact `stats()`/getter field names, `getProfile()`'s exact signature) are not yet pinned down in the plan and should be checked against the published `developgravity/lua-extension-stubs` once available.
+There is no compatibility shim; call sites need a mechanical rename plus a couple of behavior changes. Names, parameters, and defaults below match `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` exactly.
 
 | LuaSandbox | LuaExt | Notes |
 |---|---|---|
@@ -159,22 +161,23 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | `->loadString($code, $chunkName)` | `->compile($code, $chunkName): LuaFunction` | Same shape. |
 | `->loadBinary($binary, $chunkName)` | `->compileBinary($binary, $chunkName): LuaFunction` | Now gated behind the `loadBytecode` capability, off by default even when trusted. |
 | `->setMemoryLimit($bytes)` | `->setMemoryLimit($bytes)` | Unchanged name. VFS buffers and captured output are now billed against this limit too (they weren't in the old extension). |
-| `->getMemoryUsage()` / `->getPeakMemoryUsage()` | `->stats()->...` (memory/peak fields) or a cheap single-value getter | `stats(): SandboxStats` is the new usage-tracking surface; exact getter names are not finalized in the plan. |
+| `->getMemoryUsage()` / `->getPeakMemoryUsage()` | `->getMemoryUsage()` / `->getPeakMemoryUsage()`, or `->stats()->memoryBytes` / `->stats()->peakMemoryBytes` | Unchanged names as direct getters; `stats(): SandboxStats` is the new full-snapshot surface (also has `memoryLimitBytes`, `outputBytes`, `outputTruncated`, `liveCoroutines`, `peakCoroutineDepth`, `modulesLoaded`, `vfsOperations`, `vfsBytes`, `gcCollections`, `luaCallsIn`, `phpCallsOut`). |
 | `->setCPULimit($seconds)` | `->setCpuLimit($seconds)` | Renamed to camelCase; see the platform matrix above for what "enforced" means per OS. |
-| `->getCPUUsage()` | `->stats()->cpuSeconds` | |
+| `->getCPUUsage()` | `->getCpuUsage()`, or `->stats()->cpuSeconds` | Renamed to camelCase. |
 | *(none)* | `->setWallClockLimit($seconds)` | New: an independent wall-clock ceiling, also the Windows CPU-limit backstop. |
+| *(none)* | `->getWallClockUsage()`, or `->stats()->wallClockSeconds` | New: pairs with `setWallClockLimit()`. |
 | `->pauseUsageTimer()` / `->unpauseUsageTimer()` | `->pauseTimers()` / `->resumeTimers()` | Renamed; same segment-accumulator semantics (only the outermost Lua entry arms/disarms). |
 | `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged. |
-| `->getProfilerFunctionReport($units)` with `LuaSandbox::SAMPLES/SECONDS/PERCENT` | `->getProfile()` with a `ProfilerUnit` enum | Unit constants become an enum. |
-| `->callFunction($name, ...$args)` | `->call($path, ...$args): array` | |
-| `->wrapPhpFunction($callable)` | `->wrapCallable($callable): LuaFunction` | Renamed. |
+| `->getProfilerFunctionReport($units)` with `LuaSandbox::SAMPLES/SECONDS/PERCENT` | `->getProfile(ProfilerUnit $unit = ProfilerUnit::Seconds): array` | Unit constants become the `ProfilerUnit` enum (`Samples`, `Seconds`, `Percent`); default unit is `Seconds`. |
+| `->callFunction($name, ...$args)` | `->call($path, ...$args): array` | Both `call()` and `eval()` return `list<mixed>` and are `#[\NoDiscard]` — cast to `(void)` if you intentionally ignore the result. |
+| `->wrapPhpFunction($callable)` | `->wrapCallable($callable, ?string $name = null): LuaFunction` | Renamed; optional `$name` labels the callable in tracebacks and `debug.getinfo()`. |
 | `->registerLibrary($name, $functions)` | `->registerLibrary($name, $functions)` | Unchanged shape. |
-| *(none)* | `->registerObject($name, $instance, ?$methods = null)` | New: expose an existing object's methods via an allowlist or `#[LuaMethod]`. |
+| *(none)* | `->registerObject($name, $instance, ?array $methods = null)` | New: expose an existing object's methods via an allowlist or `#[LuaMethod]`. |
 | *(none)* | `->preloadModule(...)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. |
 | `LuaSandboxFunction::call(...)` | `LuaFunction::call(...)` / `LuaFunction::__invoke(...)` | Same "array of all return values" convention. |
 | `LuaSandboxFunction::dump()` | `LuaFunction::dump($strip)` | Now gated behind the `dumpBytecode` capability. |
 | Host-side error → `false` return + `E_WARNING` | Host-side error → typed exception | E.g. calling an undefined global now throws rather than returning `false`. |
-| `LuaSandboxError` / `...RuntimeError` / `...FatalError` / `...SyntaxError` / `...MemoryError` / `...ErrorError` / `...TimeoutError` | `LuaThrowable` interface; `LuaException` → `RuntimeError` (catchable) and abstract `FatalError` (uncatchable) → `SyntaxError`, `MemoryLimitError`, `CpuLimitError`, `WallClockLimitError`, `OutputLimitError`, `CoroutineLimitError`, `HostAbortError`, `ErrorHandlerError`, `PanicError`, `ConversionError` | Roughly 1:1: `SyntaxError`←`...SyntaxError`, `MemoryLimitError`←`...MemoryError`, `ErrorHandlerError`←`...ErrorError`, `CpuLimitError`←`...TimeoutError`, plus new `WallClockLimitError` and others with no old equivalent. Host-misuse conditions (`ConfigurationError`, `CapabilityError`, `ClosedSandboxError`, `ThreadAffinityError`) are new `LogicException`s, not part of the old hierarchy at all. |
+| `LuaSandboxError` / `...RuntimeError` / `...FatalError` / `...SyntaxError` / `...MemoryError` / `...ErrorError` / `...TimeoutError` | `LuaThrowable` interface, implemented by everything the extension throws; abstract `LuaException` → `RuntimeError` (catchable, plus subclasses `VfsError` and `ModuleNotFoundError`) and abstract `FatalError` (uncatchable) → `SyntaxError`, `MemoryLimitError`, `CpuLimitError`, `WallClockLimitError`, `OutputLimitError`, `CoroutineLimitError`, `HostAbortError`, `ErrorHandlerError`, `PanicError`, `ConversionError` | Roughly 1:1: `SyntaxError`←`...SyntaxError`, `MemoryLimitError`←`...MemoryError`, `ErrorHandlerError`←`...ErrorError`, `CpuLimitError`←`...TimeoutError`, plus new `WallClockLimitError` and others with no old equivalent. Host-misuse conditions (`ConfigurationError`, `CapabilityError`, `ClosedSandboxError`, `ThreadAffinityError`) extend a new abstract `LuaLogicException` (a `\LogicException`), not part of the old hierarchy at all. `LuaThrowable` also carries `getLuaTrace()`, `getLuaTraceAsString()`, `getSandbox()`, `getChunkName()`, and `getLuaLine()` — deliberately not `getLine()`, since PHP's `Exception::getLine()` is `final` and reports the PHP call site, not the Lua one. |
 | *(coroutines removed entirely)* | Coroutines on by default, capped, strictly scoped to the call that created them | See [docs/lua-api.md](docs/lua-api.md#coroutines). |
 
 ## Documentation
