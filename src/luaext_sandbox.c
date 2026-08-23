@@ -388,7 +388,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
-	if (sandbox->L != NULL) {
+	/*
+	 * Also rejects a closed sandbox: reconstructing one would create a second
+	 * interpreter while the closed flag still short-circuits close(), so the
+	 * new state could never be torn down and the object would be freed while
+	 * still linked into the per-thread live list.
+	 */
+	if (sandbox->L != NULL || sandbox->closed) {
 		zend_throw_exception(luaext_ce_configuration_error,
 							 "The sandbox has already been constructed", 0);
 		RETURN_THROWS();
