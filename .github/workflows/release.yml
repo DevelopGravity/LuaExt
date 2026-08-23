@@ -104,9 +104,8 @@ jobs:
             exit 1
           fi
 
-          # TODO(verify): confirm the exact macro name/quoting once
-          # src/php_luaext.h lands (Wave 1, agent ②). Standard PECL/PIE
-          # convention is `#define PHP_LUAEXT_VERSION "X.Y.Z"`.
+          # Verified against the real header: it declares exactly
+          # `#define PHP_LUAEXT_VERSION "X.Y.Z"`, and this pattern extracts it.
           HEADER_VERSION="$(grep -oP '(?<=#define PHP_LUAEXT_VERSION ")[^"]+' "$LUAEXT_VERSION_HEADER" || true)"
 
           if [ -z "$HEADER_VERSION" ]; then
