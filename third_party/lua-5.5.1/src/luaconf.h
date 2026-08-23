@@ -751,6 +751,84 @@
 */
 
 
+/*
+** {==================================================================
+** LuaExt sandbox overlay (DevelopGravity 'luaext' PHP extension).
+**
+** Everything below is inert unless LUAEXT_LUA_HOOKS is defined to a
+** non-zero value: compiling with -DLUAEXT_LUA_HOOKS=0, or without the
+** macro at all, restores stock upstream Lua behaviour exactly.
+** ===================================================================
+*/
+
+#if !defined(LUAEXT_LUA_HOOKS)
+#define LUAEXT_LUA_HOOKS	0
+#endif
+
+#if LUAEXT_LUA_HOOKS		/* { */
+
+/*
+** Interrupt-delivery contract shared with the extension. This header
+** pulls in <stdatomic.h> only; it must never include a PHP header.
+** It defines LUAEXT_IRQ() and LUAEXT_CHECK(), which the patched C
+** loops in lstrlib.c / ltablib.c / lutf8lib.c call.
+*/
+#include "luaext_lua_hooks.h"
+
+/*
+** The extension is one shared object that links Lua statically and must
+** not export any 'lua_*' / 'luaL_*' symbol: an already-loaded liblua
+** (for instance from the old 'luasandbox' extension) would otherwise
+** collide with it. MSVC is left alone -- LUA_BUILD_AS_DLL is never
+** defined for this build, so nothing is exported there either.
+*/
+#if defined(__GNUC__) || defined(__clang__)	/* { */
+
+#undef LUA_API
+#define LUA_API		__attribute__((visibility("hidden"))) extern
+
+#undef LUALIB_API
+#define LUALIB_API	LUA_API
+
+/*
+** 'llimits.h' (included after this file) defines LUAI_FUNC, LUAI_DDEC
+** and LUAI_DDEF together inside a single '#if !defined(LUAI_FUNC)'
+** block, so overriding LUAI_FUNC means providing all three here.
+*/
+#define LUAI_FUNC	__attribute__((visibility("hidden"))) extern
+#define LUAI_DDEC(dec)	LUAI_FUNC dec
+/* upstream leaves LUAI_DDEF empty and relies on the matching LUAI_DDEC
+   declaration to carry the visibility over to the definition; marking
+   the definition too removes that dependency */
+#define LUAI_DDEF	__attribute__((visibility("hidden")))
+
+#endif						/* } */
+
+/*
+** Pin the C-call / C-recursion ceiling. 'ldo.h' honours a previous
+** definition; 200 is also the upstream default, so this only freezes
+** the value against future upstream changes.
+*/
+#undef LUAI_MAXCCALLS
+#define LUAI_MAXCCALLS		200
+
+/*
+** No filesystem search paths: 'package' and 'require' are replaced
+** wholesale by the extension and 'loadlib.c' is never compiled.
+*/
+#undef LUA_PATH_DEFAULT
+#define LUA_PATH_DEFAULT	""
+#undef LUA_CPATH_DEFAULT
+#define LUA_CPATH_DEFAULT	""
+
+#else				/* }{ */
+
+#define LUAEXT_CHECK(L)		((void)0)
+
+#endif				/* } */
+
+/* }================================================================== */
+
 
 #endif
 
