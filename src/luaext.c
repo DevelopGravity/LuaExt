@@ -8,6 +8,7 @@
 
 #include "php_luaext.h"
 
+#include "luaext_function.h"
 #include "luaext_sandbox.h"
 #include "luaext_types.h"
 
@@ -232,6 +233,7 @@ static PHP_MINIT_FUNCTION(luaext)
 	luaext_register_classes();
 	luaext_register_exceptions();
 	luaext_sandbox_startup();
+	luaext_function_startup();
 
 	return SUCCESS;
 }
@@ -269,8 +271,14 @@ static PHP_RSHUTDOWN_FUNCTION(luaext)
 		sandbox = next;
 	}
 
-	LUAEXT_G(live_sandboxes) = NULL;
-	LUAEXT_G(live_count) = 0;
+	/*
+	 * The list is deliberately not reset here. luaext_sandbox_close() unlinks
+	 * each entry, so an empty list is what correct unlinking produces — and
+	 * the GSHUTDOWN assertion exists to catch the case where it does not.
+	 * Clearing the head unconditionally would make that assertion unfalsifiable.
+	 */
+	ZEND_ASSERT(LUAEXT_G(live_sandboxes) == NULL);
+	ZEND_ASSERT(LUAEXT_G(live_count) == 0);
 
 	return SUCCESS;
 }

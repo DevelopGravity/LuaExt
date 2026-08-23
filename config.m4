@@ -154,6 +154,7 @@ if test "$PHP_LUAEXT" != "no"; then
   PHP_NEW_EXTENSION([luaext],
     [src/luaext.c \
      src/luaext_sandbox.c \
+     src/luaext_function.c \
      src/luaext_interrupt.c \
      src/luaext_pending.c],
     [$ext_shared],,

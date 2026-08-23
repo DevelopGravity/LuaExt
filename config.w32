@@ -74,7 +74,7 @@ if (PHP_LUAEXT != "no") {
 	}
 
 	EXTENSION("luaext",
-		"src/luaext.c src/luaext_sandbox.c src/luaext_interrupt.c src/luaext_pending.c",
+		"src/luaext.c src/luaext_sandbox.c src/luaext_function.c src/luaext_interrupt.c src/luaext_pending.c",
 		null,
 		luaext_flags);
 
