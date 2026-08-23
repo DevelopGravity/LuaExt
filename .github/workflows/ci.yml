@@ -1,0 +1,335 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+  merge_group:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Extension-under-test PHP floor. Bump alongside the composer.json "php" constraint.
+  LUAEXT_PHP_VERSION: '8.5'
+  # A pinned, immutable php-src *tag* (not the moving PHP-8.5 branch) used only
+  # by the sanitizer legs below, which build PHP itself from source so that
+  # the extension and the host PHP share the exact same compiler + sanitizer
+  # runtime. Bump this by hand alongside upstream PHP 8.5.x point releases —
+  # Renovate does not track this pin (it is not a `uses:` action reference).
+  LUAEXT_SANITIZER_PHP_SRC_REF: 'php-8.5.9'
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Main build/test matrix: phpize && ./configure && make && make test
+  # ---------------------------------------------------------------------
+  build:
+    name: "${{ matrix.os }} / ${{ matrix.ts }} / ${{ matrix.build_type }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        ts: [nts, zts]
+        build_type: [release, debug]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP ${{ env.LUAEXT_PHP_VERSION }} (${{ matrix.ts }}, ${{ matrix.build_type }})
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ env.LUAEXT_PHP_VERSION }}
+          tools: none
+          extensions: none
+        env:
+          phpts: ${{ matrix.ts == 'zts' && 'ts' || 'nts' }}
+          debug: ${{ matrix.build_type == 'debug' && 'true' || 'false' }}
+
+      - name: PHP info
+        run: |
+          php -v
+          php -i | grep -i "thread safety"
+
+      - name: phpize
+        run: phpize
+
+      - name: configure
+        run: |
+          ./configure \
+            ${{ matrix.build_type == 'debug' && '--enable-luaext-debug' || '' }}
+
+      - name: make
+        run: |
+          JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+          make -j"$JOBS"
+
+      - name: make test
+        run: make test
+        env:
+          REPORT_EXIT_STATUS: '1'
+          NO_INTERACTION: '1'
+
+      - name: Upload failing test artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phpt-logs-${{ matrix.os }}-${{ matrix.ts }}-${{ matrix.build_type }}
+          path: |
+            tests/**/*.log
+            tests/**/*.diff
+            tests/**/*.out
+            tests/**/*.exp
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # Gating Linux sanitizer legs: extension + php-src built with a matching
+  # compiler + sanitizer runtime, so ASan/UBSan/TSan findings are real.
+  # These are NOT continue-on-error — a finding here fails the build.
+  # ---------------------------------------------------------------------
+  sanitize-linux:
+    name: "Linux sanitizer / ${{ matrix.sanitizer }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: asan-ubsan
+            # TODO(verify): confirm the extension's config.m4 --enable-luaext-sanitize=LIST
+            # accepts a comma-separated sanitizer-name list in this exact form once
+            # config.m4 lands (Wave 1, agent ②). Adjust here if the accepted syntax differs.
+            luaext_sanitize: 'address,undefined'
+            # php-src's own --enable-{address,undefined}-sanitizer configure
+            # flags derive the right CFLAGS themselves (including probing for
+            # -fno-sanitize=function/-fno-sanitize=object-size support) — no
+            # manual CFLAGS needed for php-src here.
+            php_src_configure_extra: '--enable-address-sanitizer --enable-undefined-sanitizer'
+            extension_cc: 'gcc'
+            test_scope: ''
+          - sanitizer: tsan
+            luaext_sanitize: 'thread'
+            # php-src has no --enable-thread-sanitizer configure switch (only
+            # address/undefined/memory exist — verified against php-src's
+            # configure.ac). TSan is wired purely through CC=clang + CFLAGS/LDFLAGS,
+            # both for php-src and for the extension below.
+            php_src_configure_extra: 'CC=clang CXX=clang++ CFLAGS="-fsanitize=thread" CXXFLAGS="-fsanitize=thread" LDFLAGS="-fsanitize=thread"'
+            extension_cc: 'clang'
+            # The watchdog thread is the prime TSan target; scope the (expensive,
+            # clang+TSan-built-PHP) run to tests/02-limits/ per the project plan
+            # rather than the full suite.
+            test_scope: 'tests/02-limits'
+    env:
+      ASAN_OPTIONS: 'exitcode=139'
+      UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
+      TSAN_OPTIONS: 'halt_on_error=1:second_deadlock_stack=1'
+    steps:
+      - name: Checkout luaext
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: luaext
+
+      - name: Checkout php-src ${{ env.LUAEXT_SANITIZER_PHP_SRC_REF }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: php/php-src
+          ref: ${{ env.LUAEXT_SANITIZER_PHP_SRC_REF }}
+          path: php-src
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf bison re2c pkg-config build-essential libtool clang llvm
+
+      - name: Cache sanitized php-src build
+        id: cache-php-src
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: php-src
+          key: php-src-${{ env.LUAEXT_SANITIZER_PHP_SRC_REF }}-${{ matrix.sanitizer }}-${{ hashFiles('php-src/configure.ac') }}
+
+      - name: Build sanitized php-src (NTS)
+        if: steps.cache-php-src.outputs.cache-hit != 'true'
+        working-directory: php-src
+        run: |
+          ./buildconf --force
+          ./configure \
+            --disable-all \
+            --enable-cli \
+            --enable-debug \
+            ${{ matrix.php_src_configure_extra }}
+          JOBS="$(getconf _NPROCESSORS_ONLN)"
+          make -j"$JOBS"
+
+      - name: Verify sanitized php-cli runs
+        working-directory: php-src
+        run: ./sapi/cli/php -v
+
+      - name: phpize (against sanitized php-src)
+        working-directory: luaext
+        # scripts/phpize is generated by php-src's own ./configure (AC_CONFIG_FILES),
+        # so it only exists after the "Build sanitized php-src" step above has run.
+        run: ../php-src/scripts/phpize
+
+      - name: configure extension against sanitized php-src
+        working-directory: luaext
+        env:
+          CC: ${{ matrix.extension_cc }}
+        run: |
+          ./configure \
+            --with-php-config=../php-src/scripts/php-config \
+            --enable-luaext-debug \
+            --enable-luaext-sanitize=${{ matrix.luaext_sanitize }}
+
+      - name: make
+        working-directory: luaext
+        run: |
+          JOBS="$(getconf _NPROCESSORS_ONLN)"
+          make -j"$JOBS"
+
+      - name: make test
+        working-directory: luaext
+        run: make test TESTS="${{ matrix.test_scope }}"
+        env:
+          REPORT_EXIT_STATUS: '1'
+          NO_INTERACTION: '1'
+
+      - name: Upload failing test artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sanitizer-logs-${{ matrix.sanitizer }}
+          path: |
+            luaext/tests/**/*.log
+            luaext/tests/**/*.diff
+            luaext/tests/**/*.out
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # Best-effort legs: valuable signal, but known sources of false
+  # positives/negatives (runtime mismatch on macOS, valgrind slowness) mean
+  # these must never block a merge.
+  # ---------------------------------------------------------------------
+  best-effort:
+    name: "Best-effort / ${{ matrix.name }}"
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-asan
+            os: macos-latest
+          - name: valgrind
+            os: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP ${{ env.LUAEXT_PHP_VERSION }}
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ env.LUAEXT_PHP_VERSION }}
+          tools: none
+          extensions: none
+        env:
+          debug: 'true'
+
+      - name: Install valgrind
+        if: matrix.name == 'valgrind'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind
+
+      - name: phpize
+        run: phpize
+
+      - name: configure (macOS ASan)
+        if: matrix.name == 'macos-asan'
+        # NOTE: this links our ASan-instrumented extension against a stock
+        # (non-ASan) Homebrew/setup-php PHP — a runtime mismatch that can
+        # produce both false positives and false negatives. That mismatch is
+        # exactly why this leg is best-effort/continue-on-error rather than
+        # gating; the gating ASan coverage lives in sanitize-linux above,
+        # where extension and PHP share one sanitized runtime.
+        run: |
+          ./configure --enable-luaext-debug --enable-luaext-sanitize=address \
+            CFLAGS="-fsanitize=address -fno-sanitize=function" \
+            LDFLAGS="-fsanitize=address"
+
+      - name: configure (valgrind)
+        if: matrix.name == 'valgrind'
+        run: ./configure --enable-luaext-debug
+
+      - name: make
+        run: |
+          JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+          make -j"$JOBS"
+
+      - name: make test (macOS ASan)
+        if: matrix.name == 'macos-asan'
+        run: make test
+        env:
+          ASAN_OPTIONS: 'exitcode=139'
+
+      - name: make test (valgrind, USE_ZEND_ALLOC=0)
+        if: matrix.name == 'valgrind'
+        # run-tests.php's `-m` flag runs every test under `valgrind --tool=memcheck`
+        # and automatically forces USE_ZEND_ALLOC=0 in the test environment.
+        # VALGRIND_OPTS is read by valgrind itself, not by run-tests.php.
+        run: make test TESTS="-m --show-diff"
+        env:
+          VALGRIND_OPTS: '--suppressions=tools/valgrind.supp'
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: best-effort-logs-${{ matrix.name }}
+          path: |
+            tests/**/*.log
+            tests/**/*.diff
+            tests/**/*.out
+            tests/**/*.mem
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # Windows: PIE cannot build from source there (v1), so PR validation
+  # reuses the same php/php-windows-builder pipeline release.yml uses to
+  # produce DLLs, just without publishing anything.
+  # ---------------------------------------------------------------------
+  windows:
+    name: Windows (PR validation)
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      php-version-list: '8.5'
+      arch-list: 'x64'
+      ts-list: 'nts, ts'
+
+  # ---------------------------------------------------------------------
+  # Single required status for branch protection.
+  # ---------------------------------------------------------------------
+  ci-required:
+    name: CI required checks
+    if: always()
+    needs: [build, sanitize-linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required jobs
+        run: |
+          echo "build: ${{ needs.build.result }}"
+          echo "sanitize-linux: ${{ needs.sanitize-linux.result }}"
+          echo "windows: ${{ needs.windows.result }}"
+          if [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.sanitize-linux.result }}" != "success" ] || \
+             [ "${{ needs.windows.result }}" != "success" ]; then
+            echo "One or more required jobs did not succeed." >&2
+            exit 1
+          fi
