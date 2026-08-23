@@ -14,19 +14,28 @@ trim_trailing_whitespace = true
 insert_final_newline = unset
 trim_trailing_whitespace = unset
 
-# C/C++ sources and headers (extension code + vendored Lua): tabs, Zend/PHP-src style.
+# C/C++ sources and headers: tabs, Zend/PHP-src style. clang-format is the
+# authority here and aligns continuation lines with spaces after the tab
+# indent, which is why CI does not machine-check indentation.
 [*.{c,h,cc,cpp,hpp}]
 indent_style = tab
 indent_size = 4
 
-# PHP: tabs, matching the C side and PHP-src's own coding standard.
+# PHP: spaces, PSR-12. These files are userland-facing -- the stubs are
+# published for editors and static analysers -- so they follow the convention
+# their readers expect rather than php-src's internal one.
 [*.php]
+indent_style = space
+indent_size = 4
+
+# .phpt test bodies follow the C side, matching php-src's own test suite.
+[*.phpt]
 indent_style = tab
 indent_size = 4
 
 # Shell scripts.
 [*.sh]
-indent_style = tab
+indent_style = space
 indent_size = 4
 
 # Makefiles require tab indentation for recipes.

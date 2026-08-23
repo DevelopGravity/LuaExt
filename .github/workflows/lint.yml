@@ -74,8 +74,15 @@ jobs:
 
       - name: Run editorconfig-checker
         run: |
+          # Indentation is deliberately not checked here: clang-format owns the
+          # C sources and legitimately mixes a tab indent with space alignment on
+          # continuation lines, and the userland-facing PHP follows PSR-12 spaces.
+          # Two tools disagreeing about one file helps nobody, so this enforces
+          # only what nothing else does -- charset, line endings, final newline
+          # and trailing whitespace.
           ./bin/ec-linux-amd64 \
             -exclude "third_party|luaext_arginfo\.h|ide-stubs" \
+            -disable-indentation \
             -format github-actions
 
   # -------------------------------------------------------------------
@@ -142,7 +149,11 @@ jobs:
         with:
           php-version: '8.5'
           tools: none
-          extensions: none
+          # tokenizer, not none: gen_stub.php parses the stub sources and
+          # check-docs-api.php tokenizes the documentation samples. Both are
+          # bundled with a normal PHP build, which is why this only shows up
+          # on a runner that installs exactly what it is told to.
+          extensions: tokenizer
 
       - name: Run all generated-artifact drift checks
         run: tools/check-generated.sh
@@ -165,7 +176,11 @@ jobs:
         with:
           php-version: '8.5'
           tools: none
-          extensions: none
+          # tokenizer, not none: gen_stub.php parses the stub sources and
+          # check-docs-api.php tokenizes the documentation samples. Both are
+          # bundled with a normal PHP build, which is why this only shows up
+          # on a runner that installs exactly what it is told to.
+          extensions: tokenizer
 
       - name: Lint documentation samples
         run: |
