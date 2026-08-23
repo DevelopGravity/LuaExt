@@ -87,6 +87,7 @@ static int tinsert (lua_State *L) {
       luaL_argcheck(L, (lua_Unsigned)pos - 1u < (lua_Unsigned)e, 2,
                        "position out of bounds");
       for (i = e; i > pos; i--) {  /* move up elements */
+        LUAEXT_CHECK(L);  /* same C-only loop as 'tmove': no hook ever fires */
         lua_geti(L, 1, i - 1);
         lua_seti(L, 1, i);  /* t[i] = t[i - 1] */
       }
@@ -110,6 +111,7 @@ static int tremove (lua_State *L) {
                      "position out of bounds");
   lua_geti(L, 1, pos);  /* result = t[pos] */
   for ( ; pos < size; pos++) {
+    LUAEXT_CHECK(L);  /* same C-only loop as 'tmove': no hook ever fires */
     lua_geti(L, 1, pos + 1);
     lua_seti(L, 1, pos);  /* t[pos] = t[pos + 1] */
   }

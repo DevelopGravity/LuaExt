@@ -18,7 +18,23 @@ spends its time without ever entering the VM.
 diff --color -Naur a/src/ltablib.c b/src/ltablib.c
 --- a/src/ltablib.c	2026-08-23 15:40:17
 +++ b/src/ltablib.c	2026-08-23 15:40:17
-@@ -141,12 +141,22 @@
+@@ -87,6 +87,7 @@
+       luaL_argcheck(L, (lua_Unsigned)pos - 1u < (lua_Unsigned)e, 2,
+                        "position out of bounds");
+       for (i = e; i > pos; i--) {  /* move up elements */
++        LUAEXT_CHECK(L);  /* same C-only loop as 'tmove': no hook ever fires */
+         lua_geti(L, 1, i - 1);
+         lua_seti(L, 1, i);  /* t[i] = t[i - 1] */
+       }
+@@ -110,6 +111,7 @@
+                      "position out of bounds");
+   lua_geti(L, 1, pos);  /* result = t[pos] */
+   for ( ; pos < size; pos++) {
++    LUAEXT_CHECK(L);  /* same C-only loop as 'tmove': no hook ever fires */
+     lua_geti(L, 1, pos + 1);
+     lua_seti(L, 1, pos);  /* t[pos] = t[pos + 1] */
+   }
+@@ -141,12 +143,22 @@
                    "destination wrap around");
      if (t > e || t <= f || (tt != 1 && !lua_compare(L, 1, tt, LUA_OPEQ))) {
        for (i = 0; i < n; i++) {
@@ -41,7 +57,7 @@ diff --color -Naur a/src/ltablib.c b/src/ltablib.c
          lua_geti(L, 1, f + i);
          lua_seti(L, tt, t + i);
        }
-@@ -175,6 +185,12 @@
+@@ -175,6 +187,12 @@
    last = luaL_optinteger(L, 4, last);
    luaL_buffinit(L, &b);
    for (; i < last; i++) {
@@ -54,7 +70,7 @@ diff --color -Naur a/src/ltablib.c b/src/ltablib.c
      addfield(L, &b, i);
      luaL_addlstring(&b, sep, lsep);
    }
-@@ -299,10 +315,17 @@
+@@ -299,10 +317,17 @@
    IdxT j = up - 1;  /* will be decremented before first use */
    /* loop invariant: a[lo .. i] <= P <= a[j .. up] */
    for (;;) {
@@ -72,7 +88,7 @@ diff --color -Naur a/src/ltablib.c b/src/ltablib.c
        lua_pop(L, 1);  /* remove a[i] */
      }
      /* after the loop, a[i] >= P and a[lo .. i - 1] < P  (a) */
-@@ -310,6 +333,9 @@
+@@ -310,6 +335,9 @@
      while ((void)geti(L, 1, --j), sort_comp(L, -3, -1)) {
        if (l_unlikely(j < i))  /* j <= i - 1 and a[j] > P, contradicts (a) */
          luaL_error(L, "invalid order function for sorting");
@@ -82,7 +98,7 @@ diff --color -Naur a/src/ltablib.c b/src/ltablib.c
        lua_pop(L, 1);  /* remove a[j] */
      }
      /* after the loop, a[j] <= P and a[j + 1 .. up] >= P */
-@@ -345,6 +371,9 @@
+@@ -345,6 +373,9 @@
    while (lo < up) {  /* loop for tail recursion */
      IdxT p;  /* Pivot index */
      IdxT n;  /* to be used later */
