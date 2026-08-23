@@ -9,7 +9,7 @@
 #define PHP_LUAEXT_H
 
 #ifdef HAVE_CONFIG_H
-# include "config.h"
+#include "config.h"
 #endif
 
 #include <php.h>
@@ -86,26 +86,26 @@ extern zend_class_entry *luaext_ce_closed_sandbox_error;
 extern zend_class_entry *luaext_ce_thread_affinity_error;
 
 ZEND_BEGIN_MODULE_GLOBALS(luaext)
-	/*
+/*
 	 * Sandboxes constructed on this thread, newest first, linked through
 	 * luaext_sandbox::live_next/live_prev. RSHUTDOWN walks the list and closes
 	 * whatever the host left open, so a request cannot leak a Lua heap.
 	 */
-	luaext_sandbox *live_sandboxes;
-	zend_long live_count;
+luaext_sandbox *live_sandboxes;
+zend_long live_count;
 
-	/* Instruction interval for the always-armed interrupt hook; 0 disables it. */
-	zend_long hook_count;
+/* Instruction interval for the always-armed interrupt hook; 0 disables it. */
+zend_long hook_count;
 
-	/* Floor on watchdog wake-ups, bounding worst-case limit overshoot. */
-	zend_long watchdog_resolution_us;
+/* Floor on watchdog wake-ups, bounding worst-case limit overshoot. */
+zend_long watchdog_resolution_us;
 
-	/*
+/*
 	 * Route Lua allocations through the Zend allocator instead of malloc.
 	 * Off by default: a sandbox may outlive the request that built it in a
 	 * worker SAPI, and request-local memory would be freed underneath it.
 	 */
-	bool use_zend_mm;
+bool use_zend_mm;
 ZEND_END_MODULE_GLOBALS(luaext)
 
 ZEND_EXTERN_MODULE_GLOBALS(luaext)
