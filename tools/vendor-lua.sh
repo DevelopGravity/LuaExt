@@ -283,7 +283,14 @@ main() {
     fi
     report "applied ${patch_count} patch(es)"
 
-    if ! diff -r -u -- "${rebuilt_directory}/src" \
+    # phpize builds in-source, so an ordinary local build leaves object files
+    # and dependency stamps beside the vendored sources. Those are ignored
+    # build output, not drift; without excluding them --check fails on any
+    # tree that has been built once.
+    if ! diff -r -u \
+        --exclude='*.lo' --exclude='*.o' --exclude='*.dep' \
+        --exclude='*.gcno' --exclude='*.gcda' --exclude='.libs' \
+        -- "${rebuilt_directory}/src" \
         "${vendor_directory}/src" >"${scratch_directory}/drift.diff"; then
         printf '%s: error: committed src/ does not match upstream + patches\n' \
             "${PROGRAM_NAME}" >&2

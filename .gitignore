@@ -2,6 +2,8 @@
 /autom4te.cache/
 /build/
 /configure
+/configure.ac
+/config.h
 /configure.ac.bak
 /config.h.in
 /config.h.in~
@@ -21,9 +23,11 @@
 /run-tests.php
 /scripts/phpize
 
-# Compiled objects / build output
+# Compiled objects / build output. *.dep are the -MMD dependency stamps the
+# php build system drops beside every source, including inside third_party/.
 *.lo
 *.o
+*.dep
 *.la
 *.a
 *.so
@@ -37,7 +41,15 @@
 modules/
 ide-stubs/
 
-# .phpt test run artifacts (run-tests.php leaves these next to the .phpt)
+# .phpt test run artifacts (run-tests.php leaves these next to the .phpt, so
+# the patterns must reach subdirectories such as tests/00-build/)
+tests/**/*.out
+tests/**/*.diff
+tests/**/*.log
+tests/**/*.exp
+tests/**/*.php
+tests/**/*.sh
+tests/**/*.mem
 tests/*.out
 tests/*.diff
 tests/*.log
@@ -47,6 +59,7 @@ tests/*.sh
 tests/*.mem
 !tests/**/*.phpt
 tmp-php.ini
+php_test_results_*.txt
 
 # Windows build output (php-windows-builder / local BuildPhpExtension runs)
 artifacts/
