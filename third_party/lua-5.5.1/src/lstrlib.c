@@ -1407,6 +1407,16 @@ static int str_format (lua_State *L) {
           break;
         }
         case 'p': {
+#if LUAEXT_LUA_HOOKS
+          /*
+          ** '%p' hands sandboxed code a raw heap address, which leaks
+          ** the allocator layout and defeats ASLR. It cannot be policy
+          ** filtered later ('string.format' itself is essential), so
+          ** the conversion is rejected here with the same message the
+          ** default branch uses for unknown conversions.
+          */
+          return luaL_error(L, "invalid conversion '%%p' to 'format'");
+#else
           const void *p = lua_topointer(L, arg);
           checkformat(L, form, L_FMTFLAGSC, 0);
           if (p == NULL) {  /* avoid calling 'printf' with argument NULL */
@@ -1415,6 +1425,7 @@ static int str_format (lua_State *L) {
           }
           nb = l_sprintf(buff, maxitem, form, p);
           break;
+#endif
         }
         case 'q': {
           if (form[2] != '\0')  /* modifiers? */

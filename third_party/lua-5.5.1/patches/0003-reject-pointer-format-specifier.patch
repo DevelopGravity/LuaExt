@@ -1,0 +1,37 @@
+Subject: reject the pointer format specifier
+
+string.format('%p', v) hands sandboxed code a raw heap address, which
+discloses the allocator layout and defeats ASLR. It cannot be filtered
+by library policy the way string.dump can, because string.format itself
+has to stay available, so the conversion is rejected inside str_format
+with the same message the default branch already produces for unknown
+conversions.
+
+diff --color -Naur a/src/lstrlib.c b/src/lstrlib.c
+--- a/src/lstrlib.c	2026-08-23 15:40:17
++++ b/src/lstrlib.c	2026-08-23 15:40:17
+@@ -1407,6 +1407,16 @@
+           break;
+         }
+         case 'p': {
++#if LUAEXT_LUA_HOOKS
++          /*
++          ** '%p' hands sandboxed code a raw heap address, which leaks
++          ** the allocator layout and defeats ASLR. It cannot be policy
++          ** filtered later ('string.format' itself is essential), so
++          ** the conversion is rejected here with the same message the
++          ** default branch uses for unknown conversions.
++          */
++          return luaL_error(L, "invalid conversion '%%p' to 'format'");
++#else
+           const void *p = lua_topointer(L, arg);
+           checkformat(L, form, L_FMTFLAGSC, 0);
+           if (p == NULL) {  /* avoid calling 'printf' with argument NULL */
+@@ -1415,6 +1425,7 @@
+           }
+           nb = l_sprintf(buff, maxitem, form, p);
+           break;
++#endif
+         }
+         case 'q': {
+           if (form[2] != '\0')  /* modifiers? */
