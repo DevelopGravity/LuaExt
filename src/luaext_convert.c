@@ -14,7 +14,17 @@
  *
  *   Lua -> PHP   throws a PHP exception and returns false, because its callers
  *                are PHP method bodies. It never raises, so it restores the Lua
- *                stack itself on every failure path.
+ *                stack itself on every failure path. Both entry points are
+ *                bracketed with LUAEXT_NO_RAISE_BEGIN/END so a debug build
+ *                asserts that, and the one allocation it makes inside the
+ *                interpreter -- taking a registry slot -- runs under lua_pcall
+ *                so the promise holds even out of memory.
+ *
+ * The push direction is deliberately NOT bracketed: raising is how it reports
+ * failure, and it owns nothing that a longjmp could strand. It reads the
+ * caller's zvals without taking a reference and sets no flags on them, which is
+ * also what makes an immutable or interned array safe to walk here -- there is
+ * no refcount to touch and nothing to un-mark on the way out.
  *
  * Tables are walked raw. Neither direction runs a metamethod — no __index, no
  * __pairs, no __len — so converting the return value of an untrusted script
@@ -907,6 +917,7 @@ bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zv
 {
 	luaext_convert_to_ctx ctx;
 	luaext_convert_step root;
+	bool converted;
 
 	ctx.sandbox = sandbox;
 	ctx.L = L;
@@ -915,7 +926,16 @@ bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zv
 
 	luaext_convert_step_root(&root);
 
-	return luaext_convert_value(&ctx, lua_absindex(L, index), &root, 0, out);
+	/*
+	 * A zval is owned from here down -- `out`, and the part-built arrays inside
+	 * it -- so raising would abandon it. Everything below throws and returns
+	 * instead; this arms the debug assertion that says so.
+	 */
+	LUAEXT_NO_RAISE_BEGIN(L);
+	converted = luaext_convert_value(&ctx, lua_absindex(L, index), &root, 0, out);
+	LUAEXT_NO_RAISE_END(L);
+
+	return converted;
 }
 
 bool luaext_convert_stack_to_array(luaext_sandbox *sandbox, lua_State *L, int first, int count,
@@ -924,26 +944,30 @@ bool luaext_convert_stack_to_array(luaext_sandbox *sandbox, lua_State *L, int fi
 	int top = lua_gettop(L);
 	int base;
 	int offset;
-
-	array_init_size(out, count > 0 ? (uint32_t)count : 0);
+	bool converted = true;
 
 	if (count <= 0) {
+		array_init(out);
 		return true;
 	}
 
 	base = lua_absindex(L, first);
 
+	/* Checked before the array exists, so this path owns nothing to unwind. */
 	if (base < 1 || base > top || base > top - count + 1) {
+		array_init(out);
 		zend_throw_exception_ex(luaext_ce_conversion_error, 0,
 								"Cannot read %d value(s) from the Lua stack: only %d are present",
 								count, top - base + 1 > 0 ? top - base + 1 : 0);
-		zval_ptr_dtor(out);
-		array_init(out);
 
 		return false;
 	}
 
-	for (offset = 0; offset < count; offset++) {
+	array_init_size(out, (uint32_t)count);
+
+	LUAEXT_NO_RAISE_BEGIN(L);
+
+	for (offset = 0; offset < count && converted; offset++) {
 		luaext_convert_to_ctx ctx;
 		luaext_convert_step root;
 		char label[48];
@@ -960,19 +984,23 @@ bool luaext_convert_stack_to_array(luaext_sandbox *sandbox, lua_State *L, int fi
 
 		ZVAL_UNDEF(&element);
 
-		if (!luaext_convert_value(&ctx, base + offset, &root, 0, &element)) {
-			zval_ptr_dtor(out);
-			array_init(out);
+		converted = luaext_convert_value(&ctx, base + offset, &root, 0, &element);
 
-			return false;
+		if (converted) {
+			/* Zero-indexed and in stack order, which is the shape every
+			 * multi-return arrives in on the PHP side. */
+			add_next_index_zval(out, &element);
 		}
-
-		/* Zero-indexed and in stack order, which is the shape every multi-return
-		 * arrives in on the PHP side. */
-		add_next_index_zval(out, &element);
 	}
 
-	return true;
+	LUAEXT_NO_RAISE_END(L);
+
+	if (!converted) {
+		zval_ptr_dtor(out);
+		array_init(out);
+	}
+
+	return converted;
 }
 
 /* -------------------------------------------------------------------------
@@ -1088,10 +1116,31 @@ static bool luaext_convert_freelist_push(luaext_sandbox *sandbox, int ref)
 	return true;
 }
 
+/*
+ * The allocating half of taking a slot, run under lua_pcall.
+ *
+ * Creating the refs table and storing into it are the only allocations the
+ * Lua->PHP direction makes inside the interpreter, and an allocation failure in
+ * Lua is a longjmp. Every caller here is a PHP method body part-way through
+ * building a zval, so a longjmp would abandon it. Protecting these two calls is
+ * what makes "throws a PHP exception and returns" true rather than
+ * true-unless-out-of-memory.
+ *
+ * Arguments: 1 = the value to reference, 2 = the slot to store it in.
+ */
+static int luaext_convert_ref_store(lua_State *L)
+{
+	(void)luaext_convert_refs_table(LUAEXT_SB(L), L, true);
+
+	lua_pushvalue(L, 1);
+	lua_rawseti(L, -2, lua_tointeger(L, 2));
+
+	return 0;
+}
+
 int luaext_convert_ref_create(luaext_sandbox *sandbox, lua_State *L, int index)
 {
 	int ref;
-	int table;
 
 	if (sandbox == NULL || L == NULL) {
 		zend_throw_exception(luaext_ce_conversion_error,
@@ -1101,14 +1150,11 @@ int luaext_convert_ref_create(luaext_sandbox *sandbox, lua_State *L, int index)
 
 	index = lua_absindex(L, index);
 
-	if (!lua_checkstack(L, 3)) {
+	if (!lua_checkstack(L, 5)) {
 		zend_throw_exception(luaext_ce_conversion_error,
 							 "Cannot reference a Lua value: the interpreter stack cannot grow", 0);
 		return -1;
 	}
-
-	(void)luaext_convert_refs_table(sandbox, L, true);
-	table = lua_gettop(L);
 
 	if (sandbox->ref_freelist_len > 0) {
 		ref = sandbox->ref_freelist[--sandbox->ref_freelist_len];
@@ -1118,7 +1164,6 @@ int luaext_convert_ref_create(luaext_sandbox *sandbox, lua_State *L, int index)
 		}
 
 		if (sandbox->next_ref == INT_MAX) {
-			lua_settop(L, table - 1);
 			zend_throw_exception(luaext_ce_conversion_error,
 								 "Cannot reference a Lua value: the sandbox has no free registry "
 								 "slots left",
@@ -1129,9 +1174,23 @@ int luaext_convert_ref_create(luaext_sandbox *sandbox, lua_State *L, int index)
 		ref = sandbox->next_ref++;
 	}
 
+	lua_pushcfunction(L, luaext_convert_ref_store);
 	lua_pushvalue(L, index);
-	lua_rawseti(L, table, (lua_Integer)ref);
-	lua_settop(L, table - 1);
+	lua_pushinteger(L, (lua_Integer)ref);
+
+	if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+		const char *message = lua_tostring(L, -1);
+
+		/* Nothing was written, so the slot goes straight back rather than being
+		 * stranded between the counter and the freelist. */
+		(void)luaext_convert_freelist_push(sandbox, ref);
+
+		zend_throw_exception_ex(luaext_ce_conversion_error, 0, "Cannot reference a Lua value: %s",
+								message != NULL ? message : "the interpreter refused the store");
+		lua_pop(L, 1);
+
+		return -1;
+	}
 
 	return ref;
 }
