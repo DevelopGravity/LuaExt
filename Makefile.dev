@@ -18,7 +18,7 @@ PHP ?= php
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 FUZZ_SECONDS ?= 30
 
-.PHONY: build build-debug test format format-check vendor-verify gen-stubs gen-stubs-check build-ide-stubs fuzz clean
+.PHONY: build build-debug test format format-check vendor-verify gen-stubs gen-stubs-check docs-check build-ide-stubs fuzz clean
 
 ## Configure + build a release extension build.
 build:
@@ -64,6 +64,11 @@ gen-stubs:
 ## Check arginfo is up to date without writing.
 gen-stubs-check:
 	tools/gen-stubs.sh --check
+
+## Verify documentation samples only reference API that exists. Catches
+## wrong named arguments, which a syntax check cannot see.
+docs-check:
+	php tools/check-docs-api.php
 
 ## Build the polished, IDE-facing stub package sources into ide-stubs/.
 ## tools/build-ide-stubs.php belongs to the stub-authoring workstream.

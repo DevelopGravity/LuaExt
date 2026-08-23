@@ -147,10 +147,35 @@ jobs:
       - name: Run all generated-artifact drift checks
         run: tools/check-generated.sh
 
+  # -------------------------------------------------------------------
+  # Documentation samples must only use API that really exists. A syntax
+  # check cannot catch this: `new FileStat(sizeInBytes: 10)` parses fine
+  # and still fails at runtime, because the parameter is named $size.
+  # This resolves every documented constructor call against the stubs.
+  # -------------------------------------------------------------------
+  docs-api:
+    name: Documentation API references
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP 8.5
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          tools: none
+          extensions: none
+
+      - name: Lint documentation samples
+        run: |
+          set -euo pipefail
+          php tools/check-docs-api.php
+
   lint-required:
     name: Lint required checks
     if: always()
-    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks]
+    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api]
     runs-on: ubuntu-latest
     steps:
       - name: Check all lint jobs succeeded
