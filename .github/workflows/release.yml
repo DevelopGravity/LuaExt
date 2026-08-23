@@ -294,14 +294,19 @@ jobs:
 
       - name: Install PIE
         shell: bash
+        # Attestation is verified on every OS: an unverified phar on Windows
+        # would be the same supply-chain exposure it is anywhere else.
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "Windows" ]; then
-            curl -fL --output pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
+            PIE_PATH=pie.phar
           else
-            curl -fL --output /tmp/pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
-            gh attestation verify --owner php /tmp/pie.phar
-            chmod +x /tmp/pie.phar
+            PIE_PATH=/tmp/pie.phar
+          fi
+          curl -fL --output "$PIE_PATH" https://github.com/php/pie/releases/latest/download/pie.phar
+          gh attestation verify --owner php "$PIE_PATH"
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            chmod +x "$PIE_PATH"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -316,7 +321,22 @@ jobs:
       - name: pie install (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        # pwsh does not stop on a failing native command, and Select-String
+        # -Quiet only prints a boolean, so without explicit checks this step
+        # could pass with nothing installed at all.
         run: |
           php pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "pie repository:add failed with exit code $LASTEXITCODE."
+            exit 1
+          }
           php pie.phar install "$env:LUAEXT_PACKAGE_NAME`:$env:LUAEXT_TAG" --no-interaction
-          php -m | Select-String -Pattern luaext -Quiet
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "pie install failed with exit code $LASTEXITCODE."
+            exit 1
+          }
+          $loaded = php -m | Select-String -Pattern luaext -Quiet
+          if (-not $loaded) {
+            Write-Error "luaext did not appear in 'php -m' after pie install."
+            exit 1
+          }

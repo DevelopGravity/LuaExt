@@ -196,10 +196,20 @@ jobs:
 
       - name: make test
         working-directory: luaext
-        run: make test TESTS="${{ matrix.test_scope }}"
+        # A scoped run falls back to the full suite while the scoped directory
+        # does not exist yet; pointing run-tests at a missing path would fail
+        # this required gate on every PR until that test phase lands.
         env:
           REPORT_EXIT_STATUS: '1'
           NO_INTERACTION: '1'
+          LUAEXT_TEST_SCOPE: ${{ matrix.test_scope }}
+        run: |
+          SCOPE="$LUAEXT_TEST_SCOPE"
+          if [ -n "$SCOPE" ] && [ ! -d "$SCOPE" ]; then
+            echo "::notice::Test scope '$SCOPE' does not exist yet; running the full suite instead."
+            SCOPE=""
+          fi
+          make test TESTS="$SCOPE"
 
       - name: Upload failing test artifacts
         if: failure()
