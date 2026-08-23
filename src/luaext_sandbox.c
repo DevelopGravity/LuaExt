@@ -78,6 +78,32 @@ static bool luaext_sandbox_check_open(const luaext_sandbox *sandbox)
 }
 
 /*
+ * A sandbox belongs to the thread that built it. The interpreter has no
+ * internal locking and the watchdog will key its CPU clock to one thread, so a
+ * second thread touching the state is a data race first and a use-after-free
+ * once close() can run concurrently with execution.
+ *
+ * interrupt() is the deliberate exception: it only sets an atomic flag, and
+ * aborting a runaway script from outside is the whole point of it. It must
+ * NOT call this.
+ *
+ * owner_thread is zero until construction succeeds, which keeps a
+ * part-constructed object usable by the thread that is still building it.
+ */
+static bool luaext_sandbox_check_thread(const luaext_sandbox *sandbox)
+{
+	if (sandbox->owner_thread != 0 && sandbox->owner_thread != luaext_current_thread()) {
+		zend_throw_exception(luaext_ce_thread_affinity_error,
+							 "A sandbox may only be used from the thread that created it; "
+							 "only interrupt() may be called from another thread",
+							 0);
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * Wave 1 ships the interpreter lifecycle only. Methods whose subsystem has not
  * landed yet say so plainly instead of returning a plausible-looking lie.
  *
@@ -85,7 +111,7 @@ static bool luaext_sandbox_check_open(const luaext_sandbox *sandbox)
  */
 #define LUAEXT_METHOD_PENDING(sandbox, name)                                                       \
 	do {                                                                                           \
-		if (!luaext_sandbox_check_open(sandbox)) {                                                 \
+		if (!luaext_sandbox_check_thread(sandbox) || !luaext_sandbox_check_open(sandbox)) {        \
 			RETURN_THROWS();                                                                       \
 		}                                                                                          \
 		zend_throw_error(NULL, "DevelopGravity\\LuaExt\\Sandbox::%s() is not implemented yet",     \
@@ -411,6 +437,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 		ZVAL_COPY(&sandbox->config_zv, config);
 	}
 
+	/*
+	 * Recorded, NOT enforced: luaext_sandbox_allocate is still a bare realloc
+	 * that never consults this. Sandbox::getMemoryUsage() is pending for the
+	 * same reason, so nothing reports a budget that does not exist yet.
+	 */
 	sandbox->alloc.limit = sandbox->policy.limits.memory_bytes;
 	sandbox->owner_thread = luaext_current_thread();
 	sandbox->seed = luaext_sandbox_seed();
@@ -442,9 +473,23 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, close)
 {
+	luaext_sandbox *sandbox;
+
 	ZEND_PARSE_PARAMETERS_NONE();
 
-	luaext_sandbox_close(Z_LUAEXT_SANDBOX_P(ZEND_THIS));
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	/*
+	 * Closing from a foreign thread would call lua_close() on a state another
+	 * thread may be executing, so this is refused rather than raced. The
+	 * destructor path deliberately skips the check: an object is only ever
+	 * freed by the thread that owns it.
+	 */
+	if (!luaext_sandbox_check_thread(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	luaext_sandbox_close(sandbox);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, isClosed)
