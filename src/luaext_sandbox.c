@@ -12,6 +12,7 @@
 #include "luaext_sandbox.h"
 
 #include "luaext_alloc.h"
+#include "luaext_error.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -448,6 +449,16 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 
 	sandbox->running_L = sandbox->L;
 	lua_atpanic(sandbox->L, luaext_sandbox_panic);
+
+	/*
+	 * Before any library is opened, because it is what makes an error
+	 * unforgeable. Without the metatable this installs, the error subsystem
+	 * falls back to raising a plain Lua string — which a script can catch with
+	 * pcall. A limit breach that a script can catch is not a limit, so this is
+	 * not an optional step and its absence must never be silent.
+	 */
+	luaext_error_init(sandbox);
+	ZEND_ASSERT(luaext_error_is_ready(sandbox));
 
 	luaext_sandbox_open_libraries(sandbox);
 	luaext_sandbox_link(sandbox);

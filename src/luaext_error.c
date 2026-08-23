@@ -122,6 +122,28 @@ static int luaext_error_tostring(lua_State *L)
 	return 1;
 }
 
+bool luaext_error_is_ready(const luaext_sandbox *sandbox)
+{
+	lua_State *L;
+	bool ready;
+
+	if (sandbox == NULL || sandbox->L == NULL) {
+		return false;
+	}
+
+	L = sandbox->L;
+
+	if (!lua_checkstack(L, 2)) {
+		return false;
+	}
+
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_errmt);
+	ready = lua_type(L, -1) == LUA_TTABLE;
+	lua_pop(L, 1);
+
+	return ready;
+}
+
 void luaext_error_init(luaext_sandbox *sandbox)
 {
 	lua_State *L;

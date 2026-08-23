@@ -53,6 +53,16 @@
 void luaext_error_init(luaext_sandbox *sandbox);
 
 /*
+ * Whether the metatable is installed, i.e. whether an error raised now would be
+ * a real unforgeable userdata rather than the plain-string fallback.
+ *
+ * That fallback is CATCHABLE, so a sandbox that skipped luaext_error_init()
+ * silently loses the guarantee that a script cannot pcall its way past its own
+ * limits. Construction asserts on this rather than letting it pass unnoticed.
+ */
+bool luaext_error_is_ready(const luaext_sandbox *sandbox);
+
+/*
  * Push a luaext_error_ud describing `kind` and raise it with lua_error().
  * Does not return.
  *
