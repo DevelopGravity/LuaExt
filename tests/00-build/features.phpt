@@ -15,7 +15,9 @@ var_dump(array_keys($features));
 var_dump($features['cpuLimit'] instanceof LimitSupport);
 var_dump($features['wallClockLimit'] instanceof LimitSupport);
 var_dump(is_float($features['cpuResolutionSeconds']));
-var_dump($features['threadSafe'] === (PHP_ZTS === 1));
+// PHP_ZTS is a bool, so comparing it against 1 is always false and would make
+// this assert "the extension is never thread safe" on every platform.
+var_dump($features['threadSafe'] === PHP_ZTS);
 var_dump(is_string($features['platform']) && $features['platform'] !== '');
 
 // The watchdog does not exist yet, so neither limit is enforced and this says
