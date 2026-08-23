@@ -1,0 +1,50 @@
+# Authoritative list of vendored Lua translation units compiled into the
+# luaext extension. Consumers (config.m4, config.w32, tools/vendor-lua.sh)
+# must ignore blank lines and lines whose first non-blank character is '#',
+# and treat every remaining line as one file name relative to
+# third_party/lua-5.5.1/src/.
+#
+# The upstream src/ tree is vendored complete and nothing is deleted from
+# it, but these five translation units are deliberately NOT compiled:
+#
+#   lua.c      stand-alone interpreter front end (has a main())
+#   luac.c     stand-alone bytecode compiler front end (has a main())
+#   linit.c    upstream library opener; replaced by src/luaext_openlibs.c
+#              so that no unwanted library is ever installed
+#   liolib.c   real-filesystem io library; replaced by the VFS emulation
+#   loadlib.c  package/require plus dlopen; replaced by luaext_require.c
+#
+# Leaving them out of the link is defence in depth: dlopen(), popen() and
+# the real io library are then not merely unreachable from Lua, they are
+# not in the binary at all.
+#
+# 29 files.
+lapi.c
+lauxlib.c
+lbaselib.c
+lcode.c
+lcorolib.c
+lctype.c
+ldblib.c
+ldebug.c
+ldo.c
+ldump.c
+lfunc.c
+lgc.c
+llex.c
+lmathlib.c
+lmem.c
+lobject.c
+lopcodes.c
+loslib.c
+lparser.c
+lstate.c
+lstring.c
+lstrlib.c
+ltable.c
+ltablib.c
+ltm.c
+lundump.c
+lutf8lib.c
+lvm.c
+lzio.c

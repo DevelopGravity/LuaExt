@@ -1,0 +1,145 @@
+Subject: add the luaext interrupt-hook header and the luaconf overlay
+
+Adds src/luaext_lua_hooks.h, the contract the extension codes against:
+a luaext_irq prefix struct (an atomic 'interrupted' flag plus a reason
+byte) that the extension stores in every lua_State's extra space, the
+LUAEXT_IRQ() accessor and the LUAEXT_CHECK() macro that the patched C
+loops call. The header includes <stdatomic.h> and nothing else; it must
+never pull in a PHP header because it is compiled as part of Lua.
+
+Appends a sandbox overlay to the end of luaconf.h, in the space upstream
+reserves for local configuration. The whole block hangs off
+LUAEXT_LUA_HOOKS, which defaults to 0, so -DLUAEXT_LUA_HOOKS=0 (or no
+-D at all) leaves stock upstream Lua behaviour and only defines
+LUAEXT_CHECK() as a no-op. With LUAEXT_LUA_HOOKS=1 the overlay:
+
+  * includes luaext_lua_hooks.h;
+  * forces LUA_API / LUALIB_API / LUAI_FUNC / LUAI_DDEC / LUAI_DDEF to
+    hidden visibility on GCC and Clang, so the extension exports no
+    lua_* symbol that could collide with an already-loaded liblua
+    (MSVC is untouched: LUA_BUILD_AS_DLL is never defined for us, so
+    nothing is exported there either). LUAI_FUNC has to be defined
+    together with LUAI_DDEC and LUAI_DDEF because llimits.h defines all
+    three inside one '#if !defined(LUAI_FUNC)' block;
+  * pins LUAI_MAXCCALLS at 200 (the current upstream default) so a
+    future upstream change cannot silently raise the C recursion
+    ceiling under us;
+  * empties LUA_PATH_DEFAULT and LUA_CPATH_DEFAULT, since package and
+    require are replaced by the extension and loadlib.c is not built.
+
+No LUA_USE_POSIX / LUA_USE_LINUX / LUA_USE_MACOSX / LUA_USE_DLOPEN is
+defined anywhere: the vendored Lua is built as strict ISO C so that
+dlopen(), popen() and friends are unreachable at link time.
+
+diff --color -Naur a/src/luaconf.h b/src/luaconf.h
+--- a/src/luaconf.h	2026-08-23 15:40:17
++++ b/src/luaconf.h	2026-08-23 15:40:17
+@@ -751,6 +751,84 @@
+ */
+ 
+ 
++/*
++** {==================================================================
++** LuaExt sandbox overlay (DevelopGravity 'luaext' PHP extension).
++**
++** Everything below is inert unless LUAEXT_LUA_HOOKS is defined to a
++** non-zero value: compiling with -DLUAEXT_LUA_HOOKS=0, or without the
++** macro at all, restores stock upstream Lua behaviour exactly.
++** ===================================================================
++*/
++
++#if !defined(LUAEXT_LUA_HOOKS)
++#define LUAEXT_LUA_HOOKS	0
++#endif
++
++#if LUAEXT_LUA_HOOKS		/* { */
++
++/*
++** Interrupt-delivery contract shared with the extension. This header
++** pulls in <stdatomic.h> only; it must never include a PHP header.
++** It defines LUAEXT_IRQ() and LUAEXT_CHECK(), which the patched C
++** loops in lstrlib.c / ltablib.c / lutf8lib.c call.
++*/
++#include "luaext_lua_hooks.h"
++
++/*
++** The extension is one shared object that links Lua statically and must
++** not export any 'lua_*' / 'luaL_*' symbol: an already-loaded liblua
++** (for instance from the old 'luasandbox' extension) would otherwise
++** collide with it. MSVC is left alone -- LUA_BUILD_AS_DLL is never
++** defined for this build, so nothing is exported there either.
++*/
++#if defined(__GNUC__) || defined(__clang__)	/* { */
++
++#undef LUA_API
++#define LUA_API		__attribute__((visibility("hidden"))) extern
++
++#undef LUALIB_API
++#define LUALIB_API	LUA_API
++
++/*
++** 'llimits.h' (included after this file) defines LUAI_FUNC, LUAI_DDEC
++** and LUAI_DDEF together inside a single '#if !defined(LUAI_FUNC)'
++** block, so overriding LUAI_FUNC means providing all three here.
++*/
++#define LUAI_FUNC	__attribute__((visibility("hidden"))) extern
++#define LUAI_DDEC(dec)	LUAI_FUNC dec
++/* upstream leaves LUAI_DDEF empty and relies on the matching LUAI_DDEC
++   declaration to carry the visibility over to the definition; marking
++   the definition too removes that dependency */
++#define LUAI_DDEF	__attribute__((visibility("hidden")))
++
++#endif						/* } */
++
++/*
++** Pin the C-call / C-recursion ceiling. 'ldo.h' honours a previous
++** definition; 200 is also the upstream default, so this only freezes
++** the value against future upstream changes.
++*/
++#undef LUAI_MAXCCALLS
++#define LUAI_MAXCCALLS		200
++
++/*
++** No filesystem search paths: 'package' and 'require' are replaced
++** wholesale by the extension and 'loadlib.c' is never compiled.
++*/
++#undef LUA_PATH_DEFAULT
++#define LUA_PATH_DEFAULT	""
++#undef LUA_CPATH_DEFAULT
++#define LUA_CPATH_DEFAULT	""
++
++#else				/* }{ */
++
++#define LUAEXT_CHECK(L)		((void)0)
++
++#endif				/* } */
++
++/* }================================================================== */
++
+ 
+ #endif
+ 
+diff --color -Naur a/src/luaext_lua_hooks.h b/src/luaext_lua_hooks.h
+--- a/src/luaext_lua_hooks.h	1969-12-31 19:00:00
++++ b/src/luaext_lua_hooks.h	2026-08-23 15:40:17
+@@ -0,0 +1,20 @@
++#ifndef LUAEXT_LUA_HOOKS_H
++#define LUAEXT_LUA_HOOKS_H
++#include <stdatomic.h>
++/* The extension's sandbox struct begins with this prefix; a pointer to it
++   is stored in every lua_State's extra space (set right after lua_newstate,
++   inherited by coroutines via lua_newthread). */
++typedef struct luaext_irq {
++    atomic_uchar interrupted;
++    unsigned char reason;
++} luaext_irq;
++struct lua_State;
++/* Defined by the extension (src/luaext_interrupt.c). Does not return. */
++extern void luaext_raise_interrupt(struct lua_State *L);
++#define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
++#define LUAEXT_CHECK(L) \
++  do { luaext_irq *luaext_q_ = LUAEXT_IRQ(L); \
++       if (luaext_q_ != NULL && \
++           atomic_load_explicit(&luaext_q_->interrupted, memory_order_relaxed)) \
++         luaext_raise_interrupt(L); } while (0)
++#endif

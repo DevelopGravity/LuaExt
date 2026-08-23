@@ -1,0 +1,15 @@
+# Pinned upstream Lua release vendored into this repository.
+#
+# Format: one 'key=value' per line; '#' introduces a comment. Keep it that
+# way -- tools/vendor-lua.sh and the upstream-watch workflow parse this file.
+#
+# The sha256 below was computed locally from the downloaded tarball and
+# matches the checksum published on https://www.lua.org/ftp/ for the same
+# file name, date and size.
+
+version=5.5.1
+url=https://www.lua.org/ftp/lua-5.5.1.tar.gz
+sha256=1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
+size=398643
+released=2026-07-24
+tarball_prefix=lua-5.5.1
