@@ -32,7 +32,7 @@ readonly REPOSITORY_ROOT
 
 # Upstream translation units that are deliberately never compiled into the
 # extension; kept in sync with the note at the top of SOURCES.
-readonly EXCLUDED_SOURCES_PATTERN='^(lua|luac|linit|liolib|loadlib)\.c$'
+readonly EXCLUDED_SOURCES_PATTERN='^(lua|luac|linit|liolib|loadlib|loslib)\.c$'
 
 check_mode=0
 keep_scratch=0
