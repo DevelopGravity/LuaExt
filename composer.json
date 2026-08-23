@@ -1,0 +1,33 @@
+{
+  "name": "developgravity/lua-extension",
+  "description": "A PHP extension embedding Lua 5.5 as a sandbox for untrusted code, with portable resource limits, call-scoped coroutines and a host-backed virtual filesystem.",
+  "type": "php-ext",
+  "license": "MIT",
+  "keywords": [
+    "lua",
+    "sandbox",
+    "untrusted",
+    "scripting",
+    "extension"
+  ],
+  "require": {
+    "php": ">=8.5"
+  },
+  "php-ext": {
+    "extension-name": "luaext",
+    "support-nts": true,
+    "support-zts": true,
+    "configure-options": [
+      {
+        "name": "enable-luaext-debug",
+        "description": "Build with internal assertions and the Lua API checker enabled.",
+        "needs-value": false
+      },
+      {
+        "name": "enable-luaext-sanitize",
+        "description": "Comma-separated list of sanitizers to build with, for example address,undefined.",
+        "needs-value": true
+      }
+    ]
+  }
+}

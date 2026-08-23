@@ -1,0 +1,89 @@
+// vim:ft=javascript
+//
+// luaext — a sandbox for running untrusted Lua 5.5 inside PHP.
+//
+// The Windows counterpart of config.m4, and it makes the same split: the
+// vendored interpreter and our own sources share one set of defines, and the
+// vendored files additionally get their warnings suppressed.
+//
+// LUA_BUILD_AS_DLL is deliberately never defined. Without it the vendored Lua
+// declares nothing __declspec(dllexport), which is the Windows half of the
+// symbol hygiene that -fvisibility=hidden provides elsewhere: a process that
+// also loads a real Lua DLL cannot collide with the copy inside php_luaext.dll.
+
+ARG_ENABLE("luaext", "Enable luaext, a Lua 5.5 sandbox for untrusted code", "no");
+
+ARG_ENABLE("luaext-debug",
+	"LUAEXT: enable internal assertions and the Lua API checker", "no");
+
+ARG_ENABLE("luaext-sanitize",
+	"LUAEXT: comma-separated sanitizer list, e.g. address", "no");
+
+if (PHP_LUAEXT != "no") {
+	var luaext_root = configure_module_dirname;
+	var luaext_lua_dir = luaext_root + "\\third_party\\lua-5.5.1\\src";
+	var luaext_manifest = luaext_root + "\\third_party\\lua-5.5.1\\SOURCES";
+
+	if (!FSO.FileExists(luaext_manifest)) {
+		ERROR("luaext: missing " + luaext_manifest +
+			"; the vendored Lua tree is incomplete");
+	}
+
+	// third_party/lua-5.5.1/SOURCES is the authoritative list of translation
+	// units, shared with config.m4 and tools/vendor-lua.sh: skip blank lines
+	// and comments, and treat every other line as one file name.
+	var luaext_lua_sources = [];
+	var luaext_manifest_file = FSO.OpenTextFile(luaext_manifest, 1);
+
+	while (!luaext_manifest_file.AtEndOfStream) {
+		var luaext_line = luaext_manifest_file.ReadLine()
+			.replace(/#.*$/, "")
+			.replace(/\s+/g, "");
+
+		if (luaext_line.length > 0) {
+			luaext_lua_sources.push(luaext_line);
+		}
+	}
+
+	luaext_manifest_file.Close();
+
+	if (luaext_lua_sources.length < 1) {
+		ERROR("luaext: " + luaext_manifest + " lists no source files");
+	}
+
+	STDOUT.WriteLine("  luaext: " + luaext_lua_sources.length +
+		" vendored Lua translation units");
+
+	// Shared by both flag sets. LUAEXT_LUA_HOOKS activates the sandbox overlay
+	// at the end of the vendored luaconf.h, and the declarations our sources
+	// see have to match the ones the interpreter was built with.
+	var luaext_flags = "/DLUAEXT_LUA_HOOKS=1 /I" + luaext_root + "\\src /I" +
+		luaext_lua_dir + " ";
+
+	if (PHP_LUAEXT_DEBUG != "no") {
+		luaext_flags += "/DLUAEXT_DEBUG=1 /DLUA_USE_APICHECK=1 ";
+	}
+
+	if (PHP_LUAEXT_SANITIZE != "no") {
+		var luaext_sanitizers = (PHP_LUAEXT_SANITIZE == "yes")
+			? "address"
+			: PHP_LUAEXT_SANITIZE;
+
+		// MSVC only implements the address sanitizer, and only with /Zi.
+		luaext_flags += "/fsanitize=" + luaext_sanitizers + " /Zi ";
+	}
+
+	EXTENSION("luaext",
+		"src/luaext.c src/luaext_sandbox.c src/luaext_interrupt.c src/luaext_pending.c",
+		null,
+		luaext_flags);
+
+	// Same target, so these link into php_luaext.dll and inherit CFLAGS_LUAEXT;
+	// the private object directory exists purely so the vendored files can be
+	// given extra flags of their own through CFLAGS_BD_LUAEXT_LUA. Those come
+	// after CFLAGS_LUAEXT on the command line, so /w wins for these files only.
+	ADD_SOURCES(luaext_lua_dir, luaext_lua_sources.join(" "), "luaext", "luaext_lua");
+	ADD_FLAG("CFLAGS_BD_LUAEXT_LUA", "/w");
+
+	AC_DEFINE("HAVE_LUAEXT", 1, "Define to 1 if the luaext extension is built.");
+}
