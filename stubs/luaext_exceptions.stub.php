@@ -14,14 +14,14 @@
  *
  * The remaining classes report host misuse and never cross into Lua.
  *
+ * Note: gen_stub.php rejects `declare` and `use` statements, so this file has
+ * neither; cross-namespace names are written in full. Typing is governed by the
+ * generated arginfo, not by a strict_types declaration here.
+ *
  * @generate-class-entries
  */
 
-declare(strict_types=1);
-
 namespace DevelopGravity\LuaExt\Exception;
-
-use DevelopGravity\LuaExt\Sandbox;
 
 /**
  * Implemented by everything this extension throws, so a host can catch the lot
@@ -47,7 +47,7 @@ interface LuaThrowable extends \Throwable
     public function getLuaTraceAsString(): string;
 
     /** Null once the sandbox has been closed or the failure preceded it. */
-    public function getSandbox(): ?Sandbox;
+    public function getSandbox(): ?\DevelopGravity\LuaExt\Sandbox;
 
     /** Chunk in which the failure occurred. */
     public function getChunkName(): ?string;
@@ -73,7 +73,7 @@ abstract class LuaException extends \RuntimeException implements LuaThrowable
     public function getLuaTraceAsString(): string {}
 
     /** @inheritDoc */
-    public function getSandbox(): ?Sandbox {}
+    public function getSandbox(): ?\DevelopGravity\LuaExt\Sandbox {}
 
     /** @inheritDoc */
     public function getChunkName(): ?string {}
@@ -98,7 +98,7 @@ abstract class LuaLogicException extends \LogicException implements LuaThrowable
     public function getLuaTraceAsString(): string {}
 
     /** @inheritDoc */
-    public function getSandbox(): ?Sandbox {}
+    public function getSandbox(): ?\DevelopGravity\LuaExt\Sandbox {}
 
     /** @inheritDoc */
     public function getChunkName(): ?string {}

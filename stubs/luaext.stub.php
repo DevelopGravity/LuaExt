@@ -7,21 +7,14 @@
  * arginfo consumed by the build and the IDE stub package published for editors
  * and static analysers, so a signature can never drift from the binary.
  *
+ * Note: gen_stub.php rejects `declare` and `use` statements, so this file has
+ * neither; names are written relative to the namespace instead. Typing is
+ * governed by the generated arginfo, not by a strict_types declaration here.
+ *
  * @generate-class-entries
  */
 
-declare(strict_types=1);
-
 namespace DevelopGravity\LuaExt;
-
-use DevelopGravity\LuaExt\Exception\CapabilityError;
-use DevelopGravity\LuaExt\Exception\ClosedSandboxError;
-use DevelopGravity\LuaExt\Exception\ConfigurationError;
-use DevelopGravity\LuaExt\Exception\ConversionError;
-use DevelopGravity\LuaExt\Exception\FatalError;
-use DevelopGravity\LuaExt\Exception\RuntimeError;
-use DevelopGravity\LuaExt\Exception\SyntaxError;
-use DevelopGravity\LuaExt\Exception\ThreadAffinityError;
 
 /**
  * Where a script's `print()` and `io.write()` output goes.
@@ -104,8 +97,12 @@ enum LimitSupport
  * Exposure is always explicit: a method with no attribute and no entry in the
  * `$methods` allowlist is invisible to scripts, so adding a public method to a
  * host class can never silently widen what untrusted code may call.
+ *
+ * Carries no #[Attribute] marker here because gen_stub cannot resolve constants
+ * it does not itself declare; MINIT calls zend_internal_attribute_register()
+ * with ZEND_ATTRIBUTE_TARGET_METHOD instead, and the published IDE stubs
+ * restore the marker for editors.
  */
-#[\Attribute(\Attribute::TARGET_METHOD)]
 final class LuaMethod
 {
     /** Name seen by Lua; defaults to the PHP method name. */
@@ -218,7 +215,7 @@ final readonly class Capabilities
     /**
      * Return a copy with the named capabilities replaced.
      *
-     * @throws ConfigurationError if an unknown capability is named.
+     * @throws Exception\ConfigurationError if an unknown capability is named.
      */
     public function with(mixed ...$overrides): Capabilities {}
 }
@@ -290,7 +287,7 @@ final readonly class Limits
     /**
      * Return a copy with the named limits replaced.
      *
-     * @throws ConfigurationError if an unknown limit is named.
+     * @throws Exception\ConfigurationError if an unknown limit is named.
      */
     public function with(mixed ...$overrides): Limits {}
 }
@@ -345,7 +342,7 @@ final readonly class VfsQuota
     /**
      * Return a copy with the named quotas replaced.
      *
-     * @throws ConfigurationError if an unknown quota is named.
+     * @throws Exception\ConfigurationError if an unknown quota is named.
      */
     public function with(mixed ...$overrides): VfsQuota {}
 }
@@ -410,7 +407,7 @@ final readonly class SandboxConfig
     /**
      * Return a copy with the named settings replaced.
      *
-     * @throws ConfigurationError if an unknown setting is named.
+     * @throws Exception\ConfigurationError if an unknown setting is named.
      */
     public function with(mixed ...$overrides): SandboxConfig {}
 }
@@ -506,8 +503,8 @@ final class Sandbox
     /**
      * Compile source into a callable function without running it.
      *
-     * @throws SyntaxError if the chunk does not parse.
-     * @throws ClosedSandboxError if the sandbox is closed.
+     * @throws Exception\SyntaxError if the chunk does not parse.
+     * @throws Exception\ClosedSandboxError if the sandbox is closed.
      */
     public function compile(string $code, string $chunkName = '=(load)'): LuaFunction {}
 
@@ -517,8 +514,8 @@ final class Sandbox
      * Requires the loadBytecode capability. Malformed bytecode can crash the
      * interpreter, so only load blobs you produced yourself.
      *
-     * @throws CapabilityError if the capability is not enabled.
-     * @throws SyntaxError if the blob is not a valid chunk.
+     * @throws Exception\CapabilityError if the capability is not enabled.
+     * @throws Exception\SyntaxError if the blob is not a valid chunk.
      */
     public function compileBinary(string $bytecode, string $chunkName = '=(binary)'): LuaFunction {}
 
@@ -529,7 +526,7 @@ final class Sandbox
      * a hot path.
      *
      * @return list<mixed>
-     * @throws SyntaxError|RuntimeError|FatalError
+     * @throws Exception\SyntaxError|Exception\RuntimeError|Exception\FatalError
      */
     #[\NoDiscard]
     public function eval(string $code, string $chunkName = '=(eval)'): array {}
@@ -538,7 +535,7 @@ final class Sandbox
      * Call a global function by dotted path, for example "app.handlers.main".
      *
      * @return list<mixed> every value the function returned
-     * @throws RuntimeError|FatalError
+     * @throws Exception\RuntimeError|Exception\FatalError
      */
     #[\NoDiscard]
     public function call(string $path, mixed ...$args): array {}
@@ -546,14 +543,14 @@ final class Sandbox
     /**
      * Read a global by dotted path.
      *
-     * @throws ConversionError if the value has no PHP representation.
+     * @throws Exception\ConversionError if the value has no PHP representation.
      */
     public function getGlobal(string $path): mixed {}
 
     /**
      * Write a global by dotted path, creating intermediate tables.
      *
-     * @throws ConversionError if the value has no Lua representation.
+     * @throws Exception\ConversionError if the value has no Lua representation.
      */
     public function setGlobal(string $path, mixed $value): void {}
 
@@ -580,8 +577,8 @@ final class Sandbox
      * exposed; properties are never reachable and the object itself never
      * crosses into Lua.
      *
-     * @param list<string>|null $methods Explicit allowlist, overriding attributes.
-     * @throws ConfigurationError if neither attributes nor an allowlist select any method.
+     * @param null|list<string> $methods Explicit allowlist, overriding attributes.
+     * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method.
      */
     public function registerObject(string $name, object $instance, ?array $methods = null): void {}
 
@@ -681,7 +678,7 @@ final class LuaFunction
 
     /**
      * @return list<mixed> every value the function returned
-     * @throws RuntimeError|FatalError|ClosedSandboxError|ThreadAffinityError
+     * @throws Exception\RuntimeError|Exception\FatalError|Exception\ClosedSandboxError|Exception\ThreadAffinityError
      */
     #[\NoDiscard]
     public function call(mixed ...$args): array {}
@@ -696,7 +693,7 @@ final class LuaFunction
     /**
      * Serialise to precompiled bytecode.
      *
-     * @throws CapabilityError if the dumpBytecode capability is not enabled.
+     * @throws Exception\CapabilityError if the dumpBytecode capability is not enabled.
      */
     public function dump(bool $strip = true): string {}
 
