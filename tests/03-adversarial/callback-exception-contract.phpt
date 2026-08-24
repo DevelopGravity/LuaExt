@@ -2,8 +2,6 @@
 A callback's RuntimeError is the script's to catch and anything else is not
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs the pcall replacement from the library-policy wave. The bridge, the retention and the rethrow are wired and working; what is missing is that Lua's own pcall is still upstream's, so it can swallow the fatal this test says it must not.
 --FILE--
 <?php
 
