@@ -182,8 +182,7 @@ static bool luaext_exec_push_values(luaext_sandbox *sandbox, zval *values, uint3
 	L = sandbox->L;
 	top = lua_gettop(L);
 
-	if (count > (uint32_t)INT_MAX - LUA_MINSTACK ||
-		!lua_checkstack(L, (int)count + LUA_MINSTACK)) {
+	if (count > (uint32_t)INT_MAX - LUA_MINSTACK || !lua_checkstack(L, (int)count + LUA_MINSTACK)) {
 		zend_throw_exception(luaext_ce_conversion_error,
 							 "Cannot convert PHP values to Lua: the interpreter stack cannot grow",
 							 0);
@@ -347,9 +346,8 @@ static bool luaext_exec_path_valid(const char *path, size_t path_len)
  * mean anything. Answering the second with null would report absence where the
  * real answer is that the caller is asking the wrong question.
  */
-ZEND_COLD ZEND_NORETURN static void luaext_exec_path_refuse(lua_State *L,
-															const luaext_exec_path *request,
-															size_t prefix_len)
+ZEND_COLD ZEND_NORETURN static void
+luaext_exec_path_refuse(lua_State *L, const luaext_exec_path *request, size_t prefix_len)
 {
 	luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
 					   "Cannot resolve the Lua path \"%.*s\": \"%.*s\" is a %s, which cannot be "
