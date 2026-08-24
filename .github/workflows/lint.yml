@@ -191,10 +191,28 @@ jobs:
           set -euo pipefail
           php tools/check-docs-api.php
 
+  # -------------------------------------------------------------------
+  # The watchdog thread has no TSRM context, so a LUAEXT_G() from it
+  # would silently read another thread's module globals rather than
+  # failing. The three files it is built from are structurally PHP-free
+  # and Lua-free; this is the independent check on that, and it is here
+  # rather than in the build because a compiler can only complain once
+  # somebody has already added the include.
+  # -------------------------------------------------------------------
+  watchdog-purity:
+    name: Watchdog purity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the watchdog reaches nothing PHP owns
+        run: tools/check-watchdog-purity.sh
+
   lint-required:
     name: Lint required checks
     if: always()
-    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api]
+    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api, watchdog-purity]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs

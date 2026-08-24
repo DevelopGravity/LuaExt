@@ -22,6 +22,14 @@
 #
 # Requires: curl, and either `jq` or `python3` to parse the GitHub API
 # response (falls back to a plain grep/sed parse if neither is present).
+#
+# NOT checked here: whether the committed src/ still equals upstream plus
+# third_party/lua-*/patches/*.patch. That is tools/vendor-lua.sh --check, which
+# applies every patch in the directory in name order and diffs the result --
+# so a new patch needs no registration anywhere, and one that stops applying is
+# a failure there rather than a silent divergence. If you came here looking for
+# a list of expected patches, there deliberately is not one: a list is a thing
+# that goes stale, and the directory listing cannot.
 
 set -euo pipefail
 
