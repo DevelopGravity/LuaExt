@@ -4,6 +4,21 @@ Slots survive being handed out, torn down and handed out again under the watchdo
 luaext
 --INI--
 luaext.watchdog_resolution_us=100
+--SKIPIF--
+<?php
+// The only --SKIPIF-- shape this suite allows, and it earns its place: every
+// assertion below runs an unbounded loop to prove the CPU limit stops it. On a
+// build where features() says the limit cannot be enforced at all, running an
+// infinite loop to demonstrate that it is not enforced is pure waste -- and the
+// harness would have to time each one out. The build that reports Unsupported
+// is covered by tests/02-limits/hook-count-zero-voids-limits.phpt instead.
+use DevelopGravity\LuaExt\LimitSupport;
+use DevelopGravity\LuaExt\Sandbox;
+
+if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
+	echo "skip this build reports LimitSupport::Unsupported for the CPU limit";
+}
+?>
 --FILE--
 <?php
 

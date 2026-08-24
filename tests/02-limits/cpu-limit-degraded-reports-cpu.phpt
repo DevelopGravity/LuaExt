@@ -2,6 +2,21 @@
 A CPU limit too fine for the platform clock still stops the script, and still says CPU
 --EXTENSIONS--
 luaext
+--SKIPIF--
+<?php
+// The only --SKIPIF-- shape this suite allows, and it earns its place: every
+// assertion below runs an unbounded loop to prove the CPU limit stops it. On a
+// build where features() says the limit cannot be enforced at all, running an
+// infinite loop to demonstrate that it is not enforced is pure waste -- and the
+// harness would have to time each one out. The build that reports Unsupported
+// is covered by tests/02-limits/hook-count-zero-voids-limits.phpt instead.
+use DevelopGravity\LuaExt\LimitSupport;
+use DevelopGravity\LuaExt\Sandbox;
+
+if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
+	echo "skip this build reports LimitSupport::Unsupported for the CPU limit";
+}
+?>
 --FILE--
 <?php
 
@@ -38,9 +53,11 @@ $unmeasurable = $resolution * 10;
 
 $sandbox = new Sandbox();
 
-// No wall-clock limit at all, so nothing this test observes can come from one
-// the host set: whatever stops the script below is the degraded companion.
-$sandbox->setWallClockLimit(null);
+// The wall-clock limit is set four orders of magnitude above the limit under
+// test, purely as a backstop against a wedge. If it is what fires, the class is
+// wrong and the assertion below fails -- so "whatever stopped the script was the
+// degraded companion" still holds, and a regression fails in a second.
+$sandbox->setWallClockLimit(1.0);
 $sandbox->setCpuLimit($unmeasurable);
 
 try {
@@ -60,8 +77,8 @@ $sandbox->close();
 // the same class -- so the two paths are indistinguishable from outside, which
 // is the whole point of degrading rather than refusing.
 $measurable = new Sandbox();
-$measurable->setWallClockLimit(null);
-$measurable->setCpuLimit(max(0.05, $resolution * 1000));
+$measurable->setWallClockLimit(1.0);
+$measurable->setCpuLimit(min(0.05, max(0.001, $resolution * 1000)));
 
 try {
 	(void) $measurable->eval('while true do end', '=runaway');

@@ -2,6 +2,21 @@
 A __gc finaliser cannot outlive the CPU limit, and cannot hide that it tried
 --EXTENSIONS--
 luaext
+--SKIPIF--
+<?php
+// The only --SKIPIF-- shape this suite allows, and it earns its place: every
+// assertion below runs an unbounded loop to prove the CPU limit stops it. On a
+// build where features() says the limit cannot be enforced at all, running an
+// infinite loop to demonstrate that it is not enforced is pure waste -- and the
+// harness would have to time each one out. The build that reports Unsupported
+// is covered by tests/02-limits/hook-count-zero-voids-limits.phpt instead.
+use DevelopGravity\LuaExt\LimitSupport;
+use DevelopGravity\LuaExt\Sandbox;
+
+if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
+	echo "skip this build reports LimitSupport::Unsupported for the CPU limit";
+}
+?>
 --FILE--
 <?php
 
@@ -148,9 +163,10 @@ try {
 
 var_dump($survivor->getMemoryUsage() > 0);
 
-// Closes cleanly: detaching clears the interrupt flag before lua_close(), so
-// the pending finalisers that run during teardown do not each raise into a
-// collector with no protected call above it.
+// Closes cleanly, and in bounded time. Teardown deliberately runs with the
+// interrupt RAISED: lua_close() runs every pending finaliser with nothing left
+// measuring anything, so leaving the flag down here is what used to make close()
+// hang forever on exactly the objects this test creates.
 $survivor->close();
 var_dump($survivor->isClosed());
 

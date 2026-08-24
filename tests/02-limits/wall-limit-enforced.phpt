@@ -71,7 +71,13 @@ $sandbox->close();
 // too. This is the case where either limit could fire; the class says which
 // budget was actually exhausted rather than which mechanism noticed.
 $spinner = new Sandbox(new SandboxConfig(
-	limits: (new Limits())->with(cpuSeconds: null, wallClockSeconds: WALL_SECONDS),
+	limits: (new Limits())->with(
+		// An order of magnitude above the wall limit, so the wall limit is what
+		// fires -- and so a wall-limit regression fails in two seconds with the
+		// wrong class instead of spinning until the harness gives up.
+		cpuSeconds: WALL_SECONDS * 10,
+		wallClockSeconds: WALL_SECONDS,
+	),
 ));
 
 try {
