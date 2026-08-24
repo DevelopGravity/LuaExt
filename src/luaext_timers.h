@@ -72,9 +72,16 @@ double luaext_timers_cpu_resolution_seconds(void);
  * demonstrably exists. */
 bool luaext_timers_attach(luaext_sandbox *sandbox);
 
-/* Release the slot and clear the interrupt flag. Idempotent, and safe on every
- * teardown path including the RSHUTDOWN sweep. Must run before lua_close():
- * finalisers running during teardown would otherwise see a pending interrupt. */
+/*
+ * Release the slot and RAISE the interrupt. Idempotent, and safe on every
+ * teardown path including the RSHUTDOWN sweep. Must run before lua_close().
+ *
+ * Raise, not clear -- the reverse of what this header originally said, and the
+ * .c file carries the argument. In short: lua_close() runs every pending __gc
+ * finaliser with nothing left measuring anything, so a script-defined finaliser
+ * that loops would hang the process. A C finaliser never ticks the count hook
+ * and is unaffected.
+ */
 void luaext_timers_detach(luaext_sandbox *sandbox);
 
 /* -------------------------------------------------------------------------

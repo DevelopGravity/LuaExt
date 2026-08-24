@@ -32,7 +32,7 @@
  * Not on Apple: the symbol does not exist there, and the relative wait it would
  * be emulating is provided natively instead.
  */
-#if !defined(_WIN32) && !defined(__APPLE__) && defined(CLOCK_MONOTONIC) &&                          \
+#if !defined(_WIN32) && !defined(__APPLE__) && defined(CLOCK_MONOTONIC) &&                         \
 	!defined(LUAEXT_NO_COND_MONOTONIC)
 #define LUAEXT_COND_TRY_MONOTONIC 1
 #else

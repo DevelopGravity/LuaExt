@@ -169,7 +169,7 @@ static struct {
 
 	uint64_t floor_ns;
 
-	bool ready;   /* the lock and condvar exist */
+	bool ready;	  /* the lock and condvar exist */
 	bool running; /* the thread exists and has not been asked to stop */
 	bool failed;  /* creation was attempted and the platform refused */
 	bool stop;
@@ -830,15 +830,13 @@ void luaext_watchdog_release(luaext_watch_slot *slot)
 
 	luaext_mutex_lock(&slot->lock);
 
-	if (slot->irq != NULL) {
-		/*
-		 * Clear the interrupt on the way out. Finalisers run during teardown,
-		 * and one that saw a pending interrupt would raise out of lua_close()
-		 * itself -- with no protected call anywhere above it to catch the error.
-		 */
-		atomic_store_explicit(&slot->irq->interrupted, (unsigned char)0, memory_order_relaxed);
-		slot->irq = NULL;
-	}
+	/*
+	 * The irq is forgotten, not written to. It belongs to the sandbox rather
+	 * than to this slot, it outlives the slot, and what its flag should say
+	 * during teardown is a decision the layer that knows about teardown makes --
+	 * see luaext_timers_detach().
+	 */
+	slot->irq = NULL;
 
 	if (slot->clock_ok) {
 		luaext_clock_release(&slot->clock);

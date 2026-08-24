@@ -60,10 +60,9 @@ void luaext_timers_startup(void)
 	 * PHP_INI_SYSTEM, so one process-wide value is the whole story. Pushed down
 	 * rather than pulled, because the watchdog cannot see an INI entry.
 	 */
-	luaext_watchdog_set_resolution_ns((uint64_t)(LUAEXT_G(watchdog_resolution_us) > 0
-													 ? LUAEXT_G(watchdog_resolution_us)
-													 : 0) *
-									  UINT64_C(1000));
+	luaext_watchdog_set_resolution_ns(
+		(uint64_t)(LUAEXT_G(watchdog_resolution_us) > 0 ? LUAEXT_G(watchdog_resolution_us) : 0) *
+		UINT64_C(1000));
 }
 
 void luaext_timers_shutdown(void)
@@ -174,15 +173,34 @@ void luaext_timers_detach(luaext_sandbox *sandbox)
 
 	sandbox->slot = NULL;
 
-	/*
-	 * Cleared here as well as inside release(), because a sandbox whose slot was
-	 * never acquired still has a flag that Sandbox::interrupt() could have set.
-	 * Finalisers run during lua_close(), and one that saw a pending interrupt
-	 * would raise with no protected call above it to catch the error.
-	 */
-	atomic_store_explicit(&sandbox->irq.interrupted, (unsigned char)0, memory_order_relaxed);
-
 	luaext_watchdog_release(slot);
+
+	/*
+	 * Teardown runs with the interrupt RAISED, which is the opposite of what it
+	 * looks like it should do, so here is the reasoning.
+	 *
+	 * lua_close() runs every pending __gc finaliser. Those are untrusted Lua,
+	 * and by this point the slot has gone, so nothing is measuring anything: a
+	 * script that registers
+	 *
+	 *     setmetatable({}, {__gc = function() while true do end end})
+	 *
+	 * and is then stopped by its CPU limit would hang close() forever. That is a
+	 * denial of service against the whole PHP process, reachable from one line
+	 * of sandboxed code, and it is worse than anything it would be trading away.
+	 *
+	 * What it trades away is small. A finaliser written in C -- which is every
+	 * finaliser the extension itself installs, including the VFS handles -- never
+	 * ticks the count hook and is not affected at all. Only a script-defined
+	 * finaliser is cut short, and only at a point where the interpreter and
+	 * everything it could still touch are being destroyed in the same call.
+	 *
+	 * The error raised inside a finaliser here is caught by GCTM's own protected
+	 * call and, because lua_close() has no error handler above it, warned away
+	 * rather than propagated -- so the collector finishes its list and the state
+	 * closes. See the vendored patch, which checks L->errorJmp for exactly this.
+	 */
+	luaext_timers_request(sandbox, LUAEXT_IRQ_ABORT);
 }
 
 /* -------------------------------------------------------------------------

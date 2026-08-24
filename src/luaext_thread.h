@@ -82,15 +82,9 @@ typedef struct luaext_once {
 /* Static initialisers. A once-flag in particular has to be usable before any
  * code has run, which is the whole point of it. */
 #if defined(_WIN32)
-#define LUAEXT_ONCE_INIT                                                                           \
-	{                                                                                              \
-		INIT_ONCE_STATIC_INIT                                                                      \
-	}
+#define LUAEXT_ONCE_INIT {INIT_ONCE_STATIC_INIT}
 #else
-#define LUAEXT_ONCE_INIT                                                                           \
-	{                                                                                              \
-		PTHREAD_ONCE_INIT                                                                          \
-	}
+#define LUAEXT_ONCE_INIT {PTHREAD_ONCE_INIT}
 #endif
 
 bool luaext_mutex_init(luaext_mutex *mutex);
