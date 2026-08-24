@@ -2,8 +2,6 @@
 Float table keys are refused; integral ones were never floats to begin with
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval(), which lands with the execution subsystem.
 --FILE--
 <?php
 

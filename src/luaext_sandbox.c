@@ -2,18 +2,26 @@
  * luaext — the Sandbox object: an isolated lua_State with its own policy,
  * budget and output sink.
  *
- * This file currently covers the lifecycle and the memory budget: creating the
- * interpreter, opening a library subset, reporting and re-ceiling what it may
- * allocate, and tearing it down again. Compilation, calls, value conversion,
- * the timing limits and the output sink arrive with their own subsystems; the
- * methods that need them throw until then.
+ * This file currently covers the lifecycle, the memory budget and execution:
+ * creating the interpreter, opening a library subset, reporting and re-ceiling
+ * what it may allocate, compiling and running chunks, reading and writing
+ * globals, and tearing it down again. The timing limits, the callback bridge
+ * and the output sink arrive with their own subsystems; the methods that need
+ * them throw until then.
+ *
+ * The execution methods are thin on purpose. Each one checks thread affinity
+ * and open state, translates its arguments, and hands the work to
+ * luaext_exec.c, which owns every entry into the interpreter and the stack
+ * discipline that goes with it.
  */
 
 #include "luaext_sandbox.h"
 
 #include "luaext_alloc.h"
 #include "luaext_config.h"
+#include "luaext_convert.h"
 #include "luaext_error.h"
+#include "luaext_exec.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -522,11 +530,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
  * are the same ones the ceiling is enforced against.
  * ---------------------------------------------------------------------- */
 
-/*
- * Guard shared by the memory methods: a closed sandbox has no counters left to
- * read, and reading them from another thread would race the allocator.
- */
-static bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox)
+/* Both guards, in the order every method needs them; see luaext_sandbox.h. */
+bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox)
 {
 	return luaext_sandbox_check_thread(sandbox) && luaext_sandbox_check_open(sandbox);
 }
@@ -597,42 +602,248 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setMemoryLimit)
 }
 
 /* -------------------------------------------------------------------------
+ * Execution
+ *
+ * Everything below delegates to luaext_exec.c once the two guards have passed.
+ * The stack bookkeeping, the protected calls and the traceback handler all live
+ * there; what belongs here is the argument handling and the capability check
+ * that decides whether a chunk may be binary at all.
+ * ---------------------------------------------------------------------- */
+
+/*
+ * A chunk name is what a traceback and an error message will call this code.
+ *
+ * The leading marker is Lua's own convention and worth preserving: "=name"
+ * prints as-is, "@name" reads as a file path, and anything else is treated as
+ * source text and quoted. The defaults the stub declares all use "=", so an
+ * error from an anonymous chunk reads `(eval):1:` rather than a quoted copy of
+ * the script.
+ */
+static const char *luaext_sandbox_chunk_name(const zend_string *given, const char *fallback)
+{
+	return given != NULL ? ZSTR_VAL(given) : fallback;
+}
+
+/*
+ * Compile without running, so a host can validate a chunk once and reuse it.
+ *
+ * Text mode always: `code` is a string an untrusted caller may have supplied,
+ * and Lua has no bytecode verifier to catch a crafted binary chunk.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compile)
+{
+	luaext_sandbox *sandbox;
+	zend_string *code;
+	zend_string *chunk_name = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+	Z_PARAM_STR(code)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR(chunk_name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code),
+						  luaext_sandbox_chunk_name(chunk_name, "=(load)"), false)) {
+		RETURN_THROWS();
+	}
+
+	luaext_exec_make_function(sandbox, ZEND_THIS, return_value);
+
+	if (EG(exception) != NULL) {
+		RETURN_THROWS();
+	}
+}
+
+/*
+ * The one entry point that may hand a binary chunk to the loader.
+ *
+ * Lua's undumper trusts what it reads: a malformed or hostile blob is arbitrary
+ * native execution rather than a parse error, which is why this is a capability
+ * and not a flag. A sandbox that was not granted it cannot be talked into
+ * loading bytecode by any argument.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
+{
+	luaext_sandbox *sandbox;
+	zend_string *bytecode;
+	zend_string *chunk_name = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+	Z_PARAM_STR(bytecode)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR(chunk_name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_has_cap(&sandbox->policy, LUAEXT_CAP_LOAD_BYTECODE)) {
+		zend_throw_exception(luaext_ce_capability_error,
+							 "Loading precompiled bytecode requires the loadBytecode capability, "
+							 "which this sandbox was not granted",
+							 0);
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_load(sandbox, ZSTR_VAL(bytecode), ZSTR_LEN(bytecode),
+						  luaext_sandbox_chunk_name(chunk_name, "=(binary)"), true)) {
+		RETURN_THROWS();
+	}
+
+	luaext_exec_make_function(sandbox, ZEND_THIS, return_value);
+
+	if (EG(exception) != NULL) {
+		RETURN_THROWS();
+	}
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
+{
+	luaext_sandbox *sandbox;
+	zend_string *code;
+	zend_string *chunk_name = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+	Z_PARAM_STR(code)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR(chunk_name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code),
+						  luaext_sandbox_chunk_name(chunk_name, "=(eval)"), false)) {
+		RETURN_THROWS();
+	}
+
+	/* Takes the chunk with it, so a failed call leaves nothing behind. */
+	if (!luaext_exec_pcall(sandbox, -1, NULL, 0, return_value)) {
+		RETURN_THROWS();
+	}
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, call)
+{
+	luaext_sandbox *sandbox;
+	zend_string *path;
+	zval *args = NULL;
+	uint32_t argc = 0;
+
+	ZEND_PARSE_PARAMETERS_START(1, -1)
+	Z_PARAM_STR(path)
+	Z_PARAM_VARIADIC('*', args, argc)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_push_path(sandbox, ZSTR_VAL(path), ZSTR_LEN(path))) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Checked here rather than left to the interpreter so the refusal can name
+	 * the path. "attempt to call a nil value" is a true statement about a stack
+	 * slot and says nothing about which global the host meant.
+	 */
+	if (!lua_isfunction(sandbox->L, -1)) {
+		const char *found = luaL_typename(sandbox->L, -1);
+
+		lua_pop(sandbox->L, 1);
+		zend_throw_exception_ex(luaext_ce_runtime_error, 0,
+								"The Lua path \"%s\" names a %s, which is not callable",
+								ZSTR_VAL(path), found);
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_pcall(sandbox, -1, args, argc, return_value)) {
+		RETURN_THROWS();
+	}
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getGlobal)
+{
+	luaext_sandbox *sandbox;
+	zend_string *path;
+	bool converted;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_STR(path)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_push_path(sandbox, ZSTR_VAL(path), ZSTR_LEN(path))) {
+		RETURN_THROWS();
+	}
+
+	converted = luaext_convert_to_zval(sandbox, sandbox->L, -1, return_value);
+	lua_pop(sandbox->L, 1);
+
+	if (!converted) {
+		RETURN_THROWS();
+	}
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setGlobal)
+{
+	luaext_sandbox *sandbox;
+	zend_string *path;
+	zval *value;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+	Z_PARAM_STR(path)
+	Z_PARAM_ZVAL(value)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Converted before anything is written, so a value with no Lua
+	 * representation costs the host an exception rather than a global that was
+	 * half assigned or a table that was created for a path nothing ever
+	 * reached.
+	 */
+	if (!luaext_exec_push_value(sandbox, value)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_exec_assign_path(sandbox, ZSTR_VAL(path), ZSTR_LEN(path))) {
+		RETURN_THROWS();
+	}
+}
+
+/* -------------------------------------------------------------------------
  * Pending methods
  *
  * Each of these belongs to a subsystem that has not landed yet. They report a
  * closed sandbox first, so the eventual behaviour of the closed case is already
  * correct, and otherwise refuse plainly.
  * ---------------------------------------------------------------------- */
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compile)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "compile");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "compileBinary");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "eval");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, call)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "call");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getGlobal)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getGlobal");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setGlobal)
-{
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "setGlobal");
-}
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 {

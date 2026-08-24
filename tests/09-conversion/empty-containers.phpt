@@ -2,8 +2,6 @@
 Empty arrays and tables convert without touching a shared immutable array
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal()/getGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

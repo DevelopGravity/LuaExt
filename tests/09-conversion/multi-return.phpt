@@ -2,8 +2,6 @@
 A Lua multi-return becomes a zero-indexed PHP list, nils included
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/call(), which land with the execution subsystem.
 --FILE--
 <?php
 
