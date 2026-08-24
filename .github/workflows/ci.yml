@@ -102,20 +102,30 @@ jobs:
   # These are NOT continue-on-error — a finding here fails the build.
   # ---------------------------------------------------------------------
   sanitize-linux:
-    name: "Linux sanitizer / ${{ matrix.sanitizer }}"
+    name: "Linux sanitizer / ${{ matrix.sanitizer }} / ${{ matrix.arch }}"
     # Gated on the ordinary build. Each leg compiles php-src from source, so
     # running them against code that does not build anywhere wastes several
     # minutes and buries the one failure that matters under a wall of red.
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # arch x sanitizer, with the include: entries filling in per-arch and
+        # per-sanitizer detail on the four resulting combinations.
+        #
+        # arm64 is not padding. It has a weaker memory model than x86, so the
+        # interrupt flag's release/acquire pairing and the watchdog's
+        # cross-thread writes can be perfectly correct on x64 and racy here.
+        # TSan on arm64 is the only thing in this pipeline that would catch it.
+        arch: [x64, arm64]
+        sanitizer: [asan-ubsan, tsan]
         include:
+          - arch: x64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
           - sanitizer: asan-ubsan
-            # TODO(verify): confirm the extension's config.m4 --enable-luaext-sanitize=LIST
-            # accepts a comma-separated sanitizer-name list in this exact form once
-            # config.m4 lands (Wave 1, agent ②). Adjust here if the accepted syntax differs.
             luaext_sanitize: 'address,undefined'
             # php-src's own --enable-{address,undefined}-sanitizer configure
             # flags derive the right CFLAGS themselves (including probing for
@@ -165,7 +175,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: php-src
-          key: php-src-${{ env.LUAEXT_SANITIZER_PHP_SRC_REF }}-${{ matrix.sanitizer }}-${{ hashFiles('php-src/configure.ac') }}
+          key: php-src-${{ env.LUAEXT_SANITIZER_PHP_SRC_REF }}-${{ matrix.arch }}-${{ matrix.sanitizer }}-${{ hashFiles('php-src/configure.ac') }}
 
       - name: Build sanitized php-src (NTS)
         if: steps.cache-php-src.outputs.cache-hit != 'true'
@@ -258,8 +268,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macos-asan
-            os: macos-latest
+          # macos-asan removed. It linked an ASan-instrumented extension
+          # against a stock, non-instrumented PHP, so the module could not
+          # load at all and all 47 tests failed on every run -- a permanently
+          # red job that teaches people to ignore red. Real sanitizer coverage
+          # lives in sanitize-linux, which now runs on arm64 as well as x64
+          # and builds php-src with matching instrumentation.
           - name: valgrind
             os: ubuntu-latest
     steps:
@@ -282,19 +296,6 @@ jobs:
       - name: phpize
         run: phpize
 
-      - name: configure (macOS ASan)
-        if: matrix.name == 'macos-asan'
-        # NOTE: this links our ASan-instrumented extension against a stock
-        # (non-ASan) Homebrew/setup-php PHP — a runtime mismatch that can
-        # produce both false positives and false negatives. That mismatch is
-        # exactly why this leg is best-effort/continue-on-error rather than
-        # gating; the gating ASan coverage lives in sanitize-linux above,
-        # where extension and PHP share one sanitized runtime.
-        run: |
-          ./configure --enable-luaext-debug --enable-luaext-sanitize=address \
-            CFLAGS="-fsanitize=address -fno-sanitize=function" \
-            LDFLAGS="-fsanitize=address"
-
       - name: configure (valgrind)
         if: matrix.name == 'valgrind'
         run: ./configure --enable-luaext-debug
@@ -303,12 +304,6 @@ jobs:
         run: |
           JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
           make -j"$JOBS"
-
-      - name: make test (macOS ASan)
-        if: matrix.name == 'macos-asan'
-        run: make test
-        env:
-          ASAN_OPTIONS: 'exitcode=139'
 
       - name: make test (valgrind, USE_ZEND_ALLOC=0)
         if: matrix.name == 'valgrind'
