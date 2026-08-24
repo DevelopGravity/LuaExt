@@ -91,8 +91,15 @@ if (PHP_LUAEXT != "no") {
 	// when the extension is configured as part of a full php-src tree; in a
 	// standalone phpize build it is undefined and configure dies there. This
 	// file is only read by standalone builds, and those are always shared.
+	// Backslashes, not forward slashes. ADD_SOURCES splits each entry on "\\"
+	// to work out which object subdirectory to create; given "src/luaext.c" it
+	// finds no separator, treats the whole string as the file name, and
+	// registers no directory at all. The compile then fails with C1083 "cannot
+	// open compiler generated file" because x64\Release\src\ was never created.
 	EXTENSION("luaext",
-		"src/luaext.c src/luaext_sandbox.c src/luaext_alloc.c src/luaext_config.c src/luaext_convert.c src/luaext_error.c src/luaext_function.c src/luaext_interrupt.c src/luaext_pending.c",
+		"src\\luaext.c src\\luaext_sandbox.c src\\luaext_alloc.c src\\luaext_config.c " +
+		"src\\luaext_convert.c src\\luaext_error.c src\\luaext_function.c " +
+		"src\\luaext_interrupt.c src\\luaext_pending.c",
 		true,
 		luaext_flags);
 

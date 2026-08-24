@@ -352,13 +352,7 @@ jobs:
   ci-required:
     name: CI required checks
     if: always()
-    # Windows is deliberately absent. Its DLLs only matter at release time,
-    # nothing is released yet, and it is the one platform that cannot be
-    # reproduced locally -- so a red Windows leg blocks every push while
-    # teaching us nothing we could not learn from the release pipeline. It
-    # still runs and still reports; it just does not gate. Put it back the
-    # moment a release is on the table.
-    needs: [build, sanitize-linux]
+    needs: [build, sanitize-linux, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs
