@@ -172,12 +172,32 @@ jobs:
 
       - name: Verify PIE installed a loadable extension
         run: |
-          set -euo pipefail
-          php -m | grep -qi luaext
-          php -r 'exit(class_exists("DevelopGravity\\LuaExt\\Sandbox") ? 0 : 1);'
-          php -r 'printf("pie-installed luaext %s, %s\n",
+          set -uo pipefail
+
+          # Report before asserting. PIE names the interpreter it targeted, and
+          # that is not necessarily the `php` first on PATH; when those differ
+          # the extension is genuinely installed and still invisible here, which
+          # is worth seeing rather than inferring from an exit code.
+          echo "php on PATH: $(command -v php)"
+          php -v | head -1
+          echo "extension_dir: $(php -r 'echo ini_get("extension_dir");')"
+          echo "--- loaded extensions matching lua ---"
+          php -m | grep -i lua || echo "(none)"
+
+          if ! php -m | grep -qi luaext; then
+            echo "::error::PIE reported a successful install, but luaext is not loaded in $(command -v php)." >&2
+            exit 1
+          fi
+
+          php -r 'if (!class_exists("DevelopGravity\\LuaExt\\Sandbox")) {
+            fwrite(STDERR, "luaext is loaded but its classes are missing\n");
+            exit(1);
+          }'
+
+          php -r 'printf("pie-installed luaext %s (%s)%s",
             DevelopGravity\LuaExt\Sandbox::extensionVersion(),
-            DevelopGravity\LuaExt\Sandbox::luaVersion());'
+            DevelopGravity\LuaExt\Sandbox::luaVersion(),
+            PHP_EOL);'
 
   # ---------------------------------------------------------------------
   # Gating Linux sanitizer legs: extension + php-src built with a matching
