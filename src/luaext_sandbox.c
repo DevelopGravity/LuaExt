@@ -22,7 +22,10 @@
 #include "luaext_convert.h"
 #include "luaext_error.h"
 #include "luaext_exec.h"
+#include "luaext_openlibs.h"
+#include "luaext_output.h"
 #include "luaext_phpcall.h"
+#include "luaext_timers.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -197,85 +200,23 @@ static int luaext_sandbox_panic(lua_State *L)
 }
 
 /*
- * The libraries a sandbox may be given. io, os and package are absent by
- * construction: liolib.c, loslib.c and loadlib.c are not compiled into the
- * extension at all, so luaopen_io, luaopen_os and luaopen_package do not exist
- * to be called.
- *
- * linit.c is excluded for the same reason, which is why this table exists at
- * all: luaL_openlibs() is a macro over luaL_openselectedlibs(), and that lives
- * in linit.c.
- */
-typedef struct {
-	uint32_t bit;
-	const char *name;
-	lua_CFunction open;
-} luaext_library;
-
-static const luaext_library luaext_libraries[] = {
-	{LUAEXT_LIB_BASE, LUA_GNAME, luaopen_base},
-	{LUAEXT_LIB_TABLE, LUA_TABLIBNAME, luaopen_table},
-	{LUAEXT_LIB_STR, LUA_STRLIBNAME, luaopen_string},
-	{LUAEXT_LIB_MATH, LUA_MATHLIBNAME, luaopen_math},
-	{LUAEXT_LIB_UTF8, LUA_UTF8LIBNAME, luaopen_utf8},
-	{LUAEXT_LIB_DEBUG, LUA_DBLIBNAME, luaopen_debug},
-};
-
-/*
- * Members of the base library that reach outside the sandbox. dofile() and
- * loadfile() open real files through lauxlib's stdio helpers, load() is the
- * compileAtRuntime capability, and warn() reaches stderr through Lua's default
- * warning function.
- *
- * TODO: the library policy replaces these wholesale rather than deleting them
- * afterwards, and gates load()/warn() on their capabilities.
- */
-static const char *const luaext_base_removals[] = {
-	"dofile",
-	"loadfile",
-	"load",
-	"warn",
-};
-
-static void luaext_sandbox_open_libraries(luaext_sandbox *sandbox)
-{
-	lua_State *L = sandbox->L;
-	size_t index;
-
-	for (index = 0; index < sizeof(luaext_libraries) / sizeof(luaext_libraries[0]); index++) {
-		const luaext_library *library = &luaext_libraries[index];
-
-		if ((sandbox->policy.open_libs & library->bit) == 0) {
-			continue;
-		}
-
-		/* Global, so scripts see the usual names; the result is left on the
-		 * stack by luaL_requiref and popped here. */
-		luaL_requiref(L, library->name, library->open, 1);
-		lua_pop(L, 1);
-	}
-
-	if ((sandbox->policy.open_libs & LUAEXT_LIB_BASE) != 0) {
-		lua_pushglobaltable(L);
-
-		for (index = 0; index < sizeof(luaext_base_removals) / sizeof(luaext_base_removals[0]);
-			 index++) {
-			lua_pushnil(L);
-			lua_setfield(L, -2, luaext_base_removals[index]);
-		}
-
-		lua_pop(L, 1);
-	}
-}
-
-/*
  * String-hash seed. Lua's own luaL_makeseed() derives entropy from heap and
  * function addresses, which a script could read back out; the platform CSPRNG
  * gives the same hash-flooding protection without leaking the layout.
  */
-static unsigned int luaext_sandbox_seed(void)
+static unsigned int luaext_sandbox_seed(const luaext_policy *policy)
 {
 	unsigned int seed = 0;
+
+	/*
+	 * A host that asked for a specific seed gets it. SandboxConfig refuses a
+	 * fixed seed unless deterministic: true was passed alongside it, so
+	 * reaching here means surrendering hash-flood protection was a deliberate,
+	 * stated decision rather than an accident.
+	 */
+	if (policy->seed_is_fixed) {
+		return (unsigned int)policy->seed;
+	}
 
 	if (php_random_bytes_silent(&seed, sizeof(seed)) == FAILURE) {
 		seed = (unsigned int)php_random_generate_fallback_seed();
@@ -293,6 +234,14 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	}
 
 	sandbox->closed = true;
+
+	/*
+	 * Before lua_close(). Detaching clears the interrupt flag, and finalisers
+	 * run during teardown -- one that saw a pending interrupt would throw out
+	 * of the close itself.
+	 */
+	luaext_timers_detach(sandbox);
+	luaext_output_shutdown(sandbox);
 
 	L = sandbox->L;
 	sandbox->L = NULL;
@@ -397,7 +346,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 */
 	sandbox->alloc.limit = sandbox->policy.limits.memory_bytes;
 	sandbox->owner_thread = luaext_current_thread();
-	sandbox->seed = luaext_sandbox_seed();
+	sandbox->seed = luaext_sandbox_seed(&sandbox->policy);
 
 	sandbox->L = lua_newstate(luaext_lua_alloc, sandbox, (unsigned int)sandbox->seed);
 
@@ -430,7 +379,20 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	luaext_error_init(sandbox);
 	ZEND_ASSERT(luaext_error_is_ready(sandbox));
 
-	luaext_sandbox_open_libraries(sandbox);
+	/* Before the libraries: os.clock reports billed CPU, and the count hook the
+	 * limits ride on has to be installed before any script can exist. */
+	if (!luaext_timers_attach(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_output_init(sandbox, config)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_openlibs_install(sandbox)) {
+		RETURN_THROWS();
+	}
+
 	luaext_sandbox_link(sandbox);
 }
 
@@ -499,12 +461,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, luaVersion)
 	RETURN_STRING(LUA_RELEASE);
 }
 
-static void luaext_add_limit_support(zval *array, const char *key, const char *case_name)
+static void luaext_add_limit_support(zval *array, const char *key, luaext_limit_support support)
 {
-	zval support;
+	static const char *const names[] = {"Enforced", "Degraded", "Unsupported"};
+	zval value;
 
-	ZVAL_OBJ_COPY(&support, zend_enum_get_case_cstr(luaext_ce_limit_support, case_name));
-	add_assoc_zval(array, key, &support);
+	ZVAL_OBJ_COPY(&value, zend_enum_get_case_cstr(luaext_ce_limit_support, names[support]));
+	add_assoc_zval(array, key, &value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
@@ -514,17 +477,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 	array_init_size(return_value, 5);
 
 	/*
-	 * Honest by design: the watchdog and the per-thread CPU clocks are a
-	 * separate subsystem, and until they exist neither limit is enforced. This
-	 * is exactly the answer this method is for -- a host that must not run
-	 * untrusted code without a CPU limit can see that it has none.
+	 * Answered by the timer layer, which knows what this platform's clocks can
+	 * actually do. This method exists so that a host which must not run
+	 * untrusted code without a CPU limit can find out that it has none, so the
+	 * one thing it may never do is report a limit it does not enforce.
 	 *
-	 * TODO: report the real support level and clock resolution.
+	 * These are PLATFORM statements. Whether a PARTICULAR limit degrades --
+	 * because it was set close to the clock's resolution -- is decided when it
+	 * is set, since this method is static and has no sandbox to ask.
 	 */
-	luaext_add_limit_support(return_value, "cpuLimit", "Unsupported");
-	luaext_add_limit_support(return_value, "wallClockLimit", "Unsupported");
+	luaext_add_limit_support(return_value, "cpuLimit", luaext_timers_cpu_support());
+	luaext_add_limit_support(return_value, "wallClockLimit", luaext_timers_wall_support());
 
-	add_assoc_double(return_value, "cpuResolutionSeconds", 0.0);
+	add_assoc_double(return_value, "cpuResolutionSeconds", luaext_timers_cpu_resolution_seconds());
 
 #ifdef ZTS
 	add_assoc_bool(return_value, "threadSafe", 1);
@@ -957,29 +922,125 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "preloadModule");
 }
 
+/*
+ * Seconds to nanoseconds, with null meaning "no ceiling".
+ *
+ * Zero would be a second spelling of that, and a limit no script could ever
+ * satisfy is far likelier to be a mistake than an intention -- so it is refused
+ * rather than quietly reinterpreted, exactly as setMemoryLimit() refuses zero.
+ */
+static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *out)
+{
+	if (unlimited) {
+		*out = 0;
+		return true;
+	}
+
+	if (!(seconds > 0.0)) { /* also rejects NAN */
+		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
+		return false;
+	}
+
+	*out = (uint64_t)(seconds * 1e9);
+	return true;
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setCpuLimit)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "setCpuLimit");
+	luaext_sandbox *sandbox;
+	double seconds = 0.0;
+	bool unlimited = true;
+	uint64_t ns;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_DOUBLE_OR_NULL(seconds, unlimited)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox) ||
+		!luaext_sandbox_limit_ns(seconds, unlimited, &ns) ||
+		!luaext_timers_set_cpu_limit(sandbox, ns)) {
+		RETURN_THROWS();
+	}
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setWallClockLimit)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "setWallClockLimit");
+	luaext_sandbox *sandbox;
+	double seconds = 0.0;
+	bool unlimited = true;
+	uint64_t ns;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_DOUBLE_OR_NULL(seconds, unlimited)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox) ||
+		!luaext_sandbox_limit_ns(seconds, unlimited, &ns) ||
+		!luaext_timers_set_wall_limit(sandbox, ns)) {
+		RETURN_THROWS();
+	}
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, pauseTimers)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "pauseTimers");
+	luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/* False rather than an error when the pause is refused: a callback nested
+	 * under a frame that did not pause is not misusing the API, it simply does
+	 * not get to un-bill its caller's time. */
+	RETURN_BOOL(luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL));
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, resumeTimers)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "resumeTimers");
+	luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	luaext_timers_resume(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, interrupt)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "interrupt");
+	luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	/*
+	 * The one method a foreign thread may call, so it deliberately does NOT
+	 * check thread affinity, and may touch nothing the owning thread writes
+	 * without synchronisation -- not even `closed`, and not even to report that
+	 * the sandbox is already gone. Two atomic stores, fire and forget.
+	 *
+	 * The caller must hold a reference for the duration. That cannot be made
+	 * airtight from here, because PHP's object refcounts are not atomic; a
+	 * caller racing the last reference away has already lost. The stub says so.
+	 */
+	if (sandbox->owner_thread == luaext_current_thread() && !luaext_sandbox_check_open(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	luaext_timers_request(sandbox, LUAEXT_IRQ_ABORT);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats)
@@ -1003,32 +1064,108 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getCpuUsage)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getCpuUsage");
+	const luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	RETURN_DOUBLE(luaext_timers_cpu_seconds(sandbox));
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getWallClockUsage)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getWallClockUsage");
+	const luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	RETURN_DOUBLE(luaext_timers_wall_seconds(sandbox));
+}
+
+static void luaext_sandbox_return_output(INTERNAL_FUNCTION_PARAMETERS, bool take)
+{
+	luaext_sandbox *sandbox;
+	zend_string *output;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	output = luaext_output_get(sandbox, take);
+
+	if (output == NULL) {
+		RETURN_THROWS();
+	}
+
+	RETURN_STR(output);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutput)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getOutput");
+	luaext_sandbox_return_output(INTERNAL_FUNCTION_PARAM_PASSTHRU, false);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, takeOutput)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "takeOutput");
+	luaext_sandbox_return_output(INTERNAL_FUNCTION_PARAM_PASSTHRU, true);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutputLength)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getOutputLength");
+	const luaext_sandbox *sandbox;
+	size_t length;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	length = luaext_output_length(sandbox);
+
+	if (EG(exception) != NULL) {
+		RETURN_THROWS();
+	}
+
+	RETURN_LONG((zend_long)length);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, isOutputTruncated)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "isOutputTruncated");
+	const luaext_sandbox *sandbox;
+	bool truncated;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	truncated = luaext_output_truncated(sandbox);
+
+	if (EG(exception) != NULL) {
+		RETURN_THROWS();
+	}
+
+	RETURN_BOOL(truncated);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, enableProfiler)

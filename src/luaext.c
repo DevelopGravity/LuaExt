@@ -11,6 +11,7 @@
 #include "luaext_config.h"
 #include "luaext_function.h"
 #include "luaext_sandbox.h"
+#include "luaext_timers.h"
 #include "luaext_types.h"
 
 #include <lua.h>
@@ -237,11 +238,23 @@ static PHP_MINIT_FUNCTION(luaext)
 	luaext_function_startup();
 	luaext_config_startup();
 
+	/* Probes the platform clocks and prepares the slot pool. Deliberately does
+	 * not start the watchdog thread: that is lazy, on the first armed limit, so
+	 * a process that never sets one never pays for it. */
+	luaext_timers_startup();
+
 	return SUCCESS;
 }
 
 static PHP_MSHUTDOWN_FUNCTION(luaext)
 {
+	/*
+	 * Stops and JOINS the watchdog before releasing anything it could be
+	 * reading. Ordering, not tidiness: reversing it is a use-after-free that
+	 * only appears under load.
+	 */
+	luaext_timers_shutdown();
+
 	UNREGISTER_INI_ENTRIES();
 
 	return SUCCESS;

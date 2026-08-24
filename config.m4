@@ -155,14 +155,24 @@ if test "$PHP_LUAEXT" != "no"; then
     [src/luaext.c \
      src/luaext_sandbox.c \
      src/luaext_alloc.c \
+     src/luaext_baselib.c \
+     src/luaext_clock.c \
      src/luaext_config.c \
      src/luaext_convert.c \
+     src/luaext_debuglib.c \
      src/luaext_error.c \
      src/luaext_exec.c \
      src/luaext_function.c \
      src/luaext_interrupt.c \
+     src/luaext_mathlib.c \
+     src/luaext_openlibs.c \
+     src/luaext_oslib.c \
+     src/luaext_output.c \
      src/luaext_pending.c \
-     src/luaext_phpcall.c],
+     src/luaext_phpcall.c \
+     src/luaext_thread.c \
+     src/luaext_timers.c \
+     src/luaext_watchdog.c],
     [$ext_shared],,
     [$LUAEXT_FLAGS])
 

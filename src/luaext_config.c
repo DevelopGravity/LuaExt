@@ -235,10 +235,13 @@ static uint32_t luaext_config_open_libs(uint32_t caps)
 	 * luaopen_coroutine. The wrapper is what caps live coroutines and stops
 	 * resume() from returning a fatal error as `false, err` instead of
 	 * re-raising it, so upstream's table would quietly undo two guarantees.
+	 *
+	 * So the bit is deliberately NOT set here, even though the capability
+	 * defaults to true: setting it would name a library that no opener
+	 * installs, which is worse than absent because it reads as done. A sandbox
+	 * therefore has no coroutine table at all, and Sandbox::features() reports
+	 * the capability as unimplemented rather than letting it look granted.
 	 */
-	if ((caps & LUAEXT_CAP_COROUTINES) != 0) {
-		libs |= LUAEXT_LIB_CORO;
-	}
 
 	/*
 	 * Exception 2: LUAEXT_LIB_DEBUG stays clear no matter which debug*
@@ -601,7 +604,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
  */
 static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *limits,
 										zend_object *vfs_quota, zend_object *filesystem,
-										bool seed_is_fixed, bool deterministic,
+										bool seed_is_fixed, zend_long seed, bool deterministic,
 										luaext_policy *policy)
 {
 	memset(policy, 0, sizeof(*policy));
@@ -613,6 +616,15 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	policy->caps = luaext_config_caps(capabilities);
 	policy->open_libs = luaext_config_open_libs(policy->caps);
 
+	/*
+	 * Carried, not merely validated. The check above refuses a fixed seed
+	 * unless the host also asked for determinism; without propagating it the
+	 * refusal would guard a setting nothing ever read, and deterministic: true
+	 * would produce a different hash seed on every construction.
+	 */
+	policy->seed_is_fixed = seed_is_fixed;
+	policy->seed = seed_is_fixed ? (uint64_t)seed : 0;
+
 	return luaext_config_limits(limits, &policy->limits) &&
 		   luaext_config_vfs_quota(vfs_quota, &policy->vfs_quota);
 }
@@ -621,19 +633,23 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 {
 	zend_object *object;
 
+	zval *seed;
+
 	if (config == NULL || Z_TYPE_P(config) != IS_OBJECT) {
 		/* No configuration at all is the untrusted baseline with default limits. */
-		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, false, policy);
+		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, policy);
 	}
 
 	object = Z_OBJ_P(config);
 	ZEND_ASSERT(object->ce == luaext_ce_sandbox_config);
 
+	seed = LUAEXT_GET(object, "seed");
+
 	return luaext_config_resolve_parts(
 		LUAEXT_GET_OBJECT(object, "capabilities"), LUAEXT_GET_OBJECT(object, "limits"),
 		LUAEXT_GET_OBJECT(object, "vfsQuota"), LUAEXT_GET_OBJECT(object, "filesystem"),
-		Z_TYPE_P(LUAEXT_GET(object, "seed")) == IS_LONG, LUAEXT_GET_BOOL(object, "deterministic"),
-		policy);
+		Z_TYPE_P(seed) == IS_LONG, Z_TYPE_P(seed) == IS_LONG ? Z_LVAL_P(seed) : 0,
+		LUAEXT_GET_BOOL(object, "deterministic"), policy);
 }
 
 /* -------------------------------------------------------------------------
@@ -1120,7 +1136,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	 * because resolution is pure.
 	 */
 	if (!luaext_config_resolve_parts(capabilities, limits, vfs_quota, filesystem, !seed_is_null,
-									 deterministic, &policy)) {
+									 seed, deterministic, &policy)) {
 		RETURN_THROWS();
 	}
 

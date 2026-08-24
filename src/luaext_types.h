@@ -250,6 +250,20 @@ typedef struct {
 	uint32_t open_libs; /* luaext_lib bitset */
 	luaext_limits limits;
 	luaext_vfs_quota vfs_quota;
+
+	/*
+	 * The seed for everything a script could otherwise use to learn about the
+	 * host's address space: the string hash, and the random generator the math
+	 * library is opened with.
+	 *
+	 * `seed_is_fixed` records that the host asked for a specific one. It is not
+	 * merely informational -- surrendering hash-flood protection has to be a
+	 * deliberate act, so SandboxConfig refuses a fixed seed unless the host also
+	 * passes deterministic: true, and this is what carries that decision far
+	 * enough to be acted on.
+	 */
+	uint64_t seed;
+	bool seed_is_fixed;
 } luaext_policy;
 
 #define luaext_has_cap(policy, cap) (((policy)->caps & (uint32_t)(cap)) != 0)
