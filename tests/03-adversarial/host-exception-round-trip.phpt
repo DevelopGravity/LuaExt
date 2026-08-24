@@ -3,7 +3,7 @@ A host exception crosses Lua and comes back as the same object
 --EXTENSIONS--
 luaext
 --XFAIL--
-Needs Sandbox::eval() and registerLibrary(); the retention and rethrow are already implemented in the error subsystem.
+Needs the pcall replacement from the library-policy wave. The exception object already survives the round trip intact -- class, identity, code and previous chain all assert correctly -- but Lua's own pcall is still upstream's and swallows the fatal.
 --FILE--
 <?php
 

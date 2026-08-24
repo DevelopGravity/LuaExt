@@ -2,8 +2,6 @@
 registerObject() exposes methods carrying #[LuaMethod], under the name it asks for
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval() and registerObject() wired to the callback bridge; the attribute scan and the bridge are implemented.
 --FILE--
 <?php
 
@@ -46,7 +44,9 @@ var_dump($sandbox->eval(
 	'return type(catalogue.search), type(catalogue.findByKeyword), type(catalogue.purge)'
 ));
 
-var_dump($sandbox->eval('local r = catalogue.search("axle") return r[1], r[2]'));
+// A returned PHP list keeps its own 0-based keys rather than being renumbered;
+// see 09-conversion/array-key-mapping.phpt.
+var_dump($sandbox->eval('local r = catalogue.search("axle") return r[0], r[1]'));
 
 // An allowlist overrides the attributes entirely, renames included: what the
 // host wrote in the allowlist is what a script sees.

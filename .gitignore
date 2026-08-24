@@ -81,6 +81,10 @@ fuzz/*.o
 fuzz/*_fuzzer
 !fuzz/*.c
 
+# Agent scratch space. Worktrees created here are whole checkouts with their own
+# .git, so committing one embeds a repository inside this one.
+.claude/
+
 # Editor / OS cruft
 .DS_Store
 *.swp

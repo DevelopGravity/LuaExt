@@ -22,6 +22,7 @@
 #include "luaext_convert.h"
 #include "luaext_error.h"
 #include "luaext_exec.h"
+#include "luaext_phpcall.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -451,6 +452,25 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, close)
 		RETURN_THROWS();
 	}
 
+	/*
+	 * A host callback invoked from Lua can reach the sandbox that is running it
+	 * -- registerObject() and any closure capturing $sandbox both hand it over.
+	 * Closing there would run lua_close() on the very state executing the frame
+	 * we would return into, so this is a use-after-free reachable from ordinary
+	 * host code rather than a misuse worth documenting.
+	 *
+	 * Only the method refuses. luaext_sandbox_close() is also the destructor and
+	 * RSHUTDOWN sweep's path, and both legitimately run during teardown, when
+	 * these depths say nothing useful.
+	 */
+	if (sandbox->in_lua > 0 || sandbox->in_php > 0) {
+		zend_throw_exception(luaext_ce_configuration_error,
+							 "Cannot close a sandbox while it is running: close() was called from "
+							 "inside a call into Lua, whose state is still executing",
+							 0);
+		RETURN_THROWS();
+	}
+
 	luaext_sandbox_close(sandbox);
 }
 
@@ -847,17 +867,89 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setGlobal)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "wrapCallable");
+	luaext_sandbox *sandbox;
+	zval *callback;
+	zend_string *name = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+	Z_PARAM_ZVAL(callback)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR_OR_NULL(name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_phpcall_push(sandbox, callback, name != NULL ? ZSTR_VAL(name) : NULL)) {
+		RETURN_THROWS();
+	}
+
+	/* Pops the closure luaext_phpcall_push() left on the stack. This pairing is
+	 * the one place the callback and execution subsystems touch. */
+	luaext_exec_make_function(sandbox, ZEND_THIS, return_value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerLibrary)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "registerLibrary");
+	luaext_sandbox *sandbox;
+	zend_string *name;
+	HashTable *functions;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+	Z_PARAM_STR(name)
+	Z_PARAM_ARRAY_HT(functions)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_phpcall_register_table(sandbox, ZSTR_VAL(name), ZSTR_LEN(name), functions)) {
+		RETURN_THROWS();
+	}
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "registerObject");
+	luaext_sandbox *sandbox;
+	zend_string *name;
+	zval *instance;
+	HashTable *allowlist = NULL;
+	HashTable *methods;
+	bool registered;
+
+	ZEND_PARSE_PARAMETERS_START(2, 3)
+	Z_PARAM_STR(name)
+	Z_PARAM_OBJECT(instance)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_ARRAY_HT_OR_NULL(allowlist)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/* Selection happens before anything is exposed, so a refusal leaves the
+	 * script's view of the world untouched. */
+	methods = luaext_phpcall_collect_methods(instance, allowlist);
+
+	if (methods == NULL) {
+		RETURN_THROWS();
+	}
+
+	registered = luaext_phpcall_register_table(sandbox, ZSTR_VAL(name), ZSTR_LEN(name), methods);
+	zend_array_destroy(methods);
+
+	if (!registered) {
+		RETURN_THROWS();
+	}
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)

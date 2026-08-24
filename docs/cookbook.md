@@ -88,6 +88,10 @@ $sandbox->registerObject('database', new ReadOnlyQueryService($readOnlyConnectio
 LUA);
 ```
 
+A callback returns exactly one Lua value. Returning an array gives the script a table, not several results — `table.unpack` is how a script spreads one into many.
+
+Note the indexing when it does. Array keys are carried across unchanged rather than renumbered, so a PHP list arrives 0-indexed and its first element sits outside what Lua counts as the sequence. A script iterating the rows above with `ipairs` would silently start at the second one; `pairs` walks all of them, and a callback that wants to hand back a Lua-idiomatic sequence should return a 1-based array (`array_combine(range(1, count($rows)), $rows)`) rather than rely on the script to know. Preserving keys is deliberate — renumbering could not survive mixed or sparse arrays, and would make the round trip lossy — but it is the sharpest edge in the conversion layer.
+
 `RuntimeError` is the one exception type a callback should throw for a condition the script is meant to handle — a malformed query, a permission problem, anything a Lua-side `pcall` should be able to catch. Throwing anything else (or letting an unexpected exception escape) is fatal to the call, and the original PHP exception is preserved end-to-end and rethrown to the host with a Lua traceback attached, per the extension's callback contract.
 
 Object identity never crosses the boundary either direction — Lua gets bound closures, never a reference to `$instance` it could otherwise introspect, and passing a PHP object as an argument into Lua is always a `ConversionError`. This is deliberate: `registerObject`/`registerLibrary` is the *only* bridge, and it's a one-way, method-at-a-time one.

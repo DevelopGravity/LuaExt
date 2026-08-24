@@ -2,8 +2,6 @@
 A PHP callback's arguments and its single return value convert in both directions
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal(), LuaFunction::__invoke() and the three registration methods wired to the callback bridge; the bridge itself is implemented.
 --FILE--
 <?php
 
@@ -47,17 +45,24 @@ var_dump($sandbox->eval('return host.yes(), host.count(), host.ratio()'));
 // Strings are bytes in both languages, so an embedded NUL is content.
 var_dump(bin2hex($sandbox->eval('return host.text()')[0]));
 
-var_dump($sandbox->eval('local t = host.list() return #t, t[1], t[3]'));
+// A returned PHP list keeps its own keys rather than being renumbered, exactly
+// as it does through setGlobal() -- see 09-conversion/array-key-mapping.phpt for
+// the reasoning. So a 0-indexed PHP list arrives with its first element sitting
+// outside Lua's idea of the sequence, and # reports the shorter run.
+var_dump($sandbox->eval('local t = host.list() return #t, t[0], t[2], t[3] == nil'));
 var_dump($sandbox->eval('local m = host.map() return m.a, m.b.c'));
 
 // One value, not two: table.unpack is how a script spreads what it was given.
+// Its default range starts at 1, so it too works from the sequence, not from
+// key 0 -- a script wanting the whole list passes explicit bounds.
 var_dump($sandbox->eval('return select("#", host.pair())'));
 var_dump($sandbox->eval('return table.unpack(host.pair())'));
+var_dump($sandbox->eval('return table.unpack(host.pair(), 0, 1)'));
 
 // Arguments travel the other way positionally, with their types intact.
 var_dump($sandbox->eval(<<<'LUA'
 	local r = host.echo(1, "two", 3.5, true)
-	return r.count, r.values[1], r.values[2], r.values[3], r.values[4]
+	return r.count, r.values[0], r.values[1], r.values[2], r.values[3]
 LUA));
 
 // No arguments at all is not an error.
@@ -104,13 +109,15 @@ array(3) {
   float(1.5)
 }
 string(18) "636166c3a900656e64"
-array(3) {
+array(4) {
   [0]=>
-  int(3)
+  int(2)
   [1]=>
   int(10)
   [2]=>
   int(30)
+  [3]=>
+  bool(true)
 }
 array(2) {
   [0]=>
@@ -121,6 +128,10 @@ array(2) {
 array(1) {
   [0]=>
   int(1)
+}
+array(1) {
+  [0]=>
+  string(6) "second"
 }
 array(2) {
   [0]=>

@@ -2,8 +2,6 @@
 registerObject() exposes exactly the methods an allowlist names and refuses the rest
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval() and registerObject() wired to the callback bridge; the selection and the bridge are implemented.
 --FILE--
 <?php
 

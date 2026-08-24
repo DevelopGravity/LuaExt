@@ -2,8 +2,6 @@
 An error value a script can hold is opaque, unforgeable and leaks no address
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval() and registerLibrary(); the userdata, its protected metatable and __tostring are already implemented.
 --FILE--
 <?php
 

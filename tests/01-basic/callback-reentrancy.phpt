@@ -3,7 +3,7 @@ A callback can call back into Lua, and a failure inside one still escapes every 
 --EXTENSIONS--
 luaext
 --XFAIL--
-Needs Sandbox::eval(), LuaFunction::__invoke() and registerLibrary() wired to the callback bridge; the bridge and its boundary accounting are implemented.
+Needs the pcall replacement from the library-policy wave. The bridge, its boundary accounting and the wiring are all in place, and the fatal is raised correctly -- but Lua's own pcall is still upstream's, so a script can catch a host failure on the way in. Everything above the last assertion already passes.
 --FILE--
 <?php
 

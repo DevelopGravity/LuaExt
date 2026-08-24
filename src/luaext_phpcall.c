@@ -507,9 +507,9 @@ bool luaext_phpcall_push(luaext_sandbox *sandbox, zval *callable, const char *na
 	L = sandbox->L;
 
 	if (!lua_checkstack(L, LUAEXT_PHPCALL_SLOTS)) {
-		zend_throw_exception(luaext_ce_memory_limit_error,
-							 "Cannot expose a PHP callable to Lua: the interpreter stack cannot grow",
-							 0);
+		zend_throw_exception(
+			luaext_ce_memory_limit_error,
+			"Cannot expose a PHP callable to Lua: the interpreter stack cannot grow", 0);
 		return false;
 	}
 
@@ -737,10 +737,9 @@ static bool luaext_phpcall_add_method(HashTable *methods, zval *instance, zend_f
 
 	if (zend_hash_add(methods, lua_name, &callable) == NULL) {
 		zval_ptr_dtor(&callable);
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"Two methods of %s both want the Lua name \"%s\"",
-								scope != NULL ? ZSTR_VAL(scope->name) : "the object",
-								ZSTR_VAL(lua_name));
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0, "Two methods of %s both want the Lua name \"%s\"",
+			scope != NULL ? ZSTR_VAL(scope->name) : "the object", ZSTR_VAL(lua_name));
 		return false;
 	}
 
@@ -774,8 +773,8 @@ static bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_functi
 		return false;
 	}
 
-	configured = zend_read_property(luaext_ce_lua_method_attribute, Z_OBJ(marker), ZEND_STRL("name"),
-									true, &holder);
+	configured = zend_read_property(luaext_ce_lua_method_attribute, Z_OBJ(marker),
+									ZEND_STRL("name"), true, &holder);
 
 	if (configured != NULL && Z_TYPE_P(configured) == IS_STRING) {
 		if (Z_STRLEN_P(configured) == 0) {
@@ -889,10 +888,10 @@ static bool luaext_phpcall_collect_attributed(HashTable *methods, zval *instance
 		if (refusal != NULL) {
 			/* Marked but unexposable is a host mistake, and a silently missing
 			 * function is a worse way to find out about it than an exception. */
-			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-									"%s::%s() carries #[LuaMethod] but cannot be exposed to Lua: %s",
-									ZSTR_VAL(ce->name), ZSTR_VAL(method->common.function_name),
-									refusal);
+			zend_throw_exception_ex(
+				luaext_ce_configuration_error, 0,
+				"%s::%s() carries #[LuaMethod] but cannot be exposed to Lua: %s",
+				ZSTR_VAL(ce->name), ZSTR_VAL(method->common.function_name), refusal);
 			collected = false;
 			break;
 		}

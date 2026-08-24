@@ -2,8 +2,6 @@
 A traceback is still captured when the memory budget is exhausted
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval(), registerLibrary() and the enforcing allocator; the traceback handler already lifts the ceiling for its own duration.
 --FILE--
 <?php
 

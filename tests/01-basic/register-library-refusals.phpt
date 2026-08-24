@@ -2,8 +2,6 @@
 registerLibrary() refuses a malformed table before it builds anything in the interpreter
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval() and registerLibrary() wired to the callback bridge; the validation and the bridge are implemented.
 --FILE--
 <?php
 
