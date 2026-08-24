@@ -181,8 +181,15 @@ static int luaext_baselib_pcall(lua_State *L)
  * has already happened. The handler is skipped entirely, and the error value is
  * returned exactly as it arrived.
  *
- * Nothing in here allocates or raises, which is what a message handler must be
- * able to promise: it runs on a stack that has already failed once.
+ * Nothing in here allocates or raises before the delegation, which is what a
+ * message handler must be able to promise: it runs on a stack that has already
+ * failed once.
+ *
+ * The one visible cost is a frame. `xpcall(f, debug.traceback)` now runs the
+ * script's handler one C frame further out than upstream would, so a traceback
+ * taken inside it carries an extra "[C]" line. That is the price of deciding
+ * fatality before the handler sees the value, and it is the right way round: a
+ * cosmetic frame against a marker that can be laundered.
  */
 static int luaext_baselib_xpcall_handler(lua_State *L)
 {
