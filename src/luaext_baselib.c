@@ -23,7 +23,6 @@
 
 #include "luaext_error.h"
 #include "luaext_output.h"
-#include "luaext_timers.h"
 
 #include <lauxlib.h>
 #include <lualib.h>
@@ -32,6 +31,15 @@
 
 /* Stack slots any one step in here needs. */
 #define LUAEXT_BASELIB_SLOTS 8
+
+/*
+ * What warn() puts in front of a message.
+ *
+ * A sandbox has one sink, so a warning and a print land in the same place;
+ * upstream's wording is reused so that a host reading the output recognises it
+ * as the same thing Lua would have written to stderr.
+ */
+#define LUAEXT_BASELIB_WARN_PREFIX "Lua warning: "
 
 /* -------------------------------------------------------------------------
  * The allow list
@@ -259,10 +267,14 @@ static int luaext_baselib_print(lua_State *L)
 	line = lua_tolstring(L, -1, &length);
 
 	/*
-	 * false means the budget is spent and the host asked to fail rather than
-	 * truncate. print owns no zval and holds nothing the C unwind would strand,
-	 * so it raises on the spot rather than asking for an interrupt -- which also
-	 * means the traceback names the print that overran.
+	 * The write is the last thing this frame does that can fail, and it owns
+	 * nothing when it happens: the buffer has already collapsed into the string
+	 * on the stack, and there is no zval or emalloc'd block here at all. That
+	 * matters twice over -- false means the budget is spent and the host asked to
+	 * fail rather than truncate, so this raises on the spot; and the sink itself
+	 * may unwind, because in Callback mode it calls a host callback that can
+	 * throw. Either way nothing is stranded, and the traceback names the print
+	 * that overran.
 	 */
 	if (!luaext_output_write(sandbox, line, length)) {
 		luaext_error_raise(L, LUAEXT_ERR_OUTPUT, true,
@@ -279,54 +291,36 @@ static int luaext_baselib_print(lua_State *L)
  * ---------------------------------------------------------------------- */
 
 /*
- * Where every Lua warning ends up -- ours, and the interpreter's own.
+ * Where every warning the INTERPRETER raises on its own initiative ends up:
+ * nowhere.
  *
- * Installed unconditionally, so "nothing reaches stderr" is a property of the
- * sandbox rather than of which libraries it happened to open. Lua's default
- * warning function writes to stderr, and the interpreter emits warnings on its
- * own initiative: an error inside a __gc metamethod is reported this way.
+ * Installed unconditionally, so "nothing this extension runs reaches stderr" is
+ * a property of the sandbox rather than of which libraries it happened to open.
+ * Lua's default warning function writes to stderr, and the interpreter warns by
+ * itself -- an error inside a __gc metamethod is reported exactly this way.
  *
- * An untrusted sandbox discards them, and that cost is deliberate. Routing
- * finaliser diagnostics into the output sink would let a script spend its output
- * budget from a finaliser -- somewhere it cannot be given a useful error --
- * which is a worse trade than losing the diagnostic.
+ * It discards rather than forwards, at every capability level, for two reasons
+ * that point the same way:
  *
- * Must never raise: it can be called from the collector, from lua_close(), and
- * from inside an error already being handled. An overrun sink is therefore
- * reported by asking for an interrupt, which the next hook tick raises properly.
+ *   It cannot safely write. luaE_warnerror() is called from luaC_GCTM OUTSIDE
+ *   the protected call that ran the finaliser, and from lua_close() where there
+ *   is no protected call at all -- and luaext_output_write() can unwind, because
+ *   a Callback-mode sink invokes a host callback that may throw. An unwind from
+ *   either site would longjmp out of the collector.
+ *
+ *   It should not spend the budget. Forwarding finaliser diagnostics would let a
+ *   script consume its output allowance from a finaliser, somewhere it cannot
+ *   even be told that it has.
+ *
+ * The cost is real and deliberate: a __gc that fails is silent. warn() itself is
+ * unaffected -- it writes to the sink directly, from a frame where raising is
+ * safe.
  */
 static void luaext_baselib_warnf(void *ud, const char *message, int to_continue)
 {
-	luaext_sandbox *sandbox = (luaext_sandbox *)ud;
-
-	if (sandbox == NULL || message == NULL || sandbox->closed) {
-		return;
-	}
-
-	if (!luaext_has_cap(&sandbox->policy, LUAEXT_CAP_WARN)) {
-		return;
-	}
-
-	/*
-	 * A control message, in Lua's sense: a complete one-part message beginning
-	 * with '@'. Upstream's own warning function uses "@on" and "@off" to toggle
-	 * itself; there is nothing here to toggle, and passing them through would
-	 * emit the control word as though a script had asked to print it.
-	 */
-	if (!to_continue && message[0] == '@') {
-		return;
-	}
-
-	if (!luaext_output_write(sandbox, message, strlen(message))) {
-		luaext_timers_request(sandbox, LUAEXT_IRQ_OUTPUT);
-		return;
-	}
-
-	/* A warning composed from several parts is one line; only the last part
-	 * closes it. */
-	if (!to_continue && !luaext_output_write(sandbox, "\n", 1)) {
-		luaext_timers_request(sandbox, LUAEXT_IRQ_OUTPUT);
-	}
+	(void)ud;
+	(void)message;
+	(void)to_continue;
 }
 
 void luaext_baselib_install_warnf(lua_State *L, luaext_sandbox *sandbox)
@@ -335,18 +329,23 @@ void luaext_baselib_install_warnf(lua_State *L, luaext_sandbox *sandbox)
 }
 
 /*
- * Ours rather than upstream's, so a warning arrives at the sink as one message.
+ * Ours rather than upstream's, and it does not go through lua_warning().
  *
- * Upstream's warn() emits each argument as a separate continuation part, and
- * reassembling those would need per-sandbox state that only exists to undo the
- * split. Composing here also means the '@' control test in the warning function
- * sees the message a script actually wrote.
+ * Upstream's warn() emits each argument as a separate continuation part of one
+ * message, which the warning function then has to reassemble -- and the warning
+ * function is precisely where writing is not safe. Composing here instead means
+ * one warn() is one write, from a frame that owns nothing when it makes it, and
+ * that the '@' control test sees the message a script actually wrote rather than
+ * its first fragment.
  */
 static int luaext_baselib_warn(lua_State *L)
 {
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	int argc = lua_gettop(L);
 	int index;
 	luaL_Buffer buffer;
+	const char *line;
+	size_t length = 0;
 
 	luaL_checkstring(L, 1); /* at least one argument, and all of them strings */
 
@@ -356,14 +355,37 @@ static int luaext_baselib_warn(lua_State *L)
 
 	luaL_checkstack(L, LUAEXT_BASELIB_SLOTS, "luaext: no stack to warn");
 	luaL_buffinit(L, &buffer);
+	luaL_addstring(&buffer, LUAEXT_BASELIB_WARN_PREFIX);
 
 	for (index = 1; index <= argc; index++) {
 		lua_pushvalue(L, index);
 		luaL_addvalue(&buffer);
 	}
 
+	luaL_addchar(&buffer, '\n');
 	luaL_pushresult(&buffer);
-	lua_warning(L, lua_tostring(L, -1), 0);
+
+	line = lua_tolstring(L, -1, &length);
+
+	/*
+	 * A control message, in Lua's sense: one beginning with '@'. Upstream's own
+	 * warning function uses "@on" and "@off" to switch itself; there is nothing
+	 * here to switch, and forwarding them would emit the control word as though a
+	 * script had asked to print it.
+	 */
+	if (length > sizeof(LUAEXT_BASELIB_WARN_PREFIX) - 1 &&
+		line[sizeof(LUAEXT_BASELIB_WARN_PREFIX) - 1] == '@') {
+		lua_pop(L, 1);
+		return 0;
+	}
+
+	/* Same reasoning as print: nothing is owned here, so both the refusal and an
+	 * unwind out of a Callback-mode sink are safe. */
+	if (!luaext_output_write(sandbox, line, length)) {
+		luaext_error_raise(L, LUAEXT_ERR_OUTPUT, true,
+						   "The sandbox has written all the output it is allowed");
+	}
+
 	lua_pop(L, 1);
 
 	return 0;

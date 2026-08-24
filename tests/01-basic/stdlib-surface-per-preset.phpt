@@ -62,6 +62,13 @@ $sandbox = new Sandbox(new SandboxConfig(capabilities: (new Capabilities())->wit
 
 var_dump($sandbox->eval('return select("#", print("a", 1, nil, true, {}))'));
 var_dump($sandbox->eval('return select("#", warn("something", " happened"))'));
+
+// A control message in Lua's sense -- upstream's warning function switches
+// itself on and off with these. There is nothing here to switch, so it is
+// dropped rather than emitted as though a script had asked to print it.
+var_dump($sandbox->eval('return select("#", warn("@off"))'));
+
+// Strings only, exactly as upstream: warn is not a second print.
 var_dump($sandbox->eval('return pcall(warn, {})')[0]);
 
 $sandbox->close();
@@ -77,6 +84,10 @@ untrusted        load=nil warn=nil dofile=nil loadfile=nil
 compileAtRuntime load=function warn=nil dofile=nil loadfile=nil
 warn             load=nil warn=function dofile=nil loadfile=nil
 both             load=function warn=function dofile=nil loadfile=nil
+array(1) {
+  [0]=>
+  int(0)
+}
 array(1) {
   [0]=>
   int(0)
