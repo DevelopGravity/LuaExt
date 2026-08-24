@@ -25,6 +25,7 @@
 
 #include "luaext_convert.h"
 #include "luaext_error.h"
+#include "luaext_timers.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -224,11 +225,13 @@ bool luaext_exec_push_value(luaext_sandbox *sandbox, zval *value)
 bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint32_t argc,
 					   zval *return_value)
 {
+	luaext_watch_frame frame;
 	lua_State *L;
 	int base;
 	int handler;
 	int status;
 	bool converted;
+	bool interrupted;
 
 	if (!luaext_exec_ready(sandbox)) {
 		return false;
@@ -264,11 +267,31 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	}
 
 	sandbox->lua_calls_in++;
-	sandbox->in_lua++;
+
+	/*
+	 * The one bracket that arms the timing limits. It also owns in_lua, because
+	 * only the OUTERMOST entry may arm and the depth is how that is known: a
+	 * nested call made from inside a host callback must not restart the clock.
+	 */
+	luaext_timers_enter_lua(sandbox, &frame);
 
 	status = lua_pcall(L, (int)argc, LUA_MULTRET, handler);
 
-	sandbox->in_lua--;
+	/*
+	 * Asked BEFORE leaving, because leaving is where the sticky interrupt flag
+	 * is cleared. A call that came back with LUA_OK while a limit breach was
+	 * still raised did not succeed -- something inside it caught the breach and
+	 * carried on -- and its results are not results.
+	 */
+	interrupted = status == LUA_OK && luaext_timers_throw_if_interrupted(sandbox);
+
+	luaext_timers_leave_lua(sandbox, &frame);
+
+	if (interrupted) {
+		lua_settop(L, base);
+
+		return false;
+	}
 
 	if (status != LUA_OK) {
 		/*
@@ -297,6 +320,16 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
  * "a.b.c" names c inside b inside a inside the globals table. Traversal is raw
  * for the reason given at the top of this file: a host reading a global must
  * not be a way to run script code at a moment nothing is bounding it.
+ *
+ * Neither of the two entry points below carries the luaext_timers_enter_lua
+ * bracket, and that is a decision rather than an omission. Both run inside a
+ * lua_pcall trampoline, so they do execute interpreter code -- but every lookup
+ * is raw, no metamethod can run, and the work is bounded by the length of the
+ * path. No timing limit can fire usefully inside one. Arming them would put a
+ * lock acquisition and a clock read on every getGlobal() and setGlobal() to
+ * bound something that cannot run away. The rawness is what makes that safe: if
+ * a future change ever lets a metamethod run here, the bracket has to come back
+ * with it.
  * ---------------------------------------------------------------------- */
 
 typedef struct {

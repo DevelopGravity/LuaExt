@@ -27,6 +27,7 @@
 #include "luaext_alloc.h"
 #include "luaext_convert.h"
 #include "luaext_error.h"
+#include "luaext_timers.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -300,6 +301,21 @@ static int luaext_phpcall_invoke(lua_State *L)
 		zend_call_known_fcc(&slot->fcc, &result, (uint32_t)argc, params, NULL);
 
 		sandbox->in_php--;
+
+		/*
+		 * A callback that paused its own billing and forgot to resume does not
+		 * get to keep the pause. Note what this does NOT do: it does not pause
+		 * around the call. Time a host callback spends is the script's doing and
+		 * is billed by default; only an explicit pauseTimers() un-bills it, and
+		 * only when every enclosing frame paused too.
+		 *
+		 * A zend_bailout inside the callback longjmps past this, leaving the
+		 * pause outstanding as well as the in_php increment the same bailout
+		 * already stranded. That is the existing tracked hazard, not a new one:
+		 * a leaked pause errs towards NOT billing, so it is the one direction
+		 * worth naming out loud.
+		 */
+		luaext_timers_php_returned(sandbox);
 	}
 
 	/*
@@ -341,6 +357,15 @@ static int luaext_phpcall_invoke(lua_State *L)
 	LUAEXT_NO_RAISE_END(L);
 
 	/* Nothing is owned from here down, so raising is finally safe. */
+
+	/*
+	 * The callback boundary, tier 3 of interrupt delivery. A limit that expired
+	 * while the host was working gets delivered here rather than waiting for the
+	 * script to execute another instruction -- which matters most for the
+	 * callback that never returns to Lua at all because it is the last thing the
+	 * script does.
+	 */
+	LUAEXT_CHECK(L);
 
 	if (EG(exception) != NULL) {
 		/*

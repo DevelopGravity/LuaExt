@@ -11,6 +11,13 @@ typedef struct luaext_irq {
 struct lua_State;
 /* Defined by the extension (src/luaext_interrupt.c). Does not return. */
 extern void luaext_raise_interrupt(struct lua_State *L);
+/* Non-zero when the state's current debug hook is the extension's own count
+   hook. Defined by the extension (src/luaext_timers.c). 'lgc.c' asks before
+   deciding whether to leave hooks enabled around a __gc finalizer: upstream
+   disables them there because an arbitrary Lua hook function may allocate,
+   yield or re-enter the collector, and ours -- a C function that allocates
+   nothing and either returns or raises -- does none of those. */
+extern int luaext_hook_is_ours(struct lua_State *L);
 #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
 /* The hot-path load is relaxed: it only answers "is anything pending?", and
    costs nothing when nothing is. Ordering is established on the slow path

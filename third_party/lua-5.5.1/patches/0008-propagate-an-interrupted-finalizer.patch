@@ -1,0 +1,69 @@
+Subject: propagate an interrupted finalizer instead of warning
+
+'GCTM' turns any error a __gc metamethod raises into a warning through
+'luaE_warnerror' and carries on. That is right for a finalizer that
+merely failed, and wrong for one the sandbox stopped: it would let a
+finalizer both outlive its CPU limit and hide that it had.
+
+The test is on the atomic interrupt FLAG rather than on the error
+object, deliberately. Inspecting the object means Lua stack calls that
+can allocate, and this code runs inside the collector; one relaxed load
+answers the question with no interpreter involvement at all. It is also
+the only test that still works for an error a __gc metamethod raised
+itself after the limit had already tripped.
+
+'L->errorJmp' is checked because luaD_throw with no handler aborts the
+process. The only path here without one is the finalizer sweep inside
+lua_close(), where the extension has already cleared the flag -- but
+"would abort" is not a thing to leave to an ordering documented
+elsewhere.
+
+The throw abandons the rest of the current collector step. The object
+being finalized has already left 'tobefnz' and both 'g->gcstp' and
+'L->allowhook' are restored before this point, so the remaining
+finalizers simply stay pending and run in a later step.
+
+Behind LUAEXT_LUA_HOOKS, so a build without it is byte-identical to
+stock upstream Lua.
+
+diff --color -Naur a/src/lgc.c b/src/lgc.c
+--- a/src/lgc.c	2026-08-23 15:40:17
++++ b/src/lgc.c	2026-08-23 15:40:17
+@@ -1001,6 +1001,37 @@
+     L->allowhook = oldah;  /* restore hooks */
+     g->gcstp = oldgcstp;  /* restore state */
+     if (l_unlikely(status != LUA_OK)) {  /* error while running __gc? */
++#if LUAEXT_LUA_HOOKS
++      /*
++      ** Turning an error into a warning is right for a finalizer that
++      ** merely failed, and wrong for one that was stopped by the sandbox:
++      ** swallowing that would let a __gc metamethod both outlive its CPU
++      ** limit and hide the fact.
++      **
++      ** The test is on the atomic interrupt FLAG, deliberately, and not on
++      ** the error object. Inspecting the object means Lua stack calls that
++      ** can allocate, and this runs inside the collector. One relaxed load
++      ** answers the question with no interpreter involvement at all.
++      **
++      ** 'errorJmp' is checked because luaD_throw with no handler aborts the
++      ** process. The only way to reach here without one is the finalizer
++      ** sweep inside lua_close(), where the extension has already cleared
++      ** the flag -- but "would abort" is not a thing to leave to a
++      ** documented ordering somewhere else.
++      **
++      ** Note what is NOT restored on this path: g->gcstp and L->allowhook
++      ** already were, three lines up. What the throw does abandon is the
++      ** rest of the current collector step; the object being finalized has
++      ** already left 'tobefnz', so the remaining finalizers stay pending
++      ** and run in a later step.
++      */
++      luaext_irq *luaext_q = LUAEXT_IRQ(L);
++      if (luaext_q != NULL && L->errorJmp != NULL &&
++          atomic_load_explicit(&luaext_q->interrupted, memory_order_relaxed)) {
++        atomic_thread_fence(memory_order_acquire);
++        luaD_throw(L, status);  /* propagate instead of warning */
++      }
++#endif
+       luaE_warnerror(L, "__gc");
+       L->top.p--;  /* pops error object */
+     }

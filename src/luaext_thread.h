@@ -15,10 +15,77 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef struct luaext_mutex luaext_mutex;
-typedef struct luaext_cond luaext_cond;
-typedef struct luaext_thread luaext_thread;
-typedef struct luaext_once luaext_once;
+/*
+ * The four types are COMPLETE here rather than opaque, because every function
+ * below takes a pointer to caller-owned storage: the watchdog embeds its lock,
+ * its condition variable and its once-flag directly in its own file-scope
+ * state. An incomplete type would make that unwritable and would force a
+ * heap allocation and a null check onto the one path that must not fail.
+ *
+ * Only platform threading headers are pulled in, and only the ones this
+ * translation unit's consumers already depend on. Still no php.h and no lua.h:
+ * that is the property the CI purity grep checks.
+ */
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+
+typedef struct luaext_mutex {
+#if defined(_WIN32)
+	SRWLOCK lock;
+#else
+	pthread_mutex_t lock;
+#endif
+} luaext_mutex;
+
+typedef struct luaext_cond {
+#if defined(_WIN32)
+	CONDITION_VARIABLE cond;
+#else
+	pthread_cond_t cond;
+
+	/*
+	 * Whether the condition variable was successfully bound to a monotonic
+	 * clock at init. When it was, a timed wait converts its relative deadline
+	 * against CLOCK_MONOTONIC and a system clock step cannot move it; when it
+	 * was not, the wait falls back to CLOCK_REALTIME and a step costs at worst
+	 * one spurious or one late wakeup, which the caller's predicate re-test
+	 * already tolerates. macOS takes neither path: it has a genuinely relative
+	 * wait, and that is what is used there.
+	 */
+	bool monotonic;
+#endif
+} luaext_cond;
+
+typedef struct luaext_thread {
+#if defined(_WIN32)
+	HANDLE handle;
+#else
+	pthread_t handle;
+#endif
+	bool started;
+} luaext_thread;
+
+typedef struct luaext_once {
+#if defined(_WIN32)
+	INIT_ONCE once;
+#else
+	pthread_once_t once;
+#endif
+} luaext_once;
+
+/* Static initialisers. A once-flag in particular has to be usable before any
+ * code has run, which is the whole point of it. */
+#if defined(_WIN32)
+#define LUAEXT_ONCE_INIT {INIT_ONCE_STATIC_INIT}
+#else
+#define LUAEXT_ONCE_INIT {PTHREAD_ONCE_INIT}
+#endif
 
 bool luaext_mutex_init(luaext_mutex *mutex);
 void luaext_mutex_destroy(luaext_mutex *mutex);

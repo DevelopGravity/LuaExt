@@ -1,0 +1,65 @@
+Subject: keep the interrupt hook armed inside __gc finalizers
+
+'GCTM' clears L->allowhook around every finalizer, so no hook can fire
+while one runs. For a sandbox that is the difference between
+
+    setmetatable({}, {__gc = function() while true do end end})
+
+being stopped by its CPU limit and being unstoppable: the count hook is
+the only mechanism that can interrupt the interpreter's dispatch loop,
+and inside a finalizer it is switched off.
+
+Upstream's reason for switching it off is that an arbitrary Lua hook
+function may allocate, yield, or re-enter the collector. The luaext hook
+is a C function that does none of those -- it either returns or raises --
+so the reason does not apply to it, and only to it. The new
+'luaext_hook_is_ours' predicate is what makes that a test rather than an
+assumption: a hook installed by debug.sethook is still disabled, and so
+is ours when hooks were already off because we are inside one.
+
+Behind LUAEXT_LUA_HOOKS, so a build without it is byte-identical to
+stock upstream Lua.
+
+diff --color -Naur a/src/luaext_lua_hooks.h b/src/luaext_lua_hooks.h
+--- a/src/luaext_lua_hooks.h	2026-08-23 15:40:17
++++ b/src/luaext_lua_hooks.h	2026-08-23 15:40:17
+@@ -11,6 +11,13 @@
+ struct lua_State;
+ /* Defined by the extension (src/luaext_interrupt.c). Does not return. */
+ extern void luaext_raise_interrupt(struct lua_State *L);
++/* Non-zero when the state's current debug hook is the extension's own count
++   hook. Defined by the extension (src/luaext_timers.c). 'lgc.c' asks before
++   deciding whether to leave hooks enabled around a __gc finalizer: upstream
++   disables them there because an arbitrary Lua hook function may allocate,
++   yield or re-enter the collector, and ours -- a C function that allocates
++   nothing and either returns or raises -- does none of those. */
++extern int luaext_hook_is_ours(struct lua_State *L);
+ #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
+ /* The hot-path load is relaxed: it only answers "is anything pending?", and
+    costs nothing when nothing is. Ordering is established on the slow path
+diff --color -Naur a/src/lgc.c b/src/lgc.c
+--- a/src/lgc.c	2026-08-23 15:40:17
++++ b/src/lgc.c	2026-08-23 15:40:17
+@@ -977,7 +977,22 @@
+     lu_byte oldah = L->allowhook;
+     lu_byte oldgcstp  = g->gcstp;
+     g->gcstp |= GCSTPGC;  /* avoid GC steps */
++#if LUAEXT_LUA_HOOKS
++    /*
++    ** Upstream disables hooks here because an arbitrary Lua hook function
++    ** may allocate, yield, or re-enter the collector. The luaext count
++    ** hook is a C function that does none of those: it either returns or
++    ** raises. Leaving it armed is what stops
++    **   setmetatable({}, {__gc = function() while true do end end})
++    ** from being an unstoppable loop -- with hooks off, nothing in the
++    ** interpreter can interrupt a finalizer's dispatch loop at all.
++    ** A hook that is NOT ours (debug.sethook) is still disabled, and so is
++    ** ours when 'oldah' is already 0 because we are inside a hook.
++    */
++    L->allowhook = luaext_hook_is_ours(L) ? oldah : 0;
++#else
+     L->allowhook = 0;  /* stop debug hooks during GC metamethod */
++#endif
+     setobj2s(L, L->top.p++, tm);  /* push finalizer... */
+     setobj2s(L, L->top.p++, &v);  /* ... and its argument */
+     L->ci->callstatus |= CIST_FIN;  /* will run a finalizer */

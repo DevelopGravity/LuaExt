@@ -41,11 +41,31 @@ typedef struct luaext_watch_slot luaext_watch_slot;
 #define LUAEXT_WATCH_CPU (1u << 0)
 #define LUAEXT_WATCH_WALL (1u << 1)
 
+/*
+ * What the watchdog writes into luaext_irq::reason.
+ *
+ * Mirrors luaext_irq_reason from luaext_types.h for the same reason as above:
+ * that header includes php.h, and this one may not. luaext_timers.c carries a
+ * _Static_assert that the two agree, so a renumbering there is a build failure
+ * here rather than a sandbox reporting the wrong limit.
+ */
+#define LUAEXT_WATCH_REASON_NONE 0u
+#define LUAEXT_WATCH_REASON_CPU 1u
+#define LUAEXT_WATCH_REASON_WALL 2u
+
 /* -------------------------------------------------------------------------
  * Module lifecycle
  * ---------------------------------------------------------------------- */
 
 void luaext_watchdog_startup(void);
+
+/*
+ * Floor on wake-ups, from luaext.watchdog_resolution_us.
+ *
+ * Set at startup rather than read where it is used: an INI value is a PHP
+ * concept and this side of the split cannot see one. Zero restores the default.
+ */
+void luaext_watchdog_set_resolution_ns(uint64_t ns);
 
 /*
  * Stop the thread, JOIN it, and only then release the pool.
@@ -82,6 +102,17 @@ void luaext_watchdog_release(luaext_watch_slot *slot);
  * Limits and accounting. Nanoseconds; 0 means no limit.
  * ---------------------------------------------------------------------- */
 
+/*
+ * Whether a CPU limit of `limit_ns` is too fine for a clock that resolves to
+ * `resolution_ns` to measure meaningfully.
+ *
+ * Exported so the PHP-facing layer decides what to REPORT and this one decides
+ * what to ARM from a single definition. A degraded limit gets a wall-clock
+ * companion deadline, so a script still stops -- but it stops on a quantity the
+ * host did not ask for, which is why the breach is still reported as a CPU one.
+ */
+bool luaext_watchdog_cpu_is_degraded(uint64_t limit_ns, uint64_t resolution_ns);
+
 void luaext_watchdog_set_cpu_limit(luaext_watch_slot *slot, uint64_t ns, uint64_t resolution_ns);
 void luaext_watchdog_set_wall_limit(luaext_watch_slot *slot, uint64_t ns);
 
@@ -112,9 +143,12 @@ uint64_t luaext_watchdog_wall_ns(const luaext_watch_slot *slot);
 /*
  * Evaluate this slot from the owning thread and trip it if it is over budget.
  *
- * Called on a stride from the count hook. This is what makes the CPU limit
- * independent of the watchdog thread: CPU is only consumed where instructions
- * execute, so the thread executing them can notice its own overrun.
+ * Called from the count hook on every tick; the stride is applied INSIDE, since
+ * the per-sandbox tick counter has to live in the slot and the slot is the only
+ * per-sandbox storage this side of the split owns. This is what makes the CPU
+ * limit independent of the watchdog thread: CPU is only consumed where
+ * instructions execute, so the thread executing them can notice its own
+ * overrun.
  *
  * Returns true when the caller must raise. It must do so AFTER this returns --
  * raising is a longjmp, and the slot lock is held inside.
@@ -125,5 +159,15 @@ bool luaext_watchdog_self_check(luaext_watch_slot *slot);
  * degrades to "trips when Lua next executes an instruction", which
  * Sandbox::features() must report rather than conceal. */
 bool luaext_watchdog_thread_running(void);
+
+/*
+ * True when starting the thread was ATTEMPTED and the platform refused.
+ *
+ * Distinct from "not running", which is also what a process that has simply
+ * never armed a limit looks like -- the thread is created lazily. features()
+ * needs the difference: "we have not needed it yet" is not a degradation, and
+ * reporting one would train hosts to ignore the field.
+ */
+bool luaext_watchdog_thread_failed(void);
 
 #endif /* LUAEXT_WATCHDOG_H */

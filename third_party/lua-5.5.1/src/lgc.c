@@ -977,7 +977,22 @@ static void GCTM (lua_State *L) {
     lu_byte oldah = L->allowhook;
     lu_byte oldgcstp  = g->gcstp;
     g->gcstp |= GCSTPGC;  /* avoid GC steps */
+#if LUAEXT_LUA_HOOKS
+    /*
+    ** Upstream disables hooks here because an arbitrary Lua hook function
+    ** may allocate, yield, or re-enter the collector. The luaext count
+    ** hook is a C function that does none of those: it either returns or
+    ** raises. Leaving it armed is what stops
+    **   setmetatable({}, {__gc = function() while true do end end})
+    ** from being an unstoppable loop -- with hooks off, nothing in the
+    ** interpreter can interrupt a finalizer's dispatch loop at all.
+    ** A hook that is NOT ours (debug.sethook) is still disabled, and so is
+    ** ours when 'oldah' is already 0 because we are inside a hook.
+    */
+    L->allowhook = luaext_hook_is_ours(L) ? oldah : 0;
+#else
     L->allowhook = 0;  /* stop debug hooks during GC metamethod */
+#endif
     setobj2s(L, L->top.p++, tm);  /* push finalizer... */
     setobj2s(L, L->top.p++, &v);  /* ... and its argument */
     L->ci->callstatus |= CIST_FIN;  /* will run a finalizer */
@@ -986,6 +1001,37 @@ static void GCTM (lua_State *L) {
     L->allowhook = oldah;  /* restore hooks */
     g->gcstp = oldgcstp;  /* restore state */
     if (l_unlikely(status != LUA_OK)) {  /* error while running __gc? */
+#if LUAEXT_LUA_HOOKS
+      /*
+      ** Turning an error into a warning is right for a finalizer that
+      ** merely failed, and wrong for one that was stopped by the sandbox:
+      ** swallowing that would let a __gc metamethod both outlive its CPU
+      ** limit and hide the fact.
+      **
+      ** The test is on the atomic interrupt FLAG, deliberately, and not on
+      ** the error object. Inspecting the object means Lua stack calls that
+      ** can allocate, and this runs inside the collector. One relaxed load
+      ** answers the question with no interpreter involvement at all.
+      **
+      ** 'errorJmp' is checked because luaD_throw with no handler aborts the
+      ** process. The only way to reach here without one is the finalizer
+      ** sweep inside lua_close(), where the extension has already cleared
+      ** the flag -- but "would abort" is not a thing to leave to a
+      ** documented ordering somewhere else.
+      **
+      ** Note what is NOT restored on this path: g->gcstp and L->allowhook
+      ** already were, three lines up. What the throw does abandon is the
+      ** rest of the current collector step; the object being finalized has
+      ** already left 'tobefnz', so the remaining finalizers stay pending
+      ** and run in a later step.
+      */
+      luaext_irq *luaext_q = LUAEXT_IRQ(L);
+      if (luaext_q != NULL && L->errorJmp != NULL &&
+          atomic_load_explicit(&luaext_q->interrupted, memory_order_relaxed)) {
+        atomic_thread_fence(memory_order_acquire);
+        luaD_throw(L, status);  /* propagate instead of warning */
+      }
+#endif
       luaE_warnerror(L, "__gc");
       L->top.p--;  /* pops error object */
     }

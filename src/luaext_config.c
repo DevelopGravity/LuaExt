@@ -530,30 +530,41 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	bool debug_hooks = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "debugHooks");
 	bool vfs = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "vfs");
 	bool has_cpu_limit;
+	bool has_wall_limit;
 
 	if (limits == NULL) {
-		/* The default Limits carries cpuSeconds = 1.0. */
+		/* The default Limits carries cpuSeconds = 1.0 and wallClockSeconds. */
 		has_cpu_limit = true;
+		has_wall_limit = true;
 	} else {
 		const zval *cpu_seconds = LUAEXT_GET(limits, "cpuSeconds");
+		const zval *wall_seconds = LUAEXT_GET(limits, "wallClockSeconds");
 
 		has_cpu_limit = Z_TYPE_P(cpu_seconds) == IS_DOUBLE && Z_DVAL_P(cpu_seconds) > 0.0;
+		has_wall_limit = Z_TYPE_P(wall_seconds) == IS_DOUBLE && Z_DVAL_P(wall_seconds) > 0.0;
 	}
 
 	/*
 	 * Debug hooks are per-coroutine and there is only one of them. A script
-	 * that can call debug.sethook() can therefore replace the hook the CPU
-	 * limit is delivered through, which makes the pair unsatisfiable rather
-	 * than merely unwise: whichever is configured, the script decides.
+	 * that can call debug.sethook() can therefore replace the hook the limits
+	 * are delivered through, which makes the pair unsatisfiable rather than
+	 * merely unwise: whichever is configured, the script decides.
+	 *
+	 * The wall-clock limit is covered too, and that is not an over-reach. The
+	 * watchdog thread only ever raises a FLAG; the flag is turned into a stopped
+	 * script by the same count hook, so displacing the hook defeats both limits
+	 * and not just the one whose name mentions the CPU.
 	 */
-	if (debug_hooks && has_cpu_limit) {
+	if (debug_hooks && (has_cpu_limit || has_wall_limit)) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
-			"The debugHooks capability cannot be combined with a CPU limit: a script that "
-			"can call debug.sethook() replaces the hook the CPU limit is enforced through, "
-			"so the limit would stop being enforced the moment the script chose to. Either "
-			"drop debugHooks, or set Limits::$cpuSeconds to null and bound the script with "
-			"$wallClockSeconds instead, which does not depend on a hook.",
+			"The debugHooks capability cannot be combined with a CPU or wall-clock limit: a "
+			"script that can call debug.sethook() replaces the interpreter hook BOTH limits "
+			"are delivered through -- the watchdog thread only raises a flag, and that hook "
+			"is what turns the flag into a stopped script -- so either limit would stop being "
+			"enforced the moment the script chose to. Either drop debugHooks, or set both "
+			"Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this "
+			"sandbox cannot be bounded in time.",
 			0);
 		return false;
 	}
