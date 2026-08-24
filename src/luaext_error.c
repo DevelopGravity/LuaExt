@@ -155,7 +155,7 @@ void luaext_error_init(luaext_sandbox *sandbox)
 	L = sandbox->L;
 
 	if (!lua_checkstack(L, 4)) {
-		ZEND_ASSERT(0 && "luaext: no stack to install the error metatable");
+		LUAEXT_ASSERT(0 && "luaext: no stack to install the error metatable");
 		return;
 	}
 
@@ -211,7 +211,7 @@ static luaext_error_ud *luaext_error_push(lua_State *L, luaext_err_kind kind, bo
 	 * at all — at which point nothing can be described.
 	 */
 	if (!lua_checkstack(L, 4)) {
-		ZEND_ASSERT(0 && "luaext: no stack to build an error value");
+		LUAEXT_ASSERT(0 && "luaext: no stack to build an error value");
 		lua_pushlstring(L, message, message_len);
 		return NULL;
 	}
@@ -264,8 +264,8 @@ static void luaext_error_assert_may_raise(lua_State *L)
 {
 	const luaext_sandbox *sandbox = LUAEXT_SB(L);
 
-	ZEND_ASSERT((sandbox == NULL || sandbox->no_raise_depth == 0) &&
-				"luaext: raising a Lua error while a frame still owns a resource");
+	LUAEXT_ASSERT((sandbox == NULL || sandbox->no_raise_depth == 0) &&
+				  "luaext: raising a Lua error while a frame still owns a resource");
 }
 #else
 #define luaext_error_assert_may_raise(L) ((void)(L))

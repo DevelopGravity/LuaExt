@@ -11,25 +11,27 @@ use DevelopGravity\LuaExt\Sandbox;
 
 /*
  * Both setters convert seconds to nanoseconds, and zero nanoseconds is how this
- * API spells "no ceiling". So every value that cannot be converted has to be
- * refused at the boundary rather than cast: converting an out-of-range double
- * to an integer is undefined behaviour, and the shape it usually takes is a
- * saturated or wrapped value. Landing on zero would turn setCpuLimit(INF) into
- * a sandbox with no CPU limit at all -- a limit silently becoming its own
- * absence, which is the failure this extension exists to eliminate.
+ * API spells "no ceiling". So a value the conversion cannot represent must
+ * never reach the cast: converting an out-of-range double to an integer is
+ * undefined behaviour, and the result can be zero -- turning setCpuLimit(INF)
+ * into a sandbox with no CPU limit at all. A limit silently becoming its own
+ * absence is the failure this extension exists to eliminate.
  *
- * NAN is refused by the same condition rather than a separate one, because it
- * compares false against everything: a test written as "reject if <= 0" would
- * let it through, and it too would reach the cast.
+ * A value too large SATURATES rather than being refused, matching what a Limits
+ * object does with the same number: a ceiling nobody will reach stays a ceiling
+ * nobody will reach. It is only the values that are not deadlines at all --
+ * negative, NAN, and zero -- that are refused here.
+ *
+ * NAN is caught by the same condition as the rest rather than a separate one,
+ * because it compares false against everything: a check written as "reject if
+ * <= 0" would let it through, and it too would reach the cast.
  */
 
 $refusals = [
-	'INF' => INF,
 	'-INF' => -INF,
 	'NAN' => NAN,
 	'zero' => 0.0,
 	'negative' => -1.0,
-	'far past 584 years of nanoseconds' => 1.0e30,
 ];
 
 foreach (['setCpuLimit', 'setWallClockLimit'] as $method) {
@@ -45,6 +47,17 @@ foreach (['setCpuLimit', 'setWallClockLimit'] as $method) {
 			$sandbox->close();
 		}
 	}
+}
+
+// A value past what nanoseconds can hold saturates instead of wrapping, and the
+// sandbox stays usable. The danger this guards against is the opposite
+// direction: a huge ceiling turning into a tiny one, or into none at all.
+foreach (['setCpuLimit', 'setWallClockLimit'] as $method) {
+	$sandbox = new Sandbox();
+	$sandbox->{$method}(INF);
+	$sandbox->{$method}(1.0e30);
+	printf("%-18s saturates, sandbox still runs: %s\n", $method, $sandbox->eval('return "yes"')[0]);
+	$sandbox->close();
 }
 
 // null is the one spelling of "no ceiling", and it is still accepted.
@@ -63,17 +76,15 @@ $sandbox->close();
 
 ?>
 --EXPECT--
-setCpuLimit        INF                                refused
 setCpuLimit        -INF                               refused
 setCpuLimit        NAN                                refused
 setCpuLimit        zero                               refused
 setCpuLimit        negative                           refused
-setCpuLimit        far past 584 years of nanoseconds  refused
-setWallClockLimit  INF                                refused
 setWallClockLimit  -INF                               refused
 setWallClockLimit  NAN                                refused
 setWallClockLimit  zero                               refused
 setWallClockLimit  negative                           refused
-setWallClockLimit  far past 584 years of nanoseconds  refused
+setCpuLimit        saturates, sandbox still runs: yes
+setWallClockLimit  saturates, sandbox still runs: yes
 int(42)
 string(11) "still works"

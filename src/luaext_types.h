@@ -206,6 +206,31 @@ typedef enum {
 } luaext_limit_support;
 
 /* Throughout: 0 means "no limit". */
+/*
+ * Largest time limit expressible in nanoseconds, in seconds (~584 years).
+ *
+ * Every path that turns host-supplied seconds into nanoseconds checks this
+ * BEFORE the cast, because converting an out-of-range double to an integer is
+ * undefined behaviour and the value it lands on can be zero -- which is how
+ * this API spells "no ceiling". A limit becoming its own absence is the exact
+ * failure this extension exists to eliminate, so the bound lives here rather
+ * than being spelled out again at each site.
+ *
+ * DERIVED, not written down. This is a property of the type the deadline is
+ * stored in and nothing else: it is the same on every platform and every
+ * processor, and it follows the field automatically if that type ever changes.
+ * What does vary between machines is the clock's RESOLUTION, which is a
+ * different quantity entirely and is reported through
+ * Sandbox::features()['cpuResolutionSeconds'].
+ *
+ * Integer division on purpose. (double)UINT64_MAX rounds UP to 2^64, so a
+ * bound derived from it would admit a value whose product with 1e9 lands
+ * exactly on 2^64 -- back to the undefined conversion this exists to prevent.
+ * Truncating first leaves most of a second of headroom, which costs nothing at
+ * a ceiling of nearly six centuries.
+ */
+#define LUAEXT_LIMIT_MAX_SECONDS ((double)(UINT64_MAX / UINT64_C(1000000000)))
+
 typedef struct {
 	size_t memory_bytes;
 	uint64_t cpu_ns;

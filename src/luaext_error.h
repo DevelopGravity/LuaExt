@@ -40,7 +40,7 @@
 	do {                                                                                           \
 		luaext_sandbox *luaext_no_raise_sandbox_ = LUAEXT_SB(L);                                   \
 		if (luaext_no_raise_sandbox_ != NULL) {                                                    \
-			ZEND_ASSERT(luaext_no_raise_sandbox_->no_raise_depth > 0);                             \
+			LUAEXT_ASSERT(luaext_no_raise_sandbox_->no_raise_depth > 0);                           \
 			luaext_no_raise_sandbox_->no_raise_depth--;                                            \
 		}                                                                                          \
 	} while (0)

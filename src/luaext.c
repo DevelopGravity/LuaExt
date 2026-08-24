@@ -132,7 +132,7 @@ static PHP_GSHUTDOWN_FUNCTION(luaext)
 	 * entries left would mean a sandbox outlived its thread, which the thread
 	 * affinity rule forbids.
 	 */
-	ZEND_ASSERT(luaext_globals->live_sandboxes == NULL);
+	LUAEXT_ASSERT(luaext_globals->live_sandboxes == NULL);
 }
 
 /* -------------------------------------------------------------------------
@@ -292,8 +292,8 @@ static PHP_RSHUTDOWN_FUNCTION(luaext)
 	 * the GSHUTDOWN assertion exists to catch the case where it does not.
 	 * Clearing the head unconditionally would make that assertion unfalsifiable.
 	 */
-	ZEND_ASSERT(LUAEXT_G(live_sandboxes) == NULL);
-	ZEND_ASSERT(LUAEXT_G(live_count) == 0);
+	LUAEXT_ASSERT(LUAEXT_G(live_sandboxes) == NULL);
+	LUAEXT_ASSERT(LUAEXT_G(live_count) == 0);
 
 	return SUCCESS;
 }

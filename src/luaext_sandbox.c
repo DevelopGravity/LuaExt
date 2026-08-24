@@ -377,7 +377,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 * not an optional step and its absence must never be silent.
 	 */
 	luaext_error_init(sandbox);
-	ZEND_ASSERT(luaext_error_is_ready(sandbox));
+	LUAEXT_ASSERT(luaext_error_is_ready(sandbox));
 
 	/* Before the libraries: os.clock reports billed CPU, and the count hook the
 	 * limits ride on has to be installed before any script can exist. */
@@ -937,18 +937,12 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
  * rather than quietly reinterpreted, exactly as setMemoryLimit() refuses zero.
  */
 /*
- * Largest limit expressible in nanoseconds, in seconds.
+ * Seconds to nanoseconds, refusing anything the conversion cannot represent.
  *
- * uint64_t nanoseconds runs out at roughly 584 years. Anything at or above this
- * is refused rather than converted, because converting an out-of-range double
- * to an integer is undefined behaviour -- and the shape it usually takes is a
- * saturated or wrapped value. Landing on zero would be catastrophic here: zero
- * is how this API spells "no ceiling", so setCpuLimit(INF) would quietly
- * produce a sandbox with no CPU limit at all, which is the exact failure this
- * extension exists to eliminate.
+ * Shares LUAEXT_LIMIT_MAX_SECONDS with the SandboxConfig path so that the same
+ * number means the same thing however it arrives -- see luaext_types.h for why
+ * the bound exists at all.
  */
-#define LUAEXT_LIMIT_MAX_SECONDS 1.8e10
-
 static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *out)
 {
 	if (unlimited) {
@@ -958,12 +952,24 @@ static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *ou
 
 	/* Written as a positive test so NAN, which compares false against
 	 * everything, is refused by the same condition rather than slipping past a
-	 * negated one. */
-	if (!(seconds > 0.0 && seconds < LUAEXT_LIMIT_MAX_SECONDS)) {
-		zend_argument_value_error(
-			1, "must be greater than 0 and less than %g, or null to lift the limit",
-			LUAEXT_LIMIT_MAX_SECONDS);
+	 * negated one. Zero is refused rather than treated as a second spelling of
+	 * "no ceiling", exactly as setMemoryLimit() refuses it: a limit no script
+	 * could ever satisfy is far likelier to be a mistake than an intention. */
+	if (!(seconds > 0.0)) {
+		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
 		return false;
+	}
+
+	/*
+	 * Saturate, matching what a Limits object does with the same number -- see
+	 * luaext_config.c. A deadline past LUAEXT_LIMIT_MAX_SECONDS cannot be held
+	 * in nanoseconds, and casting it would be undefined behaviour whose result
+	 * can be zero, which this API reads as "no ceiling". setCpuLimit(INF) would
+	 * then produce a sandbox with no CPU limit at all.
+	 */
+	if (seconds >= LUAEXT_LIMIT_MAX_SECONDS) {
+		*out = UINT64_MAX;
+		return true;
 	}
 
 	*out = (uint64_t)(seconds * 1e9);

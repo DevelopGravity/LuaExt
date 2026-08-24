@@ -111,4 +111,34 @@ ZEND_EXTERN_MODULE_GLOBALS(luaext)
 
 #define LUAEXT_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(luaext, v)
 
+/* -------------------------------------------------------------------------
+ * Invariants
+ * ---------------------------------------------------------------------- */
+
+/*
+ * An invariant that is actually checked.
+ *
+ * Use this rather than ZEND_ASSERT. In a normal build ZEND_ASSERT is NOT a
+ * check: php-src defines it as ZEND_ASSUME whenever ZEND_DEBUG is off, and that
+ * is a promise to the OPTIMIZER that the condition holds. Almost every PHP in
+ * the wild is built that way -- including the one this extension is developed
+ * against -- so a ZEND_ASSERT here is unverified in practice, and a wrong one
+ * is undefined behaviour rather than a caught bug. That is the opposite of what
+ * an assertion is for.
+ *
+ * LUAEXT_DEBUG comes from --enable-luaext-debug and is ours, so these run
+ * wherever we ask for them regardless of how php-src itself was configured.
+ *
+ * The release branch is a plain no-op, deliberately NOT ZEND_ASSUME: an
+ * invariant we got wrong should cost a wrong answer, never undefined
+ * behaviour. An assertion is a statement about what we believe, and the
+ * compiler should not be entitled to act on a belief we cannot prove.
+ */
+#if defined(LUAEXT_DEBUG) && LUAEXT_DEBUG
+#include <assert.h>
+#define LUAEXT_ASSERT(condition) assert(condition)
+#else
+#define LUAEXT_ASSERT(condition) ((void)0)
+#endif
+
 #endif /* PHP_LUAEXT_H */

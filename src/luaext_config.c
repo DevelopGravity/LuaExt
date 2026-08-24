@@ -72,7 +72,7 @@ static zval *luaext_config_get(zend_object *object, const char *name, size_t nam
 		zend_hash_str_find_ptr(&object->ce->properties_info, name, name_length);
 
 	/* Every name used in this file is declared in stubs/luaext.stub.php. */
-	ZEND_ASSERT(info != NULL);
+	LUAEXT_ASSERT(info != NULL);
 
 	return OBJ_PROP(object, info->offset);
 }
@@ -86,7 +86,7 @@ static void luaext_config_set(zend_object *object, const char *name, size_t name
 {
 	zval *slot = luaext_config_get(object, name, name_length);
 
-	ZEND_ASSERT(Z_TYPE_P(slot) == IS_UNDEF);
+	LUAEXT_ASSERT(Z_TYPE_P(slot) == IS_UNDEF);
 
 	ZVAL_COPY_VALUE(slot, value);
 }
@@ -334,7 +334,7 @@ static bool luaext_config_size(const zval *value, const char *property, size_t *
 		return true;
 	}
 
-	ZEND_ASSERT(Z_TYPE_P(value) == IS_LONG);
+	LUAEXT_ASSERT(Z_TYPE_P(value) == IS_LONG);
 	number = Z_LVAL_P(value);
 
 	if (number < 0) {
@@ -360,7 +360,7 @@ static bool luaext_config_count(const zval *value, const char *property, uint32_
 		return true;
 	}
 
-	ZEND_ASSERT(Z_TYPE_P(value) == IS_LONG);
+	LUAEXT_ASSERT(Z_TYPE_P(value) == IS_LONG);
 	number = Z_LVAL_P(value);
 
 	if (number < 0) {
@@ -388,7 +388,7 @@ static bool luaext_config_duration(const zval *value, const char *property, uint
 		return true;
 	}
 
-	ZEND_ASSERT(Z_TYPE_P(value) == IS_DOUBLE);
+	LUAEXT_ASSERT(Z_TYPE_P(value) == IS_DOUBLE);
 	seconds = Z_DVAL_P(value);
 
 	/* Phrased so NaN fails too: it compares false against everything. */
@@ -401,7 +401,18 @@ static bool luaext_config_duration(const zval *value, const char *property, uint
 		return false;
 	}
 
-	if (seconds >= (double)UINT64_MAX / 1e9) {
+	/*
+	 * Saturate rather than cast. A deadline is held in nanoseconds, so anything
+	 * past LUAEXT_LIMIT_MAX_SECONDS cannot be represented -- and converting an
+	 * out-of-range double to an integer is undefined behaviour whose result can
+	 * be anything, including zero. Zero is how this API spells "no ceiling", so
+	 * the wrong answer here is not merely wrong, it is a huge limit silently
+	 * becoming none at all.
+	 *
+	 * Saturating keeps the direction honest: a ceiling nobody will reach stays
+	 * a ceiling nobody will reach.
+	 */
+	if (seconds >= LUAEXT_LIMIT_MAX_SECONDS) {
 		*out = UINT64_MAX;
 		return true;
 	}
@@ -652,7 +663,7 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 	}
 
 	object = Z_OBJ_P(config);
-	ZEND_ASSERT(object->ce == luaext_ce_sandbox_config);
+	LUAEXT_ASSERT(object->ce == luaext_ce_sandbox_config);
 
 	seed = LUAEXT_GET(object, "seed");
 
@@ -1275,7 +1286,7 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 			const zend_property_info *info = object->ce->properties_info_table[index];
 			zval *slot = OBJ_PROP_NUM(object, index);
 
-			ZEND_ASSERT(Z_TYPE_P(slot) == IS_UNDEF);
+			LUAEXT_ASSERT(Z_TYPE_P(slot) == IS_UNDEF);
 
 			if ((ZEND_TYPE_FULL_MASK(info->type) & MAY_BE_DOUBLE) != 0) {
 				ZVAL_DOUBLE(slot, 0.0);

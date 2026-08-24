@@ -230,6 +230,7 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	int base;
 	int handler;
 	int status;
+	int outer_no_raise_depth;
 	bool converted;
 	bool interrupted;
 
@@ -275,7 +276,25 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	 */
 	luaext_timers_enter_lua(sandbox, &frame);
 
+	/*
+	 * Entering the interpreter starts a NEW frame for the no-raise discipline,
+	 * so the outer frame's depth is set aside for the duration.
+	 *
+	 * That discipline says: do not raise while THIS frame still owns a zval or
+	 * an allocation, because lua_error() longjmps past C cleanup. A nested entry
+	 * is reached through a host callback, and luaext_phpcall_invoke holds the
+	 * bracket across that callback because it owns the converted arguments --
+	 * but a raise from inside this pcall unwinds only as far as this pcall, and
+	 * cannot reach those arguments at all. Inheriting the outer depth would
+	 * therefore report a violation that is not one, and the assertion would be
+	 * describing something untrue rather than protecting anything.
+	 */
+	outer_no_raise_depth = sandbox->no_raise_depth;
+	sandbox->no_raise_depth = 0;
+
 	status = lua_pcall(L, (int)argc, LUA_MULTRET, handler);
+
+	sandbox->no_raise_depth = outer_no_raise_depth;
 
 	/*
 	 * Asked BEFORE leaving, because leaving is where the sticky interrupt flag
