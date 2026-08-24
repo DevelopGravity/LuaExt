@@ -33,7 +33,8 @@ bool luaext_phpcall_register_table(luaext_sandbox *sandbox, const char *name, si
  * a host accidentally hands a script its own internals.
  *
  * Returns a hash of lua name => bound callable zval, or NULL with an exception
- * thrown.
+ * thrown. The caller owns the table and releases it with zend_array_destroy();
+ * luaext_phpcall_register_table() only reads it.
  */
 HashTable *luaext_phpcall_collect_methods(zval *instance, HashTable *allowlist);
 
