@@ -181,10 +181,16 @@ jobs:
           echo "php on PATH: $(command -v php)"
           php -v | head -1
           echo "extension_dir: $(php -r 'echo ini_get("extension_dir");')"
-          echo "--- loaded extensions matching lua ---"
-          php -m | grep -i lua || echo "(none)"
+          # Captured once, then matched. `php -m | grep -q` is a trap under
+          # pipefail: grep exits at the first match, php dies of SIGPIPE, and
+          # the pipeline reports failure even though the extension is present.
+          # It is a race, so it passed on Linux and failed on macOS.
+          modules="$(php -m)"
 
-          if ! php -m | grep -qi luaext; then
+          echo "--- loaded extensions matching lua ---"
+          printf '%s\n' "$modules" | grep -i lua || echo "(none)"
+
+          if ! printf '%s\n' "$modules" | grep -qi luaext; then
             echo "::error::PIE reported a successful install, but luaext is not loaded in $(command -v php)." >&2
             exit 1
           fi
