@@ -886,7 +886,25 @@ static void luaext_watchdog_republish(luaext_watch_slot *slot)
 	bool queue;
 
 	luaext_mutex_lock(&slot->lock);
-	queue = luaext_watch_deadline(slot, &deadline);
+
+	/*
+	 * Evaluated before republishing, exactly as arm() and resume() do, and for a
+	 * reason that is a live denial of service rather than a tidiness argument.
+	 *
+	 * luaext_watch_stamp() takes a fresh epoch, which makes whatever entry the
+	 * watchdog is currently sleeping on a duplicate to be discarded. A host
+	 * callback that calls setCpuLimit() in a loop therefore replaces the pending
+	 * entry faster than the thread can act on it, and -- because the deadline
+	 * published here is the MINIMUM across the CPU and wall limits -- it takes
+	 * the wall backstop down with it. Both limits then go unenforced for as long
+	 * as the script keeps calling, which is precisely the attack
+	 * tests/02-limits/cpu-limit-not-refunded.phpt exists to disprove.
+	 *
+	 * Deciding here, on the owner's own thread, removes the race outright: a
+	 * budget that is already spent trips synchronously and the script stops at
+	 * the next back-edge check, with no watchdog round trip to lose.
+	 */
+	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline);
 
 	if (queue) {
 		luaext_watch_stamp(slot, &entry, deadline);

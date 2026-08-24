@@ -46,14 +46,28 @@ use DevelopGravity\LuaExt\SandboxConfig;
  * the burn is twice the limit and the assertion is only whether the budget ran
  * out, so a 15.6 ms Windows tick and a 1 ns Linux clock give the same answer.
  *
- * The wall-clock limit is an order of magnitude above the CPU limit and exists
- * only as a backstop: a row that wedges fails in a second with the wrong class
- * rather than hanging CI.
+ * The wall-clock limit is well over an order of magnitude above the CPU limit
+ * and exists only as a backstop: a row that wedges fails in a few seconds with
+ * the wrong class rather than hanging CI. It has to clear BURN_CEILING_SECONDS
+ * comfortably, because a paused row legitimately spends that long waiting.
  */
 
 const CPU_SECONDS = 0.10;
-const WALL_BACKSTOP_SECONDS = 1.0;
+const WALL_BACKSTOP_SECONDS = 3.0;
 const BURN_SECONDS = 0.20;
+
+/*
+ * How long any single burn may spend WAITING for CPU it is never going to get.
+ *
+ * A burn that is billed reaches its CPU target long before this. A burn that is
+ * paused never advances at all -- while paused nothing is measured, which is the
+ * whole point -- so without a wall-clock escape those rows would spin forever.
+ *
+ * It sits well below WALL_BACKSTOP_SECONDS so that a row running to this ceiling
+ * is still an ordinary outcome rather than a backstop trip reported as the wrong
+ * exception class.
+ */
+const BURN_CEILING_SECONDS = 0.5;
 
 // Long enough that, under the reference's old "reconstruct what expired while
 // we were not looking" scheme, the pause outlasted the whole remaining budget.
@@ -65,12 +79,24 @@ $pauseGranted = null;
 
 function burn(float $seconds): void
 {
-	// Wall time, not sleep: the CPU limit measures CPU, so the loop has to
-	// actually spend some. This is the same reason the reference used a busy
-	// loop rather than usleep().
-	$deadline = microtime(true) + $seconds;
+	global $sandbox;
 
-	while (microtime(true) < $deadline) {
+	/*
+	 * Spends CPU, and measures the spending with getCpuUsage() -- which is the
+	 * exact quantity the limit enforces -- rather than with a wall clock.
+	 *
+	 * A wall-clock loop looks equivalent and is not. On a contended CI runner a
+	 * thread can pass a 0.20s wall deadline having been descheduled for most of
+	 * it, spending far less than 0.20s of CPU, so a row that means "burn twice
+	 * the limit" quietly burns half of it and the budget never runs out. That is
+	 * not flakiness in the limit; it is the test failing to spend what it claims.
+	 * Billed CPU cannot drift from the limit this way because it IS the limit's
+	 * own counter.
+	 */
+	$target = $sandbox->getCpuUsage() + $seconds;
+	$ceiling = microtime(true) + BURN_CEILING_SECONDS;
+
+	while ($sandbox->getCpuUsage() < $target && microtime(true) < $ceiling) {
 	}
 }
 
@@ -141,7 +167,13 @@ $library = [
 		(void) $sandbox->call($path, ...$rest);
 	},
 
-	// The fallback clock for the Lua side; see below.
+	// The two clocks the Lua side burns against; see below.
+	'cpu' => static function (): float {
+		global $sandbox;
+
+		return $sandbox->getCpuUsage();
+	},
+
 	'now' => static fn (): float => microtime(true),
 ];
 
@@ -152,22 +184,29 @@ $library = [
 $script = <<<'LUA'
 	lua = {}
 
-	-- os.clock reports this sandbox's own billed CPU, which is exactly the
-	-- quantity the limit enforces -- but it belongs to the standard-library
-	-- wave and may not be installed yet, so the wall clock stands in. Either
-	-- one works here: these loops only ever run unpaused.
+	-- Billed CPU, which is exactly the quantity the limit enforces. os.clock
+	-- reports it directly, but it needs the osTime capability and these
+	-- sandboxes are the untrusted default, so php.cpu() -- getCpuUsage() across
+	-- the boundary -- is what actually runs here. Both report the same counter.
+	--
+	-- Deliberately NOT a wall clock: see the note on the PHP burn() above. A
+	-- descheduled thread passes a wall deadline without having spent the budget,
+	-- which turns "burn twice the limit" into a row that never trips.
 	local function clock()
 		if os ~= nil and os.clock ~= nil then
 			return os.clock()
 		end
 
-		return php.now()
+		return php.cpu()
 	end
 
 	local function burn(seconds)
-		local deadline = clock() + seconds
+		local target = clock() + seconds
+		local ceiling = php.now() + CEILING
 
-		while clock() < deadline do end
+		-- The wall ceiling is the escape for a burn that is never billed at all;
+		-- see BURN_CEILING_SECONDS.
+		while clock() < target and php.now() < ceiling do end
 	end
 
 	function lua.expensive()
@@ -189,6 +228,9 @@ $script = <<<'LUA'
 	end
 LUA;
 
+// 'CEILING' first: neither token is a substring of the other today, but doing
+// the longer one first is the habit that stops this being a bug the day one is.
+$script = str_replace('CEILING', (string) BURN_CEILING_SECONDS, $script);
 $script = str_replace('BURN', (string) BURN_SECONDS, $script);
 
 /* -------------------------------------------------------------------------

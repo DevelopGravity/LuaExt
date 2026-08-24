@@ -43,6 +43,20 @@ use DevelopGravity\LuaExt\SandboxConfig;
 const CPU_SECONDS = 0.20;
 const WALL_BACKSTOP_SECONDS = 2.0;
 
+/*
+ * How far over budget the script may run before this counts as unenforced.
+ *
+ * Generous on purpose -- a loaded runner is allowed to be slow, and the row
+ * below deliberately asserts nothing about elapsed WALL time. What it catches is
+ * a limit that is technically honoured but arbitrarily late: publishing a new
+ * deadline used not to re-evaluate the budget, so a callback resetting the limit
+ * invalidated the watchdog's pending entry faster than the thread could act on
+ * it, and this loop ran ~50x over budget -- straight through the wall backstop
+ * too -- before anything stopped it. Ten times the limit is far outside anything
+ * scheduling noise produces and far inside that failure.
+ */
+const OVERSHOOT_ALLOWED = 10.0;
+
 $sandbox = new Sandbox(new SandboxConfig(
 	limits: (new Limits())->with(
 		cpuSeconds: CPU_SECONDS,
@@ -63,16 +77,14 @@ $sandbox->registerLibrary('host', [
 
 try {
 	(void) $sandbox->eval(<<<'LUA'
-		local spins = 0
-
+		-- EVERY iteration, which is the adversarial case rather than a
+		-- representative one. Each call republishes the sandbox's watchdog
+		-- deadline, so calling as fast as the boundary allows is exactly how a
+		-- script would starve a watchdog that only ever decided on its own
+		-- schedule. A slower cadence lets the thread win the race on a fast
+		-- machine and the test passes without proving anything.
 		while true do
-			spins = spins + 1
-
-			-- Often enough that the budget cannot run out between calls, so a
-			-- resetting implementation really would loop forever.
-			if spins % 10000 == 0 then
-				host.extend()
-			end
+			host.extend()
 		end
 	LUA, '=extender');
 
@@ -88,6 +100,10 @@ var_dump($attempts > 0);
 // Usage is cumulative across calls too, for the same reason. A sandbox that
 // reset on every entry would let a host run unbounded work one call at a time.
 var_dump($sandbox->getCpuUsage() >= CPU_SECONDS);
+
+// And it stopped anywhere near the budget rather than eventually. See
+// OVERSHOOT_ALLOWED: "it does stop, given long enough" is not enforcement.
+var_dump($sandbox->getCpuUsage() < CPU_SECONDS * OVERSHOOT_ALLOWED);
 
 $sandbox->close();
 
@@ -122,6 +138,7 @@ $second->close();
 ?>
 --EXPECT--
 stopped despite resetting the limit
+bool(true)
 bool(true)
 bool(true)
 small budget spent
