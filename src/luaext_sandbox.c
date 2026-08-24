@@ -466,6 +466,13 @@ static void luaext_add_limit_support(zval *array, const char *key, luaext_limit_
 	static const char *const names[] = {"Enforced", "Degraded", "Unsupported"};
 	zval value;
 
+	/* Indexing an array with a value from another translation unit. A support
+	 * level this does not recognise is reported as Unsupported: over-reporting
+	 * a limit is the one direction this method must never fail in. */
+	if ((size_t)support >= sizeof(names) / sizeof(names[0])) {
+		support = LUAEXT_LIMIT_UNSUPPORTED;
+	}
+
 	ZVAL_OBJ_COPY(&value, zend_enum_get_case_cstr(luaext_ce_limit_support, names[support]));
 	add_assoc_zval(array, key, &value);
 }
@@ -929,6 +936,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
  * satisfy is far likelier to be a mistake than an intention -- so it is refused
  * rather than quietly reinterpreted, exactly as setMemoryLimit() refuses zero.
  */
+/*
+ * Largest limit expressible in nanoseconds, in seconds.
+ *
+ * uint64_t nanoseconds runs out at roughly 584 years. Anything at or above this
+ * is refused rather than converted, because converting an out-of-range double
+ * to an integer is undefined behaviour -- and the shape it usually takes is a
+ * saturated or wrapped value. Landing on zero would be catastrophic here: zero
+ * is how this API spells "no ceiling", so setCpuLimit(INF) would quietly
+ * produce a sandbox with no CPU limit at all, which is the exact failure this
+ * extension exists to eliminate.
+ */
+#define LUAEXT_LIMIT_MAX_SECONDS 1.8e10
+
 static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *out)
 {
 	if (unlimited) {
@@ -936,8 +956,13 @@ static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *ou
 		return true;
 	}
 
-	if (!(seconds > 0.0)) { /* also rejects NAN */
-		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
+	/* Written as a positive test so NAN, which compares false against
+	 * everything, is refused by the same condition rather than slipping past a
+	 * negated one. */
+	if (!(seconds > 0.0 && seconds < LUAEXT_LIMIT_MAX_SECONDS)) {
+		zend_argument_value_error(
+			1, "must be greater than 0 and less than %g, or null to lift the limit",
+			LUAEXT_LIMIT_MAX_SECONDS);
 		return false;
 	}
 

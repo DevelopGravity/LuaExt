@@ -26,7 +26,11 @@ $members = static function (Sandbox $sandbox, string $table): string {
 
 $sandbox = new Sandbox();
 
-foreach (['_G', 'string', 'table', 'math', 'utf8'] as $table) {
+// debug and os are enumerated too, or the claim above is false: both are in the
+// untrusted baseline (debugTraceback and osTime default on, os.clock is
+// unconditional), so leaving them out would let a member appear in every
+// untrusted sandbox without this test noticing.
+foreach (['_G', 'string', 'table', 'math', 'utf8', 'debug', 'os'] as $table) {
 	printf("%s: %s\n", $table, $members($sandbox, $table));
 }
 
@@ -80,6 +84,8 @@ string: byte char find format gmatch gsub len lower match pack packsize rep reve
 table: concat create insert move pack remove sort unpack
 math: abs acos asin atan ceil cos deg exp floor fmod frexp huge ldexp log max maxinteger min mininteger modf pi rad random randomseed sin sqrt tan tointeger type ult
 utf8: char charpattern codepoint codes len offset
+debug: traceback
+os: clock date difftime time
 untrusted        load=nil warn=nil dofile=nil loadfile=nil
 compileAtRuntime load=function warn=nil dofile=nil loadfile=nil
 warn             load=nil warn=function dofile=nil loadfile=nil
