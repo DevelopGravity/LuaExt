@@ -29,7 +29,7 @@ name: Release
 #      Publishing is the moment GitHub actually creates the git tag — which
 #      is also the moment Packagist's webhook (if configured on this repo)
 #      first sees the version. `post-publish-verify` then runs a real
-#      `pie install developgravity/lua-extension:<tag>` end-to-end.
+#      `pie install developgravity/lua-ext:<tag>` end-to-end.
 #
 # RC/pre-releases use the same flow with a `-rc.N` suffix (still no "v"
 # prefix) and the GitHub "set as a pre-release" checkbox.
@@ -53,7 +53,7 @@ permissions:
   contents: read
 
 env:
-  LUAEXT_PACKAGE_NAME: developgravity/lua-extension
+  LUAEXT_PACKAGE_NAME: developgravity/lua-ext
   LUAEXT_VERSION_HEADER: src/php_luaext.h
   LUAEXT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
@@ -271,7 +271,7 @@ jobs:
   # -------------------------------------------------------------------
   # Post-publish confirmation: now that the maintainer has published the
   # release, the git tag genuinely exists. Run the real, literal
-  # `pie install developgravity/lua-extension:<tag>` this whole pipeline
+  # `pie install developgravity/lua-ext:<tag>` this whole pipeline
   # exists to protect, on all three OSes. We still add the VCS repository
   # so this doesn't depend on Packagist's webhook having already fired —
   # Composer's VCS driver sees a pushed tag immediately.

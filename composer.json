@@ -1,15 +1,34 @@
 {
-  "name": "developgravity/lua-extension",
-  "description": "A PHP extension embedding Lua 5.5 as a sandbox for untrusted code, with portable resource limits, call-scoped coroutines and a host-backed virtual filesystem.",
+  "name": "developgravity/lua-ext",
+  "description": "A PHP extension embedding a vendored, patched Lua 5.5 interpreter to run untrusted code under enforced CPU, wall-clock, memory and output limits, with a capability-gated standard library.",
   "type": "php-ext",
   "license": "MIT",
+  "homepage": "https://github.com/DevelopGravity/LuaExt",
   "keywords": [
     "lua",
+    "lua5.5",
     "sandbox",
     "untrusted",
     "scripting",
-    "extension"
+    "extension",
+    "security",
+    "resource-limits",
+    "capabilities"
   ],
+  "authors": [
+    {
+      "name": "Zachary DuBois",
+      "email": "zdubois@developgravity.com"
+    },
+    {
+      "name": "Develop Gravity LLC",
+      "homepage": "https://github.com/DevelopGravity"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/DevelopGravity/LuaExt/issues",
+    "source": "https://github.com/DevelopGravity/LuaExt"
+  },
   "require": {
     "php": ">=8.5"
   },

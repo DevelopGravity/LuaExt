@@ -180,11 +180,11 @@ jobs:
           # Homebrew prefix and need no such thing.
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo -E "$(command -v php)" /tmp/pie.phar install \
-              "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
+              "developgravity/lua-ext:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
               --no-interaction
           else
             php /tmp/pie.phar install \
-              "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
+              "developgravity/lua-ext:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
               --no-interaction
           fi
 

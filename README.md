@@ -1,12 +1,12 @@
 # LuaExt
 
 [![CI](https://img.shields.io/badge/CI-not_yet_configured-lightgrey)](#) <!-- TODO: point at .github/workflows/ci.yml once it reports status -->
-[![Packagist](https://img.shields.io/badge/packagist-not_yet_published-lightgrey)](#) <!-- TODO: point at the Packagist page once developgravity/lua-extension is published -->
+[![Packagist](https://img.shields.io/badge/packagist-not_yet_published-lightgrey)](#) <!-- TODO: point at the Packagist page once developgravity/lua-ext is published -->
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run **untrusted, user-supplied Lua code** safely: portable CPU/wall-clock/memory limits, capability-based trust configuration, coroutines strictly scoped to a single call, a virtual filesystem the host implements in PHP, and host-controlled `require()`.
 
-Package: `developgravity/lua-extension` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
+Package: `developgravity/lua-ext` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
 > **Status: pre-1.0, no working build yet.** This repository does not have a tagged release, and only the build skeleton exists — no sandboxing behavior has been implemented or tested. The API surface below (classes, methods, parameters, defaults) is pinned and machine-validated against `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php`, the same files that generate the extension's C arginfo, so it will not drift further. What isn't yet true is the runtime: treat every code sample as accurate against that API, not as tested against a working binary.
 
@@ -31,7 +31,7 @@ This is a from-scratch rewrite, not a fork. There is no LuaSandbox compatibility
 Via [PIE](https://github.com/php/pie):
 
 ```bash
-pie install developgravity/lua-extension
+pie install developgravity/lua-ext
 ```
 
 - **Linux / macOS**: PIE builds from source (`phpize && configure && make`) against the vendored Lua tree — nothing is downloaded or compiled outside this repository's `third_party/` sources.
@@ -40,7 +40,7 @@ pie install developgravity/lua-extension
 For IDE autocomplete and static analysis without loading the extension, add the stub package as a dev dependency once published:
 
 ```bash
-composer require --dev developgravity/lua-extension-stubs
+composer require --dev developgravity/lua-ext-stubs
 ```
 
 ## Quick start
