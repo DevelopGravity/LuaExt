@@ -144,8 +144,25 @@ bool luaext_timers_attach(luaext_sandbox *sandbox)
 	 * for no extra coverage, and a call/return hook misses a loop body entirely.
 	 */
 	if (luaext_timers_hook_armed()) {
-		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT,
-					(int)LUAEXT_G(hook_count));
+		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
+	}
+
+	/*
+	 * The limits the host configured take effect from construction, not from
+	 * the first setCpuLimit() call. A SandboxConfig carrying cpuSeconds that
+	 * nothing ever armed would be the exact failure this extension exists to
+	 * eliminate -- a limit accepted and not enforced -- and it would be
+	 * invisible, because the sandbox would work perfectly right up until a
+	 * script decided not to stop.
+	 *
+	 * Both setters refuse rather than silently degrade, so a config asking for a
+	 * limit this build cannot honour fails CONSTRUCTION. That is deliberate: the
+	 * alternative is handing back a sandbox that quietly enforces less than it
+	 * was asked to.
+	 */
+	if (!luaext_timers_set_cpu_limit(sandbox, sandbox->policy.limits.cpu_ns) ||
+		!luaext_timers_set_wall_limit(sandbox, sandbox->policy.limits.wall_ns)) {
+		return false;
 	}
 
 	return true;

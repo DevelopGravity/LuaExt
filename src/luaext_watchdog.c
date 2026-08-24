@@ -1022,7 +1022,16 @@ void luaext_watchdog_arm(luaext_watch_slot *slot)
 	slot->open = 0;
 	luaext_watch_open(slot, LUAEXT_WATCH_BOTH);
 
-	queue = luaext_watch_deadline(slot, &deadline);
+	/*
+	 * Evaluated on the way in, not just on the way round. A budget that is
+	 * already spent -- because an earlier call used it, or because the host set
+	 * a limit below what has been used -- must stop this call before it executes
+	 * anything, and waiting for the first wakeup or the first hook tick would
+	 * let a short chunk run to completion inside a limit it had already
+	 * exhausted. The flag is sticky, so the boundary that returns to PHP reports
+	 * it even if the chunk never ticks the hook at all.
+	 */
+	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline);
 
 	if (queue) {
 		luaext_watch_stamp(slot, &entry, deadline);
