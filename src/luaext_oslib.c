@@ -65,7 +65,6 @@
 #include <main/php_reentrancy.h>
 
 #include <limits.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -84,6 +83,16 @@
  * limit enforces, and nothing else in the process a script can name.
  */
 #define LUAEXT_OSLIB_CLOCK_GRID 0.00002
+
+/*
+ * Above this the quantiser stops trying and answers with what it last reported.
+ *
+ * Nothing legitimate reaches it -- it is nine and a half years of CPU -- and the
+ * point is that truncating an out-of-range double to an integer is undefined
+ * behaviour, so a clock that ever returned an infinity or a NaN would be a
+ * crash rather than a wrong number.
+ */
+#define LUAEXT_OSLIB_CLOCK_CEILING 300000000.0
 
 /*
  * Per-sandbox clock state, held as os.clock's only upvalue.
@@ -136,7 +145,17 @@ static int luaext_oslib_clock(lua_State *L)
 		}
 	}
 
-	seconds = floor(seconds / LUAEXT_OSLIB_CLOCK_GRID) * LUAEXT_OSLIB_CLOCK_GRID;
+	/*
+	 * Truncation towards zero rather than floor(): `seconds` cannot be negative
+	 * here, so the two agree, and this keeps libm out of the link for a single
+	 * rounding step. The NaN case falls out of the comparison, which is false
+	 * for any NaN.
+	 */
+	if (seconds > 0.0 && seconds < LUAEXT_OSLIB_CLOCK_CEILING) {
+		seconds = (double)(uint64_t)(seconds / LUAEXT_OSLIB_CLOCK_GRID) * LUAEXT_OSLIB_CLOCK_GRID;
+	} else {
+		seconds = state->last_reported;
+	}
 
 	if (seconds < state->last_reported) {
 		seconds = state->last_reported;
