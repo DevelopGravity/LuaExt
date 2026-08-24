@@ -591,6 +591,28 @@ static int luaext_baselib_load(lua_State *L)
 	lua_insert(L, 1);
 	lua_call(L, argc, LUA_MULTRET);
 
+	/*
+	 * load() is a protected call in disguise, and the invariant that governs
+	 * every one of them applies here too.
+	 *
+	 * lua_load runs the parser under luaD_protectedparser, and the reader is
+	 * script code -- it can call a host callback, and that callback can fail.
+	 * Upstream then reports the failure as load()'s ordinary `fail, message`
+	 * return, which hands the script a fatal error as a value it may ignore.
+	 * Re-raised here instead.
+	 *
+	 * The one case this cannot see is a refused ALLOCATION inside the parser:
+	 * Lua raises that with its own preallocated string and no status survives
+	 * the return, so `load(huge)` still answers `fail, "not enough memory"`
+	 * where pcall would have re-raised. Closing that properly wants a latched
+	 * breach flag on the sandbox that every protected boundary consults, which
+	 * is a change to the allocator and error subsystems rather than to this one.
+	 */
+	if (lua_gettop(L) == 2 && lua_isnil(L, 1) && luaext_error_is_fatal(L, 2)) {
+		lua_remove(L, 1);
+		return lua_error(L);
+	}
+
 	return lua_gettop(L);
 }
 
