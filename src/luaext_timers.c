@@ -74,21 +74,34 @@ void luaext_timers_shutdown(void)
  * What features() reports
  * ---------------------------------------------------------------------- */
 
-/*
- * The count hook is the ONLY mechanism that can interrupt lvm.c's dispatch
- * loop. luaext.hook_count = 0 removes it, and with it every guarantee both
- * limits make about a script that never calls a patched C function. An INI that
- * silently voids a security guarantee is exactly what this extension exists to
- * prevent, so it is reported rather than absorbed.
- */
 static bool luaext_timers_hook_armed(void)
 {
 	return LUAEXT_G(hook_count) > 0;
 }
 
+/*
+ * Whether ANYTHING can notice a limit breach.
+ *
+ * The interpreter's own back-edge checks (LUAEXT_VMCHECK in the vendored
+ * lvm.c) observe the interrupt flag without a hook, so luaext.hook_count no
+ * longer decides on its own whether a limit can be enforced -- what it decides
+ * is whether the fallback self-check exists.
+ *
+ * Those checks only OBSERVE the flag, though; something still has to SET it.
+ * Normally that is the watchdog thread. If the thread could not be started, the
+ * only remaining writer is the strided clock self-check inside the count hook
+ * -- so with no thread AND no hook, a script that spins past its budget is
+ * noticed by nobody. That combination, and only that combination, is honestly
+ * unsupported.
+ */
+static bool luaext_timers_can_enforce(void)
+{
+	return !luaext_watchdog_thread_failed() || luaext_timers_hook_armed();
+}
+
 luaext_limit_support luaext_timers_cpu_support(void)
 {
-	if (!luaext_timers_hook_armed() || !luaext_timers_have_cpu) {
+	if (!luaext_timers_can_enforce() || !luaext_timers_have_cpu) {
 		return LUAEXT_LIMIT_UNSUPPORTED;
 	}
 
@@ -98,7 +111,7 @@ luaext_limit_support luaext_timers_cpu_support(void)
 
 luaext_limit_support luaext_timers_wall_support(void)
 {
-	if (!luaext_timers_hook_armed()) {
+	if (!luaext_timers_can_enforce()) {
 		return LUAEXT_LIMIT_UNSUPPORTED;
 	}
 
@@ -134,15 +147,25 @@ bool luaext_timers_attach(luaext_sandbox *sandbox)
 	sandbox->slot = luaext_watchdog_acquire(&sandbox->irq);
 
 	/*
-	 * The hook goes on unconditionally, before any script can exist, and is
-	 * never removed. It is the correctness mechanism -- the only thing covering
-	 * lvm.c -- so installing it lazily when the first limit is set would leave a
-	 * window in which a script compiled and ran with nothing watching it.
+	 * The count hook is now a FALLBACK, not the primary mechanism.
 	 *
-	 * LUA_MASKCOUNT only: a line hook would fire orders of magnitude more often
-	 * for no extra coverage, and a call/return hook misses a loop body entirely.
+	 * The interpreter itself carries the interrupt check at its four back edges
+	 * (see LUAEXT_VMCHECK in the vendored lvm.c), so a runaway script is stopped
+	 * without a hook at all -- and without the cost of one. Any non-zero
+	 * hookmask forces ci->u.l.trap, which makes vmfetch call luaG_traceexec on
+	 * EVERY instruction; measured at 2.6x on dispatch-bound code, and
+	 * independent of luaext.hook_count, which throttles only the hook body.
+	 *
+	 * What the back-edge checks cannot do is notice a breach while the owner is
+	 * blocked OUTSIDE the interpreter -- a sleeping callback, a slow host
+	 * backend. That is the watchdog thread's job. So the hook is armed only
+	 * when the thread could not be started, where its strided clock self-check
+	 * becomes the only thing that can notice a CPU overrun at all.
+	 *
+	 * Installed before any script can exist either way, so there is never a
+	 * window in which something ran unwatched.
 	 */
-	if (luaext_timers_hook_armed()) {
+	if (luaext_timers_hook_armed() && luaext_watchdog_thread_failed()) {
 		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
 	}
 
@@ -220,10 +243,10 @@ static bool luaext_timers_refuse(const char *what, const char *why)
 bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns)
 {
 	if (ns != 0) {
-		if (!luaext_timers_hook_armed()) {
+		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
-				"setCpuLimit", "luaext.hook_count is 0, which removes the interpreter hook every "
-							   "time limit is delivered through");
+				"setCpuLimit", "the watchdog thread could not be started and luaext.hook_count is "
+							   "0, so nothing is left that could notice the budget running out");
 		}
 
 		if (!luaext_timers_have_cpu) {
@@ -266,11 +289,11 @@ bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns)
 bool luaext_timers_set_wall_limit(luaext_sandbox *sandbox, uint64_t ns)
 {
 	if (ns != 0) {
-		if (!luaext_timers_hook_armed()) {
+		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
 				"setWallClockLimit",
-				"luaext.hook_count is 0, which removes the interpreter hook every time limit is "
-				"delivered through");
+				"the watchdog thread could not be started and luaext.hook_count is 0, so nothing "
+				"is left that could notice the deadline passing");
 		}
 
 		if (sandbox->slot == NULL) {

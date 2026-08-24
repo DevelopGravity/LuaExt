@@ -1,0 +1,118 @@
+Subject: check for an interrupt at the interpreter's own back edges
+
+A script can only run forever by returning somewhere it has already
+been, and this interpreter has exactly four ways to do that: a backward
+jump, the two numeric-'for' back edges, the generic-'for' back edge, and
+a tail call. Checking those covers every unbounded loop and leaves
+straight-line code untouched.
+
+This exists so the extension does not have to keep a LUA_MASKCOUNT hook
+armed. Any non-zero 'hookmask' forces 'ci->u.l.trap', which makes
+'vmfetch' call 'luaG_traceexec' on EVERY instruction whether or not the
+hook body does anything -- measured at 2.2x to 2.7x on dispatch-bound
+code, and independent of the hook count, which throttles only the body.
+The cost here is one relaxed atomic load per back edge instead.
+
+Tail calls need their own check because they are the one unbounded loop
+with no backward jump: 'local function f() return f() end' reuses the
+frame and re-enters at 'startfunc' forever. It is checked at the top of
+the case, before 'L->top' is set up for the callee, so that the
+'savestate' inside the macro still describes the caller.
+
+'savestate' is inside the branch rather than before it. The check has to
+stay cheap; correcting 'pc' and 'top' only matters on the path that
+raises, and that path never returns.
+
+diff --color -Naur a/src/lvm.c b/src/lvm.c
+--- a/src/lvm.c
++++ b/src/lvm.c
+@@ -1130,7 +1130,15 @@ void luaV_finishOp (lua_State *L) {
+ ** Execute a jump instruction. The 'updatetrap' allows signals to stop
+ ** tight loops. (Without it, the local copy of 'trap' could never change.)
+ */
++#if LUAEXT_LUA_HOOKS		/* { */
++/* Only a BACKWARD jump can close a loop, so a forward one costs nothing. */
++#define dojump(ci,i,e) \
++	{ int luaext_delta_ = GETARG_sJ(i) + e; \
++	  pc += luaext_delta_; updatetrap(ci); \
++	  if (luaext_delta_ < 0) LUAEXT_VMCHECK(); }
++#else				/* }{ */
+ #define dojump(ci,i,e)	{ pc += GETARG_sJ(i) + e; updatetrap(ci); }
++#endif				/* } */
+ 
+ 
+ /* for test instructions, execute the jump instruction that follows it */
+@@ -1157,6 +1165,42 @@ void luaV_finishOp (lua_State *L) {
+ #define savestate(L,ci)		(savepc(ci), L->top.p = ci->top.p)
+ 
+ 
++#if LUAEXT_LUA_HOOKS		/* { */
++
++/*
++** Interrupt check for the VM's own back edges (luaext).
++**
++** A script can only run forever by returning to somewhere it has already
++** been, and in this interpreter there are exactly four ways to do that: a
++** backward jump, the two numeric-'for' back edges, the generic-'for' back
++** edge, and a tail call. Checking those four covers every unbounded loop
++** while leaving straight-line code untouched.
++**
++** This exists so that the extension does NOT have to keep a LUA_MASKCOUNT
++** hook armed. Any non-zero 'hookmask' forces 'ci->u.l.trap', which makes
++** 'vmfetch' call 'luaG_traceexec' on EVERY instruction -- measured at 2.6x
++** on dispatch-bound code. The cost here is one relaxed atomic load per back
++** edge instead.
++**
++** 'savestate' is deliberately inside the branch. The check itself must stay
++** cheap; correcting 'pc' and 'top' only matters on the path that raises, and
++** that path never returns.
++*/
++#define LUAEXT_VMCHECK()  \
++	{ luaext_irq *luaext_q_ = LUAEXT_IRQ(L); \
++	  if (l_unlikely(luaext_q_ != NULL && \
++	      atomic_load_explicit(&luaext_q_->interrupted, memory_order_relaxed))) { \
++	    savestate(L, ci); \
++	    luaext_raise_interrupt(L);  /* does not return */ \
++	  } }
++
++#else				/* }{ */
++
++#define LUAEXT_VMCHECK()	((void)0)
++
++#endif				/* } */
++
++
+ /*
+ ** Protect code that, in general, can raise errors, reallocate the
+ ** stack, and change the hooks.
+@@ -1743,6 +1787,14 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+       vmcase(OP_TAILCALL) {
+         StkId ra = RA(i);
+         int b = GETARG_B(i);  /* number of arguments + 1 (function) */
++        /*
++        ** luaext: tail recursion is the one unbounded loop with no backward
++        ** jump -- 'local function f() return f() end' reuses the frame and
++        ** re-enters at 'startfunc' forever. Checked here, at the top of the
++        ** case, because 'savestate' inside the macro needs 'L->top' to still
++        ** be the caller's; a few lines down it is set up for the callee.
++        */
++        LUAEXT_VMCHECK();
+         int n;  /* number of results when calling a C function */
+         int nparams1 = GETARG_C(i);
+         /* delta is virtual 'func' - real 'func' (vararg functions) */
+@@ -1850,6 +1902,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+         else if (floatforloop(L, ra))  /* float loop */
+           pc -= GETARG_Bx(i);  /* jump back */
+         updatetrap(ci);  /* allows a signal to break the loop */
++        LUAEXT_VMCHECK();  /* luaext: numeric 'for' back edge */
+         vmbreak;
+       }
+       vmcase(OP_FORPREP) {
+@@ -1902,6 +1955,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+         StkId ra = RA(i);
+         if (!ttisnil(s2v(ra + 3)))  /* continue loop? */
+           pc -= GETARG_Bx(i);  /* jump back */
++        LUAEXT_VMCHECK();  /* luaext: generic 'for' back edge */
+         vmbreak;
+       }}
+       vmcase(OP_SETLIST) {
