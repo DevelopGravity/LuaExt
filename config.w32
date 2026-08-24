@@ -98,8 +98,9 @@ if (PHP_LUAEXT != "no") {
 	// open compiler generated file" because x64\Release\src\ was never created.
 	EXTENSION("luaext",
 		"src\\luaext.c src\\luaext_sandbox.c src\\luaext_alloc.c src\\luaext_config.c " +
-		"src\\luaext_convert.c src\\luaext_error.c src\\luaext_function.c " +
-		"src\\luaext_interrupt.c src\\luaext_pending.c",
+		"src\\luaext_convert.c src\\luaext_error.c src\\luaext_exec.c " +
+		"src\\luaext_function.c src\\luaext_interrupt.c src\\luaext_pending.c " +
+		"src\\luaext_phpcall.c",
 		true,
 		luaext_flags);
 
