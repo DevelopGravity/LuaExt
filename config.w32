@@ -78,9 +78,14 @@ if (PHP_LUAEXT != "no") {
 		luaext_flags += "/fsanitize=" + luaext_sanitizers + " /Zi ";
 	}
 
+	// Shared is passed explicitly rather than left null. A null third argument
+	// makes php's confutils.js evaluate PHP_LUAEXT_SHARED, which only exists
+	// when the extension is configured as part of a full php-src tree; in a
+	// standalone phpize build it is undefined and configure dies there. This
+	// file is only read by standalone builds, and those are always shared.
 	EXTENSION("luaext",
 		"src/luaext.c src/luaext_sandbox.c src/luaext_alloc.c src/luaext_config.c src/luaext_convert.c src/luaext_error.c src/luaext_function.c src/luaext_interrupt.c src/luaext_pending.c",
-		null,
+		true,
 		luaext_flags);
 
 	// Same target, so these link into php_luaext.dll and inherit CFLAGS_LUAEXT;
