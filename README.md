@@ -111,7 +111,7 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `debugTraceback` | `true` | `true` | |
 | `debugIntrospect` | `false` | `true` | |
 | `debugMutate` | `false` | `false` | Never flipped by a preset. |
-| `debugHooks` | `false` | `false` | Defeats the watchdog by design; enabling it while a CPU limit is set throws `ConfigurationError`. Never flipped by a preset. |
+| `debugHooks` | `false` | `false` | Defeats the watchdog by design; enabling it while a CPU **or** wall-clock limit is set throws `ConfigurationError` — both are delivered through the interpreter hook `debug.sethook` would displace. Never flipped by a preset. |
 | `utf8` | `true` | `true` | |
 | `gcControl` | `false` | `true` | |
 | `warn` | `false` | `true` | |
