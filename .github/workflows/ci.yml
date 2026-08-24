@@ -97,6 +97,72 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------
+  # PIE is how this extension is actually delivered, so it gets its own gate.
+  #
+  # The build matrix above runs phpize/configure/make directly, which is what
+  # PIE does internally -- but only "internally". It does not exercise the
+  # composer.json php-ext block, the package resolution, or the declared
+  # configure-options, so a wrong extension-name or a mis-declared option
+  # passes all sixteen matrix jobs and only fails the first time a user runs
+  # `pie install`. This runs the real thing against a stock PHP, exactly as a
+  # user would.
+  #
+  # Windows is absent by necessity, not oversight: PIE installs pre-built DLLs
+  # there from a tagged release, so it cannot be exercised before one exists.
+  # release.yml covers that path.
+  # ---------------------------------------------------------------------
+  pie-install:
+    name: "pie install / ${{ matrix.os }}"
+    needs: build
+    # A fork PR's head commit is not fetchable from this repository, so the
+    # VCS constraint below could not resolve it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    steps:
+      - name: Setup PHP ${{ env.LUAEXT_PHP_VERSION }}
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ env.LUAEXT_PHP_VERSION }}
+          tools: none
+          extensions: none
+
+      - name: Install PIE
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fL --output /tmp/pie.phar \
+            https://github.com/php/pie/releases/latest/download/pie.phar
+          gh attestation verify --owner php /tmp/pie.phar
+          chmod +x /tmp/pie.phar
+          php /tmp/pie.phar --version
+
+      - name: pie install this exact commit
+        env:
+          LUAEXT_REF: ${{ github.head_ref || github.ref_name }}
+          LUAEXT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          php /tmp/pie.phar repository:add vcs \
+            "${{ github.server_url }}/${{ github.repository }}"
+          php /tmp/pie.phar install \
+            "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
+            --no-interaction
+
+      - name: Verify PIE installed a loadable extension
+        run: |
+          set -euo pipefail
+          php -m | grep -qi luaext
+          php -r 'exit(class_exists("DevelopGravity\\LuaExt\\Sandbox") ? 0 : 1);'
+          php -r 'printf("pie-installed luaext %s, %s\n",
+            DevelopGravity\LuaExt\Sandbox::extensionVersion(),
+            DevelopGravity\LuaExt\Sandbox::luaVersion());'
+
+  # ---------------------------------------------------------------------
   # Gating Linux sanitizer legs: extension + php-src built with a matching
   # compiler + sanitizer runtime, so ASan/UBSan/TSan findings are real.
   # These are NOT continue-on-error — a finding here fails the build.
@@ -347,7 +413,7 @@ jobs:
   ci-required:
     name: CI required checks
     if: always()
-    needs: [build, sanitize-linux, windows]
+    needs: [build, pie-install, sanitize-linux, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs
