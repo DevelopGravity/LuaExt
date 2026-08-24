@@ -479,7 +479,10 @@ static int luaext_exec_path_writer(lua_State *L)
 			lua_pushvalue(L, -2);
 			lua_rawset(L, -4);
 		} else if (!lua_istable(L, -1)) {
-			luaext_exec_path_refuse(L, request, cursor);
+			/* `cursor` still points at the start of this component, so the
+			 * prefix that names the offending value runs through the end of it
+			 * -- not up to it, the way it does on the read side. */
+			luaext_exec_path_refuse(L, request, cursor + component_len);
 		}
 
 		lua_remove(L, -2);
