@@ -2,8 +2,6 @@
 Lua integers and floats stay distinct in both directions
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

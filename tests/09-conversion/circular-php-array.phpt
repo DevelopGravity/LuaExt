@@ -2,8 +2,6 @@
 A self-referential PHP array is refused, and the array is left untouched
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

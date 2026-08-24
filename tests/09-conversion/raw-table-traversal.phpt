@@ -2,8 +2,6 @@
 Conversion walks tables raw and never runs a metamethod
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval(), which lands with the execution subsystem.
 --FILE--
 <?php
 

@@ -2,8 +2,6 @@
 Objects, resources and references to them have no Lua representation
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

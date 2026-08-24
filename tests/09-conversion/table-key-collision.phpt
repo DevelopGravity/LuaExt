@@ -2,8 +2,6 @@
 A table holding both t[1] and t["1"] is refused rather than silently merged
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval(), which lands with the execution subsystem.
 --FILE--
 <?php
 

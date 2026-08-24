@@ -2,8 +2,6 @@
 A Lua function becomes a LuaFunction, and only its own sandbox accepts it back
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal() and LuaFunction::call(), which land with the execution subsystem.
 --FILE--
 <?php
 

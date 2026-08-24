@@ -27,37 +27,12 @@
 /* -------------------------------------------------------------------------
  * Compiled function handle
  *
- * TODO: implement in luaext_function_obj.c, together with the registry ref
- * slots it borrows from its sandbox. Nothing hands out an instance yet, so
- * these are unreachable rather than merely unimplemented.
+ * Calling and introspecting a handle live in luaext_function.c now. What is
+ * left here is dumping, which is the bytecode capability's other half and
+ * belongs with whatever implements Sandbox::compileBinary()'s counterpart.
  * ---------------------------------------------------------------------- */
-
-ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, __construct)
-{
-	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::__construct");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, call)
-{
-	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::call");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, __invoke)
-{
-	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::__invoke");
-}
 
 ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
 {
 	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::dump");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, getSandbox)
-{
-	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::getSandbox");
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, isValid)
-{
-	LUAEXT_PENDING("DevelopGravity\\LuaExt\\LuaFunction::isValid");
 }

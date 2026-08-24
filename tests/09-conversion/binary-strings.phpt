@@ -2,8 +2,6 @@
 Strings cross the boundary as bytes, NUL bytes included
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal()/getGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

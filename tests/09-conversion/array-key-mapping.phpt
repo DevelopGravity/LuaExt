@@ -2,8 +2,6 @@
 Array keys keep their type and value across the boundary
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal()/getGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

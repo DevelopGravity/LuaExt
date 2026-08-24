@@ -2,8 +2,6 @@
 Nested arrays become nested tables and come back the same shape
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval()/setGlobal()/getGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 

@@ -127,22 +127,47 @@ bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len
 }
 
 /* -------------------------------------------------------------------------
- * Pushing a PHP value under protection
+ * Pushing PHP values under protection
  * ---------------------------------------------------------------------- */
 
-/* Argument 1 is the zval to push; the pushed value is the single result. */
+typedef struct {
+	zval *values;
+	uint32_t count;
+} luaext_exec_values;
+
+/* Argument 1 is the descriptor; every converted value comes back as a result. */
 static int luaext_exec_push_trampoline(lua_State *L)
 {
-	zval *value = (zval *)lua_touserdata(L, 1);
+	const luaext_exec_values *request = (const luaext_exec_values *)lua_touserdata(L, 1);
+	uint32_t index;
 
 	lua_settop(L, 0);
-	luaext_convert_push_zval(LUAEXT_SB(L), L, value);
 
-	return 1;
+	if (!lua_checkstack(L, (int)request->count + LUA_MINSTACK)) {
+		luaext_error_raise(L, LUAEXT_ERR_CONVERSION, true, "%s",
+						   "Cannot convert PHP values to Lua: the interpreter stack cannot grow "
+						   "far enough to hold them");
+	}
+
+	for (index = 0; index < request->count; index++) {
+		luaext_convert_push_zval(LUAEXT_SB(L), L, &request->values[index]);
+	}
+
+	return (int)request->count;
 }
 
-bool luaext_exec_push_value(luaext_sandbox *sandbox, zval *value)
+/*
+ * Convert `count` PHP values onto the stack, leaving exactly that many on
+ * success and nothing on failure.
+ *
+ * Deliberately a separate protected call from the one that runs the function.
+ * Folding the two together would leave this frame sitting underneath the
+ * script's own, and every traceback the host ever sees would carry a C frame
+ * from the plumbing beneath its main chunk.
+ */
+static bool luaext_exec_push_values(luaext_sandbox *sandbox, zval *values, uint32_t count)
 {
+	luaext_exec_values request;
 	lua_State *L;
 	int top;
 	int handler;
@@ -155,20 +180,24 @@ bool luaext_exec_push_value(luaext_sandbox *sandbox, zval *value)
 	L = sandbox->L;
 	top = lua_gettop(L);
 
-	if (!lua_checkstack(L, 8)) {
+	if (count > (uint32_t)INT_MAX - LUA_MINSTACK ||
+		!lua_checkstack(L, (int)count + LUA_MINSTACK)) {
 		zend_throw_exception(luaext_ce_conversion_error,
-							 "Cannot convert a PHP value to Lua: the interpreter stack cannot grow",
+							 "Cannot convert PHP values to Lua: the interpreter stack cannot grow",
 							 0);
 		return false;
 	}
+
+	request.values = values;
+	request.count = count;
 
 	lua_pushcfunction(L, luaext_error_traceback_handler);
 	handler = lua_gettop(L);
 
 	lua_pushcfunction(L, luaext_exec_push_trampoline);
-	lua_pushlightuserdata(L, value);
+	lua_pushlightuserdata(L, &request);
 
-	status = lua_pcall(L, 1, 1, handler);
+	status = lua_pcall(L, 1, (int)count, handler);
 
 	if (status != LUA_OK) {
 		luaext_error_throw_from_lua(sandbox, L, status);
@@ -176,53 +205,24 @@ bool luaext_exec_push_value(luaext_sandbox *sandbox, zval *value)
 		return false;
 	}
 
-	/* Leaves only the converted value where the caller expects it. */
+	/* Leaves only the converted values where the caller expects them. */
 	lua_remove(L, handler);
 
 	return true;
+}
+
+bool luaext_exec_push_value(luaext_sandbox *sandbox, zval *value)
+{
+	return luaext_exec_push_values(sandbox, value, 1);
 }
 
 /* -------------------------------------------------------------------------
  * Calling
  * ---------------------------------------------------------------------- */
 
-typedef struct {
-	zval *args;
-	uint32_t argc;
-} luaext_exec_call;
-
-/*
- * Argument 1 is the function, argument 2 the call descriptor. Both the argument
- * conversion and the call itself run in here so that a value PHP cannot express
- * in Lua fails inside the same protected call as the script's own errors, and
- * arrives at the host through the same conversion.
- */
-static int luaext_exec_call_trampoline(lua_State *L)
-{
-	const luaext_exec_call *request = (const luaext_exec_call *)lua_touserdata(L, 2);
-	uint32_t index;
-
-	lua_settop(L, 1);
-
-	if (!lua_checkstack(L, (int)request->argc + LUA_MINSTACK)) {
-		luaext_error_raise(L, LUAEXT_ERR_CONVERSION, true, "%s",
-						   "Cannot call a Lua function: the interpreter stack cannot grow far "
-						   "enough to hold that many arguments");
-	}
-
-	for (index = 0; index < request->argc; index++) {
-		luaext_convert_push_zval(LUAEXT_SB(L), L, &request->args[index]);
-	}
-
-	lua_call(L, (int)request->argc, LUA_MULTRET);
-
-	return lua_gettop(L);
-}
-
 bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint32_t argc,
 					   zval *return_value)
 {
-	luaext_exec_call request;
 	lua_State *L;
 	int base;
 	int handler;
@@ -240,22 +240,12 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	 * it, which is what "leaving nothing on the stack" means. */
 	base = func_index - 1;
 
-	if (argc > (uint32_t)INT_MAX - LUA_MINSTACK) {
-		lua_settop(L, base);
-		zend_throw_exception(luaext_ce_conversion_error,
-							 "Cannot call a Lua function with that many arguments", 0);
-		return false;
-	}
-
-	if (!lua_checkstack(L, (int)argc + LUA_MINSTACK)) {
+	if (!lua_checkstack(L, LUA_MINSTACK)) {
 		lua_settop(L, base);
 		zend_throw_exception(luaext_ce_conversion_error,
 							 "Cannot call a Lua function: the interpreter stack cannot grow", 0);
 		return false;
 	}
-
-	request.args = args;
-	request.argc = argc;
 
 	/*
 	 * The handler goes on before the call, not after the failure: it runs while
@@ -265,14 +255,17 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	lua_pushcfunction(L, luaext_error_traceback_handler);
 	handler = lua_gettop(L);
 
-	lua_pushcfunction(L, luaext_exec_call_trampoline);
 	lua_pushvalue(L, func_index);
-	lua_pushlightuserdata(L, &request);
+
+	if (argc > 0 && !luaext_exec_push_values(sandbox, args, argc)) {
+		lua_settop(L, base);
+		return false;
+	}
 
 	sandbox->lua_calls_in++;
 	sandbox->in_lua++;
 
-	status = lua_pcall(L, 2, LUA_MULTRET, handler);
+	status = lua_pcall(L, (int)argc, LUA_MULTRET, handler);
 
 	sandbox->in_lua--;
 
@@ -289,8 +282,8 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 		return false;
 	}
 
-	converted =
-		luaext_convert_stack_to_array(sandbox, L, handler + 1, lua_gettop(L) - handler, return_value);
+	converted = luaext_convert_stack_to_array(sandbox, L, handler + 1, lua_gettop(L) - handler,
+											  return_value);
 
 	lua_settop(L, base);
 

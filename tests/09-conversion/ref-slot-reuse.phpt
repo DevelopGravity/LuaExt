@@ -2,8 +2,6 @@
 Released registry slots are handed out again instead of leaking upward
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::compile() and Sandbox::getMemoryUsage(), which land with the execution and allocator subsystems.
 --FILE--
 <?php
 

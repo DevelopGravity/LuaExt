@@ -2,8 +2,6 @@
 A self-referential Lua table is refused, and a shared subtree is not
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::eval(), which lands with the execution subsystem.
 --FILE--
 <?php
 

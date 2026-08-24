@@ -2,8 +2,6 @@
 Every scalar with a Lua counterpart survives a round trip unchanged
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs Sandbox::setGlobal()/getGlobal(), which land with the execution subsystem.
 --FILE--
 <?php
 
