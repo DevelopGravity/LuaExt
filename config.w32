@@ -62,7 +62,15 @@ if (PHP_LUAEXT != "no") {
 	// Shared by both flag sets. LUAEXT_LUA_HOOKS activates the sandbox overlay
 	// at the end of the vendored luaconf.h, and the declarations our sources
 	// see have to match the ones the interpreter was built with.
-	var luaext_flags = "/DLUAEXT_LUA_HOOKS=1 /I" + luaext_root + "\\src /I" +
+	//
+	// /std:c11 and /experimental:c11atomics are load bearing, not tidiness:
+	// luaext_lua_hooks.h includes <stdatomic.h> for the interrupt flag, and
+	// every translation unit reaches it through luaconf.h. Without both flags
+	// MSVC stops at vcruntime_c11_stdatomic.h with "C atomics are disabled",
+	// so the failure looks like a vendored-Lua problem rather than a missing
+	// compiler switch.
+	var luaext_flags = "/std:c11 /experimental:c11atomics " +
+		"/DLUAEXT_LUA_HOOKS=1 /I" + luaext_root + "\\src /I" +
 		luaext_lua_dir + " ";
 
 	if (PHP_LUAEXT_DEBUG != "no") {
