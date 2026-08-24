@@ -189,7 +189,10 @@ static int luaext_phpcall_invoke(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	luaext_phpcall_ud *slot = (luaext_phpcall_ud *)lua_touserdata(L, lua_upvalueindex(1));
-	const char *label = luaext_phpcall_label(slot);
+
+	/* Only read out of the storage once the storage has been vouched for: a
+	 * userdata that is not ours has no name field to read. */
+	const char *label = LUAEXT_PHPCALL_ANONYMOUS;
 	uint32_t depth_limit;
 	zval *params = NULL;
 	size_t params_bytes = 0;
@@ -208,6 +211,8 @@ static int luaext_phpcall_invoke(lua_State *L)
 		luaext_error_raise(L, LUAEXT_ERR_ABORT, true,
 						   "A host callback was invoked after its storage was released");
 	}
+
+	label = luaext_phpcall_label(slot);
 
 	if (sandbox == NULL || sandbox->closed || sandbox->L == NULL) {
 		luaext_error_raise(L, LUAEXT_ERR_ABORT, true,
@@ -349,6 +354,16 @@ static int luaext_phpcall_invoke(lua_State *L)
 		/* The failed conversion left its error value on top; re-raise it
 		 * unchanged so the host sees the ConversionError it describes. */
 		return lua_error(L);
+	}
+
+	/*
+	 * Unreachable while the conversion subsystem keeps its promise to throw on
+	 * every failure. Returning here would hand the script the last argument as
+	 * though it were the result, so the promise is checked rather than trusted.
+	 */
+	if (!converted) {
+		luaext_error_raise(L, LUAEXT_ERR_CONVERSION, true,
+						   "The arguments to the host callback %s could not be converted", label);
 	}
 
 	return 1;
