@@ -504,7 +504,14 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 	add_assoc_bool(return_value, "threadSafe", 0);
 #endif
 
-	add_assoc_string(return_value, "platform", PHP_OS);
+	/*
+	 * PHP_OS_FAMILY, not PHP_OS. PHP_OS comes from the generated php_config.h,
+	 * which does not exist on Windows -- php-src carries a PHP_OS_STR shim for
+	 * exactly that reason, but it lives in php_main.h rather than php.h.
+	 * PHP_OS_FAMILY is defined by php.h itself on every platform, and is the
+	 * normalised name a caller would compare against anyway.
+	 */
+	add_assoc_string(return_value, "platform", PHP_OS_FAMILY);
 }
 
 /* -------------------------------------------------------------------------
