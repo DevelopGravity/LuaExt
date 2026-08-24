@@ -103,6 +103,10 @@ jobs:
   # ---------------------------------------------------------------------
   sanitize-linux:
     name: "Linux sanitizer / ${{ matrix.sanitizer }}"
+    # Gated on the ordinary build. Each leg compiles php-src from source, so
+    # running them against code that does not build anywhere wastes several
+    # minutes and buries the one failure that matters under a wall of red.
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -247,6 +251,7 @@ jobs:
   # ---------------------------------------------------------------------
   best-effort:
     name: "Best-effort / ${{ matrix.name }}"
+    needs: build
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     strategy:
@@ -334,6 +339,7 @@ jobs:
   # ---------------------------------------------------------------------
   windows:
     name: Windows (PR validation)
+    needs: build
     uses: ./.github/workflows/windows-build.yml
     with:
       php-version-list: '8.5'

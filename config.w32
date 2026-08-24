@@ -11,7 +11,12 @@
 // symbol hygiene that -fvisibility=hidden provides elsewhere: a process that
 // also loads a real Lua DLL cannot collide with the copy inside php_luaext.dll.
 
-ARG_ENABLE("luaext", "Enable luaext, a Lua 5.5 sandbox for untrusted code", "no");
+// Enabled by default. This file is only ever read when building the extension
+// on its own, which is the same situation in which the Unix phpize path enables
+// it without being asked. Defaulting to "no" here instead means configure
+// quietly succeeds having built nothing at all, and the failure surfaces much
+// later as "Failed to build the extension" with no reason attached.
+ARG_ENABLE("luaext", "Enable luaext, a Lua 5.5 sandbox for untrusted code", "yes");
 
 ARG_ENABLE("luaext-debug",
 	"LUAEXT: enable internal assertions and the Lua API checker", "no");
