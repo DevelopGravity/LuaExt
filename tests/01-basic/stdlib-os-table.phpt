@@ -2,8 +2,6 @@
 The os table is built, not filtered: time and environment only, and nothing else
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs luaext_openlibs_install() to call luaext_oslib_install(); the os library itself is complete. Remove this section once the installer lands.
 --FILE--
 <?php
 

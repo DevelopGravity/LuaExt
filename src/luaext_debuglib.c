@@ -139,13 +139,13 @@ static int luaext_debuglib_refuse_cfunction(lua_State *L)
 	int argc = lua_gettop(L);
 
 	if (lua_iscfunction(L, 1)) {
-		return luaL_error(
-			L, "debug.%s: a C function's upvalues are host state, not script state", name);
+		return luaL_error(L, "debug.%s: a C function's upvalues are host state, not script state",
+						  name);
 	}
 
 	if (second != 0 && lua_iscfunction(L, second)) {
-		return luaL_error(
-			L, "debug.%s: a C function's upvalues are host state, not script state", name);
+		return luaL_error(L, "debug.%s: a C function's upvalues are host state, not script state",
+						  name);
 	}
 
 	/*

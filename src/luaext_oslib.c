@@ -98,26 +98,13 @@
  * Per-sandbox clock state, held as os.clock's only upvalue.
  *
  * `last_reported` makes os.clock monotonic by construction rather than by
- * inheritance: whatever the underlying source does, and whatever it does at the
- * moment one source hands over to another, a script never sees time run
- * backwards. `installed_process_clock` backs the fallback below.
+ * inheritance. The billed-CPU counter behind it is already monotonic, but a
+ * script must never see time run backwards even if a future source is not, and
+ * the quantiser's out-of-range branch needs something to answer with.
  */
 typedef struct {
-	double installed_process_clock;
 	double last_reported;
 } luaext_oslib_clock_state;
-
-/* ISO C process CPU time in seconds, or 0 where the platform has none. */
-static double luaext_oslib_process_clock(void)
-{
-	clock_t ticks = clock();
-
-	if (ticks == (clock_t)-1) {
-		return 0.0;
-	}
-
-	return (double)ticks / (double)CLOCKS_PER_SEC;
-}
 
 static int luaext_oslib_clock(lua_State *L)
 {
@@ -127,23 +114,15 @@ static int luaext_oslib_clock(lua_State *L)
 	double seconds = (sandbox != NULL) ? luaext_timers_cpu_seconds(sandbox) : 0.0;
 
 	/*
-	 * FIXME(timers): luaext_timers_cpu_seconds() is still a scaffold returning
-	 * a constant 0.0. A frozen os.clock surfaces as mysterious script bugs
-	 * rather than as a missing feature, so until the timer layer lands, fall
-	 * back to the process CPU consumed since this sandbox was built.
+	 * The timer layer is the only source now: it reports this sandbox's own
+	 * billed CPU, which is the same quantity its CPU limit enforces, so a script
+	 * timing itself measures exactly the budget it is spending.
 	 *
-	 * That is a strictly worse measurement -- it counts every thread in the
-	 * process, not this sandbox's billed budget -- which is exactly why it is
-	 * temporary. Delete this branch, and only this branch, once billed CPU is
-	 * real; the rounding and the monotonic latch below are permanent.
+	 * Zero is a legitimate answer -- a sandbox that has not run yet, or a
+	 * platform with no per-thread CPU clock, where Sandbox::features() reports
+	 * the limit as Unsupported rather than pretending. The monotonic latch below
+	 * then holds it at whatever was last reported.
 	 */
-	if (seconds <= 0.0) {
-		double now = luaext_oslib_process_clock();
-
-		if (now > state->installed_process_clock) {
-			seconds = now - state->installed_process_clock;
-		}
-	}
 
 	/*
 	 * Truncation towards zero rather than floor(): `seconds` cannot be negative
@@ -275,9 +254,9 @@ static void luaext_oslib_push_env_allow_list(lua_State *L, luaext_sandbox *sandb
 		return;
 	}
 
-	capabilities = zend_read_property(luaext_ce_sandbox_config, Z_OBJ(sandbox->config_zv),
-									  "capabilities", sizeof("capabilities") - 1, 1,
-									  &capabilities_rv);
+	capabilities =
+		zend_read_property(luaext_ce_sandbox_config, Z_OBJ(sandbox->config_zv), "capabilities",
+						   sizeof("capabilities") - 1, 1, &capabilities_rv);
 
 	if (capabilities == NULL || Z_TYPE_P(capabilities) != IS_OBJECT) {
 		return;
@@ -404,7 +383,7 @@ static int luaext_oslib_getfield(lua_State *L, const char *key, int d, int delta
 	int t = lua_getfield(L, -1, key); /* get field and its type */
 	lua_Integer res = lua_tointegerx(L, -1, &isnum);
 
-	if (!isnum) {		   /* field is not an integer? */
+	if (!isnum) {			 /* field is not an integer? */
 		if (t != LUA_TNIL) { /* some other value? */
 			return luaL_error(L, "field '%s' is not an integer", key);
 		} else if (d < 0) { /* absent field; no default? */
@@ -436,10 +415,10 @@ static const char *luaext_oslib_checkoption(lua_State *L, const char *conv, size
 	unsigned oplen = 1; /* length of options being checked */
 
 	for (; *option != '\0' && oplen <= convlen; option += oplen) {
-		if (*option == '|') {						  /* next block? */
-			oplen++;								  /* will check options with next length (+1) */
+		if (*option == '|') { /* next block? */
+			oplen++;		  /* will check options with next length (+1) */
 		} else if (memcmp(conv, option, oplen) == 0) { /* match? */
-			memcpy(buff, conv, oplen);				  /* copy valid option to buffer */
+			memcpy(buff, conv, oplen);				   /* copy valid option to buffer */
 			buff[oplen] = '\0';
 			return conv + oplen; /* return next item */
 		}
@@ -471,8 +450,9 @@ static void luaext_oslib_check_result_length(lua_State *L, size_t length)
 	size_t limit = (sandbox != NULL) ? sandbox->policy.limits.max_string_length : 0;
 
 	if (limit != 0 && length > limit) {
-		luaL_error(L, "os.date: the result would exceed the sandbox's maximum string length (%I "
-					  "bytes)",
+		luaL_error(L,
+				   "os.date: the result would exceed the sandbox's maximum string length (%I "
+				   "bytes)",
 				   (lua_Integer)limit);
 	}
 }
@@ -606,7 +586,6 @@ bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox)
 	 * measures exactly what will stop it, and can see nothing else.
 	 */
 	clock_state = (luaext_oslib_clock_state *)lua_newuserdatauv(L, sizeof(*clock_state), 0);
-	clock_state->installed_process_clock = luaext_oslib_process_clock();
 	clock_state->last_reported = 0.0;
 	lua_pushcclosure(L, luaext_oslib_clock, 1);
 	lua_setfield(L, -2, "clock");

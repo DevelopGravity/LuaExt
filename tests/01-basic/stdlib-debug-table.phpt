@@ -2,8 +2,6 @@
 The debug table is assembled from the debug capabilities, and is nil without any
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs luaext_openlibs_install() to call luaext_debuglib_install(), plus the luaext_openlibs_scratch/select/check_drift helpers; the debug library itself is complete. Remove this section once the installer lands.
 --FILE--
 <?php
 
@@ -23,12 +21,14 @@ use DevelopGravity\LuaExt\SandboxConfig;
 /** The debug table's members, sorted, or `<nil>` when there is no table. */
 function debugMembers(Capabilities $capabilities): string
 {
-	// cpuSeconds is lifted because debugHooks and a CPU limit are refused
-	// together: a script that can call debug.sethook() displaces the hook the
-	// limit is delivered through.
+	// BOTH time limits are lifted, not just the CPU one. debugHooks is refused
+	// alongside either: a script that can call debug.sethook() displaces the
+	// interpreter hook they are both delivered through -- the watchdog thread
+	// only raises a flag, and that hook is what turns the flag into a stopped
+	// script -- so a wall limit would stop being enforced just as surely.
 	$sandbox = new Sandbox(new SandboxConfig(
 		capabilities: $capabilities,
-		limits: new Limits(cpuSeconds: null),
+		limits: new Limits(cpuSeconds: null, wallClockSeconds: null),
 	));
 
 	return $sandbox->eval(<<<'LUA'
@@ -75,7 +75,7 @@ var_dump($trusted->eval('return debug.getregistry == nil', '=trusted-registry')[
 // debug.debug is withheld even from a sandbox holding every debug capability.
 $everything = new Sandbox(new SandboxConfig(
 	capabilities: $untrusted->with(debugIntrospect: true, debugMutate: true, debugHooks: true),
-	limits: new Limits(cpuSeconds: null),
+	limits: new Limits(cpuSeconds: null, wallClockSeconds: null),
 ));
 
 var_dump($everything->eval('return debug.debug == nil', '=debug-repl')[0]);

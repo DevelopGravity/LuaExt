@@ -2,8 +2,6 @@
 os.getenv answers only from the allow list, and cannot be used to probe it
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs luaext_openlibs_install() to call luaext_oslib_install(); os.getenv itself is complete. Remove this section once the installer lands.
 --FILE--
 <?php
 

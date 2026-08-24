@@ -75,7 +75,7 @@ $sandbox->close();
 
 ?>
 --EXPECT--
-_G: _G _VERSION assert collectgarbage error getmetatable ipairs math next pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 xpcall
+_G: _G _VERSION assert collectgarbage debug error getmetatable ipairs math next os pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 xpcall
 string: byte char find format gmatch gsub len lower match pack packsize rep reverse sub unpack upper
 table: concat create insert move pack remove sort unpack
 math: abs acos asin atan ceil cos deg exp floor fmod frexp huge ldexp log max maxinteger min mininteger modf pi rad random randomseed sin sqrt tan tointeger type ult

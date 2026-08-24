@@ -56,6 +56,8 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
 pairs	function
 pcall	function
 print	function
@@ -68,7 +70,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -100,14 +101,14 @@ xpcall	function
 [preset minimal probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -116,6 +117,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -150,6 +153,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -162,7 +170,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -201,14 +208,14 @@ xpcall	function
 [preset untrusted probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -217,9 +224,15 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.getinfo	function
+debug.getlocal	function
+debug.getupvalue	function
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
+load	function
 math	table
 math.abs	function
 math.acos	function
@@ -251,6 +264,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -297,6 +315,7 @@ utf8.codepoint	function
 utf8.codes	function
 utf8.len	function
 utf8.offset	function
+warn	function
 xpcall	function
 
 [preset trusted-constructible probes]
@@ -318,6 +337,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -352,6 +373,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -364,7 +390,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -403,14 +428,14 @@ xpcall	function
 [preset untrusted+loadBytecode probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -419,9 +444,12 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
+load	function
 math	table
 math.abs	function
 math.acos	function
@@ -453,6 +481,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -465,7 +498,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -504,14 +536,14 @@ xpcall	function
 [preset untrusted+compileAtRuntime probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -520,6 +552,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -554,6 +588,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -605,14 +644,14 @@ xpcall	function
 [preset untrusted+dumpBytecode probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -621,6 +660,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -655,6 +696,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -667,7 +713,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -706,14 +751,14 @@ xpcall	function
 [preset untrusted+require probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -722,6 +767,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -756,6 +803,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -768,7 +820,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -807,14 +858,14 @@ xpcall	function
 [preset untrusted+vfs probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -823,6 +874,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -857,6 +910,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -869,7 +927,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -908,14 +965,14 @@ xpcall	function
 [preset untrusted+vfsWrite probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -924,6 +981,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -958,6 +1017,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -970,7 +1034,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1009,14 +1072,14 @@ xpcall	function
 [preset untrusted-coroutines probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1025,6 +1088,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1059,6 +1124,8 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
 pairs	function
 pcall	function
 print	function
@@ -1071,7 +1138,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1110,14 +1176,14 @@ xpcall	function
 [preset untrusted-osTime probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1126,6 +1192,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1160,6 +1228,12 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.getenv	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1172,7 +1246,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1211,14 +1284,14 @@ xpcall	function
 [preset untrusted+osEnv probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1261,6 +1334,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1273,7 +1351,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1312,14 +1389,14 @@ xpcall	function
 [preset untrusted-debugTraceback probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1328,6 +1405,11 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.getinfo	function
+debug.getlocal	function
+debug.getupvalue	function
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1362,6 +1444,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1374,7 +1461,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1413,14 +1499,14 @@ xpcall	function
 [preset untrusted+debugIntrospect probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1429,6 +1515,17 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.getmetatable	function
+debug.getregistry	function
+debug.getuservalue	function
+debug.setlocal	function
+debug.setmetatable	function
+debug.setupvalue	function
+debug.setuservalue	function
+debug.traceback	function
+debug.upvalueid	function
+debug.upvaluejoin	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1463,6 +1560,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1475,7 +1577,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1514,14 +1615,14 @@ xpcall	function
 [preset untrusted+debugMutate probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1530,6 +1631,10 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.gethook	function
+debug.sethook	function
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1564,6 +1669,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1576,7 +1686,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1615,14 +1724,14 @@ xpcall	function
 [preset untrusted+debugHooks probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1631,6 +1740,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1665,6 +1776,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1677,7 +1793,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1709,14 +1824,14 @@ xpcall	function
 [preset untrusted-utf8 probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table
 
@@ -1725,6 +1840,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1759,6 +1876,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1771,7 +1893,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1826,6 +1947,8 @@ _G	table
 _VERSION	string
 assert	function
 collectgarbage	function
+debug	table
+debug.traceback	function
 error	function
 getmetatable	function
 ipairs	function
@@ -1860,6 +1983,11 @@ math.tointeger	function
 math.type	function
 math.ult	function
 next	function
+os	table
+os.clock	function
+os.date	function
+os.difftime	function
+os.time	function
 pairs	function
 pcall	function
 print	function
@@ -1872,7 +2000,6 @@ setmetatable	function
 string	table
 string.byte	function
 string.char	function
-string.dump	function
 string.find	function
 string.format	function
 string.gmatch	function
@@ -1906,18 +2033,19 @@ utf8.codepoint	function
 utf8.codes	function
 utf8.len	function
 utf8.offset	function
+warn	function
 xpcall	function
 
 [preset untrusted+warn probes]
 collectgarbage("collect")	ok
 collectgarbage("count")	ok
-collectgarbage("generational")	ok
-collectgarbage("incremental")	ok
+collectgarbage("generational")	refused
+collectgarbage("incremental")	refused
 collectgarbage("isrunning")	ok
 collectgarbage("nonesuch")	refused
-collectgarbage("param", "pause")	ok
-collectgarbage("restart")	ok
+collectgarbage("param", "pause")	refused
+collectgarbage("restart")	refused
 collectgarbage("step")	ok
-collectgarbage("stop")	ok
+collectgarbage("stop")	refused
 getmetatable("").__index == string	true
 getmetatable("").__index type	table

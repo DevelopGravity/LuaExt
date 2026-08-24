@@ -334,14 +334,21 @@ function measurePreset(Capabilities $capabilities): array
 {
     try {
         /*
-         * cpuSeconds is lifted for every preset, not just the debugHooks one:
-         * a CPU limit and debugHooks are refused together, and varying the
-         * limits between presets would put an irrelevant difference in the
-         * golden.
+         * BOTH time limits are lifted, for every preset rather than only the
+         * debugHooks one, so that varying limits do not put an irrelevant
+         * difference in the golden.
+         *
+         * Both, not just cpuSeconds: debugHooks is refused alongside either,
+         * because a script calling debug.sethook() displaces the interpreter
+         * hook they are both delivered through. Lifting only the CPU limit made
+         * that preset throw, and a preset that throws contributes no names --
+         * so debug.sethook and debug.gethook silently appeared in withheld.txt
+         * as though no configuration could reach them. A security audit whose
+         * failure mode is under-reporting exposure is worse than no audit.
          */
         $sandbox = new Sandbox(new SandboxConfig(
             capabilities: $capabilities,
-            limits: new Limits(cpuSeconds: null),
+            limits: new Limits(cpuSeconds: null, wallClockSeconds: null),
             filesystem: emptyFileSystem(),
         ));
     } catch (Throwable $error) {

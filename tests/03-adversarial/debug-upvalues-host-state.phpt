@@ -2,8 +2,6 @@
 A C function's upvalues are host state and the debug library refuses to touch them
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs luaext_openlibs_install() to call luaext_debuglib_install(); the refusals themselves are complete. Remove this section once the installer lands.
 --FILE--
 <?php
 

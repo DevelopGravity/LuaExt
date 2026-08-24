@@ -89,6 +89,18 @@ jobs:
           # here legitimately takes more than a couple of seconds.
           TEST_TIMEOUT: '20'
 
+      # Runs HERE rather than in lint.yml's drift-checks job, which sets PHP up
+      # with tokenizer only and never builds the extension. Two of the three
+      # golden files describe the surface a real sandbox exposes, so without a
+      # built extension the tool can only check the source-derived one and
+      # reports the other two as "not audited" -- green, and proving nothing.
+      #
+      # One leg is enough: the surface is a property of the policy, not of the
+      # thread-safety flavour or the optimisation level.
+      - name: Audit the stdlib surface against the golden files
+        if: matrix.os == 'ubuntu-latest' && matrix.ts == 'nts' && matrix.build_type == 'release'
+        run: php tools/audit-stdlib.php --check
+
       - name: Upload failing test artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
