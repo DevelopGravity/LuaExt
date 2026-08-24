@@ -197,17 +197,16 @@ jobs:
     needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api]
     runs-on: ubuntu-latest
     steps:
-      - name: Check all lint jobs succeeded
+      - name: Check required jobs
         run: |
-          for result in \
-            "${{ needs.clang-format.result }}" \
-            "${{ needs.editorconfig.result }}" \
-            "${{ needs.shellcheck.result }}" \
-            "${{ needs.actionlint.result }}" \
-            "${{ needs.drift-checks.result }}" \
-            "${{ needs.docs-api.result }}"; do
-            if [ "$result" != "success" ]; then
-              echo "::error::A required lint job did not succeed: $result" >&2
-              exit 1
-            fi
-          done
+          # Derived from needs.* rather than an explicit list, so adding a job
+          # to `needs:` above is enough to make it required. Naming each one
+          # again here is how a job silently stops being checked -- exactly
+          # what happened once already, when a documentation check was added to
+          # `needs:` but not to the list, and its failures reported green.
+          echo '${{ toJSON(needs) }}'
+
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::A required job did not succeed; see the run summary above." >&2
+            exit 1
+          fi

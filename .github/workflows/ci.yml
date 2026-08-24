@@ -357,12 +357,14 @@ jobs:
     steps:
       - name: Check required jobs
         run: |
-          echo "build: ${{ needs.build.result }}"
-          echo "sanitize-linux: ${{ needs.sanitize-linux.result }}"
-          echo "windows: ${{ needs.windows.result }}"
-          if [ "${{ needs.build.result }}" != "success" ] || \
-             [ "${{ needs.sanitize-linux.result }}" != "success" ] || \
-             [ "${{ needs.windows.result }}" != "success" ]; then
-            echo "One or more required jobs did not succeed." >&2
+          # Derived from needs.* rather than an explicit list, so adding a job
+          # to `needs:` above is enough to make it required. Naming each one
+          # again here is how a job silently stops being checked -- exactly
+          # what happened once already, when a documentation check was added to
+          # `needs:` but not to the list, and its failures reported green.
+          echo '${{ toJSON(needs) }}'
+
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::A required job did not succeed; see the run summary above." >&2
             exit 1
           fi
