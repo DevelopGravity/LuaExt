@@ -34,7 +34,30 @@
  *              a PSEUDO-handle meaning "whichever thread is asking", so using
  *              it directly would silently measure the watchdog's own CPU.
  */
-typedef struct luaext_cpu_clock luaext_cpu_clock;
+typedef struct luaext_cpu_clock {
+	/*
+	 * The captured handle, in whichever of the two shapes C can give a platform
+	 * handle:
+	 *
+	 *   Windows  a real HANDLE from DuplicateHandle()          -> pointer
+	 *   macOS    a mach_port_t from pthread_mach_thread_np()   -> identifier
+	 *   POSIX    a clockid_t from pthread_getcpuclockid()      -> identifier
+	 *
+	 * Spelled this way, rather than as the platform types themselves, because
+	 * the watchdog embeds this struct by value and this header must not drag
+	 * <windows.h> or <mach/mach.h> into its include graph.
+	 *
+	 * `identifier` is SIGNED on purpose: Linux hands out negative clockid_t
+	 * values for clocks that are not the caller's own, which is exactly the case
+	 * this whole file exists to serve.
+	 */
+	union {
+		void *pointer;
+		int64_t identifier;
+	} handle;
+
+	bool valid;
+} luaext_cpu_clock;
 
 /* Capture the CALLING thread's clock. Must run on the owning thread. */
 bool luaext_clock_capture_self(luaext_cpu_clock *out);

@@ -162,4 +162,20 @@ void luaext_timers_request(luaext_sandbox *sandbox, luaext_irq_reason reason);
 /* The always-armed count hook. Installed at construction, never removed. */
 void luaext_timers_hook(lua_State *L, lua_Debug *ar);
 
+/*
+ * The last line of defence, called where a call into Lua returns successfully.
+ *
+ * Lua has places the sandbox cannot patch away where an error stops travelling:
+ * a stock pcall catches one, and GCTM turns one into a warning. The interrupt
+ * flag is sticky exactly so a breach outlives all of them, so a call that
+ * returns with it still raised did NOT succeed.
+ *
+ * Returns true with a PHP exception already thrown, in which case the caller
+ * discards the results. Must be called BEFORE luaext_timers_leave_lua(), which
+ * is where the flag is finally cleared. Independent of the sandbox's pcall
+ * replacement rather than a substitute for it: that stops the script at the
+ * pcall, with the right traceback; this catches whatever gets past.
+ */
+bool luaext_timers_throw_if_interrupted(luaext_sandbox *sandbox);
+
 #endif /* LUAEXT_TIMERS_H */

@@ -20,11 +20,17 @@ var_dump(is_float($features['cpuResolutionSeconds']));
 var_dump($features['threadSafe'] === PHP_ZTS);
 var_dump(is_string($features['platform']) && $features['platform'] !== '');
 
-// The watchdog does not exist yet, so neither limit is enforced and this says
-// so rather than pretending. Update this assertion when the watchdog lands --
-// never the value it checks.
-var_dump($features['cpuLimit'] === LimitSupport::Unsupported);
-var_dump($features['wallClockLimit'] === LimitSupport::Unsupported);
+// The watchdog exists, so neither limit may report Unsupported on a platform
+// that has a per-thread CPU clock and the default luaext.hook_count. Which of
+// Enforced and Degraded it is depends on how coarse that clock is -- ~1 ns on
+// Linux, ~1 us on macOS, ~15.6 ms on Windows -- so asserting the exact case
+// here would make this test a platform test. tests/02-limits/features-honesty
+// covers the specific cases, including the one where an INI voids them.
+var_dump($features['cpuLimit'] !== LimitSupport::Unsupported);
+var_dump($features['wallClockLimit'] !== LimitSupport::Unsupported);
+
+// A resolution of zero would mean "no clock", which contradicts the two above.
+var_dump($features['cpuResolutionSeconds'] > 0.0);
 
 ?>
 --EXPECT--
@@ -40,6 +46,7 @@ array(5) {
   [4]=>
   string(8) "platform"
 }
+bool(true)
 bool(true)
 bool(true)
 bool(true)

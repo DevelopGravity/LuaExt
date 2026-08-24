@@ -26,14 +26,14 @@ $sandbox = new Sandbox($config);
 var_dump($sandbox->isClosed());
 
 /*
- * What the sandbox actually enforces is not observable from PHP yet: nothing
- * executes Lua, and features() reports Unsupported until the watchdog lands.
- * That is the honest answer rather than a placeholder -- a host that must not
- * run untrusted code without a CPU limit can see it has none.
+ * A host that must not run untrusted code without a time limit can find out
+ * whether it has one. Asserted as "not Unsupported" rather than as a specific
+ * case, because which of Enforced and Degraded applies is a property of the
+ * platform clock and this test is about the config object.
  */
 $features = Sandbox::features();
-var_dump($features['cpuLimit'] === LimitSupport::Unsupported);
-var_dump($features['wallClockLimit'] === LimitSupport::Unsupported);
+var_dump($features['cpuLimit'] !== LimitSupport::Unsupported);
+var_dump($features['wallClockLimit'] !== LimitSupport::Unsupported);
 var_dump(array_keys($features));
 
 // The config object survives being handed over: the sandbox holds a reference
