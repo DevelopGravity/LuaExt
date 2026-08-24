@@ -3,7 +3,7 @@ No Lua construct can swallow a CPU-limit breach
 --EXTENSIONS--
 luaext
 --XFAIL--
-Needs Sandbox::eval(), the watchdog and the pcall replacement; the error subsystem only supplies the unforgeable fatal marker they act on.
+Needs the watchdog: Sandbox::setCpuLimit() still throws "not implemented yet", so nothing here reaches the point of being caught. The pcall and xpcall replacements have landed and are covered by pcall-cannot-swallow-a-host-failure.phpt and xpcall-handler-skipped-for-fatal.phpt; the coroutine.resume and coroutine.wrap cases additionally need the coroutine wrapper, which no library installs yet.
 --FILE--
 <?php
 

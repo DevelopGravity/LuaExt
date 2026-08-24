@@ -2,8 +2,6 @@
 A callback can call back into Lua, and a failure inside one still escapes every frame
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs the pcall replacement from the library-policy wave. The bridge, its boundary accounting and the wiring are all in place, and the fatal is raised correctly -- but Lua's own pcall is still upstream's, so a script can catch a host failure on the way in. Everything above the last assertion already passes.
 --FILE--
 <?php
 
