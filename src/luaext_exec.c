@@ -102,8 +102,10 @@ bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len
 		return false;
 	}
 
+	/* Not a SyntaxError: nothing is wrong with the chunk, and saying otherwise
+	 * would send whoever reads the log looking at the wrong thing. */
 	if (!lua_checkstack(L, 4)) {
-		zend_throw_exception(luaext_ce_syntax_error,
+		zend_throw_exception(luaext_ce_memory_limit_error,
 							 "Cannot compile a chunk: the interpreter stack cannot grow", 0);
 		return false;
 	}
@@ -578,7 +580,8 @@ void luaext_exec_make_function(luaext_sandbox *sandbox, zval *sandbox_zv, zval *
 	ref = luaext_convert_ref_create(sandbox, L, -1);
 	lua_pop(L, 1);
 
-	if (ref < 0) {
+	/* Slots are numbered from one; zero belongs to the freelist's own owner. */
+	if (ref <= 0) {
 		return;
 	}
 
