@@ -2,8 +2,6 @@
 A script cannot pcall its way past its own output budget
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs two things from the library-policy wave: print(), so a script can reach luaext_output_write() at all, and the pcall replacement, because Lua's own pcall is still upstream's and will swallow the fatal this test says it must not. The sink already reports the breach as fatal; nothing yet stops pcall catching it.
 --FILE--
 <?php
 

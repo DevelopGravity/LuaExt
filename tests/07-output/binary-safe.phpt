@@ -2,8 +2,6 @@
 Output is bytes: NUL and invalid UTF-8 pass through unchanged
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs print() from the library-policy wave. The sink is length-counted throughout and never inspects a byte; what is missing is a Lua-visible way to reach luaext_output_write() -- the base library is still upstream's, so print() writes to the process's stdout instead of to the sandbox.
 --FILE--
 <?php
 

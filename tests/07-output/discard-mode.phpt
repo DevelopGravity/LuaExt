@@ -2,8 +2,6 @@
 Discard mode keeps nothing but still counts what the script emitted
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs print() from the library-policy wave. Discard's accounting is wired and verified from the C side; what is missing is a Lua-visible way to reach luaext_output_write() -- the base library is still upstream's, so print() writes to the process's stdout instead of to the sandbox.
 --FILE--
 <?php
 

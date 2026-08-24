@@ -411,11 +411,7 @@ static int luaext_baselib_warn(lua_State *L)
  * default sandbox fail for no gain.
  */
 static const char *const luaext_baselib_gc_open[] = {
-	"collect",
-	"count",
-	"isrunning",
-	"step",
-	NULL,
+	"collect", "count", "isrunning", "step", NULL,
 };
 
 /*
@@ -429,12 +425,7 @@ static const char *const luaext_baselib_gc_open[] = {
  * is the blunter version of the same thing.
  */
 static const char *const luaext_baselib_gc_privileged[] = {
-	"generational",
-	"incremental",
-	"param",
-	"restart",
-	"stop",
-	NULL,
+	"generational", "incremental", "param", "restart", "stop", NULL,
 };
 
 static bool luaext_baselib_gc_listed(const char *const *verbs, const char *option)

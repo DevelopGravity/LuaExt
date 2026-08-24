@@ -2,8 +2,6 @@
 The output buffer is charged against memoryBytes like any other byte the script caused
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs print() from the library-policy wave. The charge, the discharge on takeOutput() and the refusal when the charge does not fit are wired and verified from the C side; what is missing is a Lua-visible way to reach luaext_output_write() -- the base library is still upstream's, so print() writes to the process's stdout instead of to the sandbox.
 --FILE--
 <?php
 

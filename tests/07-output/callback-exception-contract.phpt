@@ -2,8 +2,6 @@
 An output callback's RuntimeError is the script's to catch and anything else is not
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs two things from the library-policy wave: print(), so a script can reach luaext_output_write() at all, and the pcall replacement, because Lua's own pcall is still upstream's and will swallow the fatal half of this contract. The sink already routes the exception through luaext_error_raise_from_exception(), which is what decides the two cases apart.
 --FILE--
 <?php
 

@@ -39,12 +39,12 @@
  * seeded from the sandbox's own entropy there is nothing left in it to fix.
  */
 const luaext_member luaext_mathlib_allow[] = {
-	{"abs", 0},		  {"acos", 0},	  {"asin", 0},		 {"atan", 0},		{"ceil", 0},
-	{"cos", 0},		  {"deg", 0},	  {"exp", 0},		 {"floor", 0},		{"fmod", 0},
-	{"frexp", 0},	  {"huge", 0},	  {"ldexp", 0},		 {"log", 0},		{"max", 0},
-	{"maxinteger", 0}, {"min", 0},	  {"mininteger", 0}, {"modf", 0},		{"pi", 0},
-	{"rad", 0},		  {"random", 0},  {"randomseed", 0}, {"sin", 0},		{"sqrt", 0},
-	{"tan", 0},		  {"tointeger", 0}, {"type", 0},	 {"ult", 0},		{NULL, 0},
+	{"abs", 0},		   {"acos", 0},		 {"asin", 0},		{"atan", 0},  {"ceil", 0},
+	{"cos", 0},		   {"deg", 0},		 {"exp", 0},		{"floor", 0}, {"fmod", 0},
+	{"frexp", 0},	   {"huge", 0},		 {"ldexp", 0},		{"log", 0},	  {"max", 0},
+	{"maxinteger", 0}, {"min", 0},		 {"mininteger", 0}, {"modf", 0},  {"pi", 0},
+	{"rad", 0},		   {"random", 0},	 {"randomseed", 0}, {"sin", 0},	  {"sqrt", 0},
+	{"tan", 0},		   {"tointeger", 0}, {"type", 0},		{"ult", 0},	  {NULL, 0},
 };
 
 const char *const luaext_mathlib_withheld[] = {NULL};

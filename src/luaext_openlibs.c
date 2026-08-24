@@ -69,7 +69,7 @@ bool luaext_mathlib_decorate(lua_State *L, luaext_sandbox *sandbox);
  * ---------------------------------------------------------------------- */
 
 static const luaext_member luaext_openlibs_table_allow[] = {
-	{"concat", 0}, {"create", 0}, {"insert", 0}, {"move", 0},  {"pack", 0},
+	{"concat", 0}, {"create", 0}, {"insert", 0}, {"move", 0}, {"pack", 0},
 	{"remove", 0}, {"sort", 0},	  {"unpack", 0}, {NULL, 0},
 };
 
@@ -86,24 +86,12 @@ static const char *const luaext_openlibs_table_withheld[] = {NULL};
  * ---------------------------------------------------------------------- */
 
 static const luaext_member luaext_openlibs_string_allow[] = {
-	{"byte", 0},
-	{"char", 0},
-	{"dump", LUAEXT_CAP_DUMP_BYTECODE},
-	{"find", 0},
-	{"format", 0},
-	{"gmatch", 0},
-	{"gsub", 0},
-	{"len", 0},
-	{"lower", 0},
-	{"match", 0},
-	{"pack", 0},
-	{"packsize", 0},
-	{"rep", 0},
-	{"reverse", 0},
-	{"sub", 0},
-	{"unpack", 0},
-	{"upper", 0},
-	{NULL, 0},
+	{"byte", 0},   {"char", 0},	   {"dump", LUAEXT_CAP_DUMP_BYTECODE},
+	{"find", 0},   {"format", 0},  {"gmatch", 0},
+	{"gsub", 0},   {"len", 0},	   {"lower", 0},
+	{"match", 0},  {"pack", 0},	   {"packsize", 0},
+	{"rep", 0},	   {"reverse", 0}, {"sub", 0},
+	{"unpack", 0}, {"upper", 0},   {NULL, 0},
 };
 
 static const char *const luaext_openlibs_string_withheld[] = {NULL};
@@ -161,8 +149,8 @@ static const luaext_library luaext_openlibs_base = {
 };
 
 static const luaext_library luaext_openlibs_table = {
-	LUA_TABLIBNAME, luaopen_table,		   0,
-	luaext_openlibs_table_allow, luaext_openlibs_table_withheld, NULL,
+	LUA_TABLIBNAME, luaopen_table, 0, luaext_openlibs_table_allow, luaext_openlibs_table_withheld,
+	NULL,
 };
 
 static const luaext_library luaext_openlibs_string = {
@@ -175,8 +163,8 @@ static const luaext_library luaext_openlibs_string = {
 };
 
 static const luaext_library luaext_openlibs_math = {
-	LUA_MATHLIBNAME, luaopen_math,			 0,
-	luaext_mathlib_allow, luaext_mathlib_withheld, luaext_mathlib_decorate,
+	LUA_MATHLIBNAME,		 luaopen_math, 0, luaext_mathlib_allow, luaext_mathlib_withheld,
+	luaext_mathlib_decorate,
 };
 
 static const luaext_library luaext_openlibs_utf8 = {
@@ -527,9 +515,9 @@ bool luaext_openlibs_install(luaext_sandbox *sandbox)
 	int status;
 
 	if (!lua_checkstack(L, LUAEXT_OPENLIBS_SLOTS)) {
-		zend_throw_exception(luaext_ce_memory_limit_error,
-							 "Cannot install the standard library: the interpreter stack cannot grow",
-							 0);
+		zend_throw_exception(
+			luaext_ce_memory_limit_error,
+			"Cannot install the standard library: the interpreter stack cannot grow", 0);
 		return false;
 	}
 
