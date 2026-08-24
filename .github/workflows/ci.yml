@@ -82,6 +82,12 @@ jobs:
         env:
           REPORT_EXIT_STATUS: '1'
           NO_INTERACTION: '1'
+          # run-tests.php defaults to 60s per test. tests/03-adversarial/ is full
+          # of scripts that loop forever deliberately -- proving a limit stops an
+          # unbounded loop is the point -- so a regression in the limit does not
+          # fail the run, it pins a core for a minute per affected test. Nothing
+          # here legitimately takes more than a couple of seconds.
+          TEST_TIMEOUT: '20'
 
       - name: Upload failing test artifacts
         if: failure()
@@ -343,6 +349,10 @@ jobs:
           REPORT_EXIT_STATUS: '1'
           NO_INTERACTION: '1'
           LUAEXT_TEST_SCOPE: ${{ matrix.test_scope }}
+          # Higher than the plain build matrix: a sanitized interpreter is
+          # several times slower, and this leg is scoped to tests/02-limits/,
+          # which is where the deliberately-unbounded scripts live.
+          TEST_TIMEOUT: '60'
         run: |
           SCOPE="$LUAEXT_TEST_SCOPE"
           if [ -n "$SCOPE" ] && [ ! -d "$SCOPE" ]; then

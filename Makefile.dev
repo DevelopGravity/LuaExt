@@ -33,8 +33,21 @@ build-debug:
 	$(MAKE) -j$(JOBS)
 
 ## Build (release) and run the .phpt suite.
+## Seconds any single test may run before run-tests.php kills it.
+##
+## Its own default is 60, which is far too generous here and actively harmful:
+## tests/03-adversarial/ is full of scripts that loop forever ON PURPOSE, because
+## proving a limit stops an unbounded loop is the point. Until the limit that
+## stops them is implemented and correct, every one of those burns a full minute
+## of a core -- and a suite with ten of them wedges a machine for ten minutes per
+## run. Nothing here legitimately takes more than a couple of seconds.
+##
+## Raise it for a slow machine or a sanitized build:
+##   make -f Makefile.dev test TEST_TIMEOUT=60
+TEST_TIMEOUT ?= 10
+
 test: build
-	$(MAKE) test
+	TEST_TIMEOUT=$(TEST_TIMEOUT) $(MAKE) test
 
 ## Formatting uses a PINNED clang-format (see .github/workflows/lint.yml).
 ## Versions disagree about output -- 18.1.3 and 18.1.8 differ on brace spacing
@@ -108,3 +121,14 @@ fuzz:
 clean:
 	@if [ -f Makefile ] && [ -f config.status ]; then $(MAKE) clean; fi
 	rm -rf .tools-cache ide-stubs
+	$(MAKE) -f Makefile.dev clean-tests
+
+## run-tests.php leaves a .php, .sh and .out beside every test that did not pass,
+## so the failure can be re-run by hand. For most suites that is a convenience;
+## here the .php it leaves for an adversarial test is a directly executable copy
+## of an infinite loop, sitting in the tree waiting for something to run it.
+## They are gitignored, so they accumulate silently across runs.
+clean-tests:
+	find tests -type f \( -name '*.php' -o -name '*.sh' -o -name '*.out' \
+		-o -name '*.diff' -o -name '*.exp' -o -name '*.log' -o -name '*.mem' \) -delete
+	rm -f php_test_results_*.txt tmp-php.ini
