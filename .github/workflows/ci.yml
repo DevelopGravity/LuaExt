@@ -154,9 +154,21 @@ jobs:
           set -euo pipefail
           php /tmp/pie.phar repository:add vcs \
             "${{ github.server_url }}/${{ github.repository }}"
-          php /tmp/pie.phar install \
-            "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
-            --no-interaction
+
+          # PIE writes the extension into the PHP extension directory and adds
+          # it to php.ini, which on a Linux runner is root-owned. It refuses to
+          # prompt for a password without a terminal, so the elevation has to be
+          # granted up front. macOS runners keep their PHP under a user-owned
+          # Homebrew prefix and need no such thing.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo -E "$(command -v php)" /tmp/pie.phar install \
+              "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
+              --no-interaction
+          else
+            php /tmp/pie.phar install \
+              "developgravity/lua-extension:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
+              --no-interaction
+          fi
 
       - name: Verify PIE installed a loadable extension
         run: |
