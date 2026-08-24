@@ -128,7 +128,12 @@ jobs:
         with:
           php-version: ${{ env.LUAEXT_PHP_VERSION }}
           tools: none
-          extensions: none
+          # NOT "none". PIE is a Box-packaged phar and refuses to start without
+          # iconv (pulled in by symfony/polyfill-mbstring); zip is what it
+          # unpacks downloads with. Stripping PHP bare here would also be
+          # unrealistic -- the point of this job is to mirror what a user
+          # actually has when they run pie install.
+          extensions: iconv, mbstring, zip
 
       - name: Install PIE
         env:
