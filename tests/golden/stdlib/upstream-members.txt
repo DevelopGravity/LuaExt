@@ -1,0 +1,153 @@
+# GENERATED FILE — do not edit by hand.
+#
+# Members declared by the vendored Lua standard library.
+#
+# Regenerate:  php tools/audit-stdlib.php
+# Verify:      php tools/audit-stdlib.php --check   (via tools/check-generated.sh)
+#
+# Every member named by a luaL_Reg array in the vendored Lua sources.
+#
+# This is the tripwire that fires from the build rather than from review: a
+# Lua point release that adds a member changes this file, the committed
+# golden no longer matches, and the drift check fails until the member is
+# classified in the matching allow-list under src/.
+#
+# Preprocessor conditionals inside an array are ignored, so members behind a
+# LUA_COMPAT_* guard that is not defined for this build are still listed.
+# That is the conservative direction: they show up as withheld rather than
+# going unmentioned.
+#
+# lcorolib.c is included although nothing opens it. It is compiled in, and
+# the coroutine wrapper that will select from it needs its list pinned now.
+#
+# The metamethods block is the string metatable's arithmetic operators.
+# They are not members of any library table, so they are listed separately
+# and take no part in the withheld arithmetic.
+
+
+[members]
+_VERSION
+assert
+collectgarbage
+coroutine.close
+coroutine.create
+coroutine.isyieldable
+coroutine.resume
+coroutine.running
+coroutine.status
+coroutine.wrap
+coroutine.yield
+debug.debug
+debug.gethook
+debug.getinfo
+debug.getlocal
+debug.getmetatable
+debug.getregistry
+debug.getupvalue
+debug.getuservalue
+debug.sethook
+debug.setlocal
+debug.setmetatable
+debug.setupvalue
+debug.setuservalue
+debug.traceback
+debug.upvalueid
+debug.upvaluejoin
+dofile
+error
+getmetatable
+ipairs
+load
+loadfile
+math.abs
+math.acos
+math.asin
+math.atan
+math.atan2
+math.ceil
+math.cos
+math.cosh
+math.deg
+math.exp
+math.floor
+math.fmod
+math.frexp
+math.huge
+math.ldexp
+math.log
+math.log10
+math.max
+math.maxinteger
+math.min
+math.mininteger
+math.modf
+math.pi
+math.pow
+math.rad
+math.random
+math.randomseed
+math.sin
+math.sinh
+math.sqrt
+math.tan
+math.tanh
+math.tointeger
+math.type
+math.ult
+next
+pairs
+pcall
+print
+rawequal
+rawget
+rawlen
+rawset
+select
+setmetatable
+string.byte
+string.char
+string.dump
+string.find
+string.format
+string.gmatch
+string.gsub
+string.len
+string.lower
+string.match
+string.pack
+string.packsize
+string.rep
+string.reverse
+string.sub
+string.unpack
+string.upper
+table.concat
+table.create
+table.insert
+table.move
+table.pack
+table.remove
+table.sort
+table.unpack
+tonumber
+tostring
+type
+utf8.char
+utf8.charpattern
+utf8.codepoint
+utf8.codes
+utf8.len
+utf8.offset
+warn
+xpcall
+
+[string metamethods]
+string(metatable).__add
+string(metatable).__div
+string(metatable).__idiv
+string(metatable).__index
+string(metatable).__mod
+string(metatable).__mul
+string(metatable).__pow
+string(metatable).__sub
+string(metatable).__unm
