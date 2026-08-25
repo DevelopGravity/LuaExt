@@ -91,6 +91,26 @@ struct luaext_watch_slot {
 	luaext_cpu_clock clock;
 	bool clock_ok;
 
+	/*
+	 * Set when opening the CPU segment could not read the clock, and the reason
+	 * it needs its own field rather than being handled where it happens.
+	 *
+	 * Every consumer of CPU time is gated on LUAEXT_WATCH_CPU being in `open`:
+	 * luaext_watch_sample() only accumulates live time for an open segment,
+	 * luaext_watch_deadline() only contributes a CPU deadline for one, and --
+	 * the trap -- `cpu_lost`, the signal that says the clock has died and the
+	 * script must stop, is itself computed inside that same open-guarded branch.
+	 * So a segment that fails to OPEN cannot report that it failed: it reads
+	 * exactly like a sandbox using no CPU, forever, while features() goes on
+	 * claiming LimitSupport::Enforced.
+	 *
+	 * Recording it here lets luaext_watch_evaluate() treat it identically to
+	 * cpu_lost. A CPU limit that cannot be measured must stop the script; it must
+	 * never be quietly dropped, which is the exact failure this extension exists
+	 * to eliminate.
+	 */
+	bool cpu_open_failed;
+
 	uint64_t cpu_limit;
 	uint64_t wall_limit;
 
@@ -427,7 +447,13 @@ static bool luaext_watch_evaluate(luaext_watch_slot *slot)
 
 	luaext_watch_sample(slot, &cpu, &wall, &cpu_lost);
 
-	if (cpu_lost) {
+	/*
+	 * Two ways the clock can betray us, treated identically: it died while a
+	 * segment was open (cpu_lost), or it refused to give us a base to open one
+	 * against in the first place (cpu_open_failed). Either way the CPU budget is
+	 * unmeasurable from here on, and unmeasurable must mean stopped.
+	 */
+	if (cpu_lost || slot->cpu_open_failed) {
 		luaext_watch_raise(slot, LUAEXT_WATCH_REASON_CPU);
 		return true;
 	}
@@ -813,6 +839,10 @@ luaext_watch_slot *luaext_watchdog_acquire(luaext_irq *irq)
 	slot->has_limits = false;
 	slot->hook_ticks = 0;
 
+	/* Slots are recycled, so a clock failure recorded by the previous tenant must
+	 * not be inherited by this one. */
+	slot->cpu_open_failed = false;
+
 	/* On the OWNING thread, which is why this is done at construction rather
 	 * than at the first arm: the thread demonstrably exists here. */
 	slot->clock_ok = luaext_clock_capture_self(&slot->clock);
@@ -977,6 +1007,14 @@ static void luaext_watch_open(luaext_watch_slot *slot, uint8_t mask)
 		if (luaext_clock_read(&slot->clock, &now)) {
 			slot->cpu_base = now;
 			slot->open |= LUAEXT_WATCH_CPU;
+		} else {
+			/*
+			 * Fail closed. Leaving the segment shut and saying nothing would
+			 * silently un-enforce the CPU limit for the rest of the call -- see
+			 * cpu_open_failed. luaext_watch_sample() already treats a failed read
+			 * this way; this is the same rule applied on the way in.
+			 */
+			slot->cpu_open_failed = true;
 		}
 	}
 
@@ -1084,6 +1122,14 @@ void luaext_watchdog_disarm(luaext_watch_slot *slot)
 	 * billing, which is the only safe direction for a limit.
 	 */
 	slot->paused = 0;
+
+	/*
+	 * Cleared with the arming, not carried across calls. A clock that failed to
+	 * open once must not condemn every later call on the same sandbox -- the next
+	 * arm() reads the clock again and gets to decide for itself. Leaving it set
+	 * would turn one transient failure into a permanently unusable sandbox.
+	 */
+	slot->cpu_open_failed = false;
 
 	/*
 	 * The interrupt flag is NOT cleared here. It is sticky until the outermost

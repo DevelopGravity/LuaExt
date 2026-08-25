@@ -53,21 +53,21 @@ use DevelopGravity\LuaExt\SandboxConfig;
  */
 
 const CPU_SECONDS = 0.10;
-const WALL_BACKSTOP_SECONDS = 3.0;
+const WALL_BACKSTOP_SECONDS = 6.0;
 const BURN_SECONDS = 0.20;
 
 /*
- * How long any single burn may spend WAITING for CPU it is never going to get.
+ * How long a burn waits before concluding it is not being billed at all.
  *
- * A burn that is billed reaches its CPU target long before this. A burn that is
- * paused never advances at all -- while paused nothing is measured, which is the
- * whole point -- so without a wall-clock escape those rows would spin forever.
+ * A paused frame never advances the CPU counter -- while paused nothing is
+ * measured, which is the whole point -- so those burns have to give up on
+ * something. Giving up on a SHORT probe rather than on the full ceiling is what
+ * keeps four deliberately-paused rows from dominating the runtime of the file.
  *
- * It sits well below WALL_BACKSTOP_SECONDS so that a row running to this ceiling
- * is still an ordinary outcome rather than a backstop trip reported as the wrong
- * exception class.
+ * Long enough to survive a coarse clock: on Windows' ~15.6ms scheduler tick this
+ * is still six ticks, so a genuinely-billed frame cannot look idle here.
  */
-const BURN_CEILING_SECONDS = 0.5;
+const BURN_PROBE_SECONDS = 0.10;
 
 // Long enough that, under the reference's old "reconstruct what expired while
 // we were not looking" scheme, the pause outlasted the whole remaining budget.
@@ -77,6 +77,62 @@ const OVERRUN_SECONDS = 0.45;
 $sandbox = null;
 $pauseGranted = null;
 
+/*
+ * How much CPU this machine actually hands a busy loop per second of wall time.
+ *
+ * Measured rather than assumed, because it is the single number that decides
+ * whether a burn can finish. A hardcoded wall ceiling is a bet on runner speed:
+ * set it where a fast machine likes it and a contended one starves; set it where
+ * a slow machine likes it and every paused row pays for the slowest box in the
+ * matrix. The previous version of this file made that bet and lost it on
+ * macos-15-intel.
+ *
+ * getrusage() is used deliberately instead of the sandbox's own counter: no
+ * sandbox is armed yet at this point, and process CPU is the right question
+ * anyway. Where it is unavailable or nonsensical the fallback is pessimistic,
+ * since guessing high is the failure that makes rows starve.
+ */
+function measureCpuEfficiency(): float
+{
+	$cpu = static function (): ?float {
+		$usage = getrusage();
+
+		if (!is_array($usage) || !isset($usage['ru_utime.tv_sec'], $usage['ru_stime.tv_sec'])) {
+			return null;
+		}
+
+		return $usage['ru_utime.tv_sec'] + $usage['ru_utime.tv_usec'] / 1e6
+			+ $usage['ru_stime.tv_sec'] + $usage['ru_stime.tv_usec'] / 1e6;
+	};
+
+	$before = $cpu();
+	$start = microtime(true);
+
+	while (microtime(true) - $start < 0.05) {
+	}
+
+	$wall = microtime(true) - $start;
+	$after = $cpu();
+
+	if ($before === null || $after === null || $wall <= 0.0) {
+		return 0.25;
+	}
+
+	$efficiency = ($after - $before) / $wall;
+
+	// A ratio outside (0, 1] means the clock is not telling us anything usable.
+	return ($efficiency > 0.0 && $efficiency <= 1.0) ? $efficiency : 0.25;
+}
+
+/*
+ * Derived, not chosen. Floored so a pathological reading cannot produce a
+ * ceiling too short to ever finish, and capped so one wedged row fails inside
+ * the harness timeout instead of hanging it. Stays under WALL_BACKSTOP_SECONDS
+ * so a burn running long is an ordinary outcome, never a backstop trip reported
+ * as the wrong exception class.
+ */
+define('BURN_CEILING_SECONDS', min(BURN_SECONDS / max(measureCpuEfficiency(), 0.10) * 1.5, 2.0));
+
 function burn(float $seconds): void
 {
 	global $sandbox;
@@ -85,18 +141,39 @@ function burn(float $seconds): void
 	 * Spends CPU, and measures the spending with getCpuUsage() -- which is the
 	 * exact quantity the limit enforces -- rather than with a wall clock.
 	 *
-	 * A wall-clock loop looks equivalent and is not. On a contended CI runner a
+	 * A wall-clock loop looks equivalent and is not. On a contended runner a
 	 * thread can pass a 0.20s wall deadline having been descheduled for most of
 	 * it, spending far less than 0.20s of CPU, so a row that means "burn twice
 	 * the limit" quietly burns half of it and the budget never runs out. That is
 	 * not flakiness in the limit; it is the test failing to spend what it claims.
-	 * Billed CPU cannot drift from the limit this way because it IS the limit's
-	 * own counter.
+	 *
+	 * Three ways out, and the order matters:
+	 *   1. the CPU target is reached -- the only one that means the burn worked;
+	 *   2. the counter has not moved at all by the end of the probe, so this
+	 *      frame is paused and never will move;
+	 *   3. the ceiling, which is starvation and is reported by the caller.
 	 */
-	$target = $sandbox->getCpuUsage() + $seconds;
+	$start = $sandbox->getCpuUsage();
+	$target = $start + $seconds;
+	$probeUntil = microtime(true) + BURN_PROBE_SECONDS;
 	$ceiling = microtime(true) + BURN_CEILING_SECONDS;
 
-	while ($sandbox->getCpuUsage() < $target && microtime(true) < $ceiling) {
+	while (true) {
+		$spent = $sandbox->getCpuUsage();
+
+		if ($spent >= $target) {
+			return;
+		}
+
+		$now = microtime(true);
+
+		if ($now >= $ceiling) {
+			return;
+		}
+
+		if ($now >= $probeUntil && $spent <= $start) {
+			return;
+		}
 	}
 }
 
@@ -200,13 +277,25 @@ $script = <<<'LUA'
 		return php.cpu()
 	end
 
+	-- The same three exits as the PHP burn(), for the same reasons: reaching the
+	-- CPU target, discovering on a short probe that this frame is not billed at
+	-- all, or giving up at the ceiling. See burn() in the PHP half.
 	local function burn(seconds)
-		local target = clock() + seconds
+		local start = clock()
+		local target = start + seconds
+		local probe_until = php.now() + PROBE
 		local ceiling = php.now() + CEILING
 
-		-- The wall ceiling is the escape for a burn that is never billed at all;
-		-- see BURN_CEILING_SECONDS.
-		while clock() < target and php.now() < ceiling do end
+		while true do
+			local spent = clock()
+
+			if spent >= target then return end
+
+			local now = php.now()
+
+			if now >= ceiling then return end
+			if now >= probe_until and spent <= start then return end
+		end
 	end
 
 	function lua.expensive()
@@ -228,9 +317,10 @@ $script = <<<'LUA'
 	end
 LUA;
 
-// 'CEILING' first: neither token is a substring of the other today, but doing
-// the longer one first is the habit that stops this being a bug the day one is.
+// Longest token first. None of these is a substring of another today, but doing
+// it in this order is the habit that stops it being a bug the day one is.
 $script = str_replace('CEILING', (string) BURN_CEILING_SECONDS, $script);
+$script = str_replace('PROBE', (string) BURN_PROBE_SECONDS, $script);
 $script = str_replace('BURN', (string) BURN_SECONDS, $script);
 
 /* -------------------------------------------------------------------------
@@ -257,6 +347,7 @@ function row(string $label, string $path, string ...$args): void
 	(void) $sandbox->eval($script, '=matrix');
 
 	$outcome = 'no';
+	$before = $sandbox->getCpuUsage();
 
 	try {
 		(void) $sandbox->call($path, ...$args);
@@ -264,6 +355,25 @@ function row(string $label, string $path, string ...$args): void
 		$outcome = 'yes';
 	} catch (Throwable $error) {
 		$outcome = 'WRONG CLASS ' . $error::class;
+	}
+
+	/*
+	 * Separates the two ways a row can fail to trip, which otherwise print
+	 * identically and are the reason this file was previously undiagnosable from
+	 * its own diff:
+	 *
+	 *   no        the pause held and nothing was billed -- what the paused rows
+	 *             are asserting, and a pass for them
+	 *   no/short  CPU WAS billed but never reached the limit, i.e. the burn was
+	 *             starved by a slow or contended runner
+	 *
+	 * A row expecting `yes` that prints `no/short` is a test-environment problem.
+	 * One that prints plain `no` is an accounting bug -- billing genuinely
+	 * stopped. Worth the extra column: telling those apart previously cost an
+	 * artifact download and a guess.
+	 */
+	if ($outcome === 'no' && $sandbox->getCpuUsage() - $before >= CPU_SECONDS * 0.25) {
+		$outcome = 'no/short';
 	}
 
 	printf(
