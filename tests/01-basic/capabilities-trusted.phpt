@@ -38,7 +38,7 @@ var_dump($trusted->with(debugMutate: true)->debugMutate);
 
 ?>
 --EXPECT--
-array(8) {
+array(7) {
   [0]=>
   string(16) "compileAtRuntime"
   [1]=>
@@ -48,12 +48,10 @@ array(8) {
   [3]=>
   string(3) "vfs"
   [4]=>
-  string(8) "vfsWrite"
-  [5]=>
   string(15) "debugIntrospect"
-  [6]=>
+  [5]=>
   string(9) "gcControl"
-  [7]=>
+  [6]=>
   string(4) "warn"
 }
 bool(false)

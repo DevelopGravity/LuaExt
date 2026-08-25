@@ -151,8 +151,23 @@ typedef enum {
  */
 #define LUAEXT_CAPS_TRUSTED                                                                        \
 	(LUAEXT_CAPS_UNTRUSTED | LUAEXT_CAP_COMPILE_AT_RUNTIME | LUAEXT_CAP_DUMP_BYTECODE |            \
-	 LUAEXT_CAP_REQUIRE | LUAEXT_CAP_VFS | LUAEXT_CAP_VFS_WRITE | LUAEXT_CAP_DEBUG_INTROSPECT |    \
-	 LUAEXT_CAP_GC_CONTROL | LUAEXT_CAP_WARN)
+	 LUAEXT_CAP_REQUIRE | LUAEXT_CAP_VFS | LUAEXT_CAP_DEBUG_INTROSPECT | LUAEXT_CAP_GC_CONTROL |   \
+	 LUAEXT_CAP_WARN)
+
+/*
+ * LUAEXT_CAP_VFS_WRITE is deliberately NOT in the list above, and it used to be.
+ *
+ * Trusting a script to read the host's store is a different decision from
+ * trusting it to modify it, and a preset is the wrong place to make the second
+ * one: "trusted" describes the code's provenance, not whether this particular
+ * sandbox should be able to overwrite anything the backend exposes. Rolling
+ * write access into the preset meant every host that reached for trusted() got
+ * it without ever typing the word, which is the same shape as the LUAEXT_LIB_*
+ * confusions warned about below -- a capability satisfied as a side effect of a
+ * coarser one.
+ *
+ * A host that wants it asks for it: Capabilities::trusted()->with(vfsWrite: true).
+ */
 
 /*
  * Which standard libraries to open wholesale; mirrors Lua's own LUA_*LIBK bits.

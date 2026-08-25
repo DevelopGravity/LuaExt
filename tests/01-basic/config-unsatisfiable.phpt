@@ -91,6 +91,16 @@ var_dump($deterministic->seed, $deterministic->deterministic);
 // The vfs capability with nothing behind it.
 show(static fn () => new SandboxConfig(capabilities: new Capabilities(vfs: true)));
 
+// Write without read. vfsWrite widens vfs rather than standing alone, so this
+// describes a sandbox allowed to modify a store it may not open. Checked before
+// the backing-store rule, and separately from it: supplying a filesystem does
+// not make the combination coherent.
+show(static fn () => new SandboxConfig(capabilities: new Capabilities(vfsWrite: true)));
+show(static fn () => new SandboxConfig(
+	capabilities: new Capabilities(vfsWrite: true),
+	filesystem: new NullFileSystem(),
+));
+
 // Capabilities::trusted() enables vfs, so it needs a filesystem too. Supplying
 // one is all it takes.
 show(static fn () => new SandboxConfig(capabilities: Capabilities::trusted()));
@@ -140,14 +150,18 @@ A fixed SandboxConfig::$seed pins Lua's string hash seed, which forfeits the has
 
 int(42)
 bool(true)
-The vfs capability needs a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn the capability off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
+The vfs and vfsWrite capabilities need a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn them off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
 
-The vfs capability needs a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn the capability off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
+The vfsWrite capability widens vfs rather than replacing it, so it cannot be granted on its own: this configuration asks for a sandbox that may modify a filesystem it may not read. Pass $capabilities->with(vfs: true, vfsWrite: true) for read and write, or drop vfsWrite for read-only access.
+
+The vfsWrite capability widens vfs rather than replacing it, so it cannot be granted on its own: this configuration asks for a sandbox that may modify a filesystem it may not read. Pass $capabilities->with(vfs: true, vfsWrite: true) for read and write, or drop vfsWrite for read-only access.
+
+The vfs and vfsWrite capabilities need a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn them off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
 
 bool(true)
 bool(true)
 --- reached through with() ---
-The vfs capability needs a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn the capability off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
+The vfs and vfsWrite capabilities need a backing store, but SandboxConfig::$filesystem is null. Pass an object implementing DevelopGravity\LuaExt\FileSystem, or turn them off with $capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.
 
 A fixed SandboxConfig::$seed pins Lua's string hash seed, which forfeits the hash-flooding protection a random seed provides, so it has to be asked for explicitly: pass deterministic: true alongside it if this sandbox runs code you trust, or leave $seed null to draw one from the system CSPRNG.
 

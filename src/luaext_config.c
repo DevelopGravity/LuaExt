@@ -540,6 +540,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 {
 	bool debug_hooks = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "debugHooks");
 	bool vfs = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "vfs");
+	bool vfs_write = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "vfsWrite");
 	bool has_cpu_limit;
 	bool has_wall_limit;
 
@@ -601,13 +602,37 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	 * nothing behind it, and every call a script made would fail at runtime for
 	 * a reason the host could have known at construction.
 	 */
-	if (vfs && filesystem == NULL) {
+	/*
+	 * Write is an aspect of filesystem access, not a capability that stands on
+	 * its own: vfsWrite widens what vfs may do, so granting it alone describes a
+	 * sandbox that can modify a store it cannot open. Refused rather than quietly
+	 * turning vfs on, because a host that gets back more access than it asked for
+	 * has been surprised in the dangerous direction -- and this file's whole habit
+	 * is to reject what it cannot satisfy at the point it is configured.
+	 */
+	if (vfs_write && !vfs) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
-			"The vfs capability needs a backing store, but SandboxConfig::$filesystem is "
-			"null. Pass an object implementing DevelopGravity\\LuaExt\\FileSystem, or turn "
-			"the capability off with $capabilities->with(vfs: false, vfsWrite: false). "
-			"Capabilities::trusted() enables vfs, so a trusted sandbox has to supply one too.",
+			"The vfsWrite capability widens vfs rather than replacing it, so it cannot be "
+			"granted on its own: this configuration asks for a sandbox that may modify a "
+			"filesystem it may not read. Pass $capabilities->with(vfs: true, vfsWrite: true) "
+			"for read and write, or drop vfsWrite for read-only access.",
+			0);
+		return false;
+	}
+
+	/*
+	 * Both VFS toggles name access to the host's store, so neither is satisfiable
+	 * without one.
+	 */
+	if ((vfs || vfs_write) && filesystem == NULL) {
+		zend_throw_exception(
+			luaext_ce_configuration_error,
+			"The vfs and vfsWrite capabilities need a backing store, but "
+			"SandboxConfig::$filesystem is null. Pass an object implementing "
+			"DevelopGravity\\LuaExt\\FileSystem, or turn them off with "
+			"$capabilities->with(vfs: false, vfsWrite: false). Capabilities::trusted() "
+			"enables vfs, so a trusted sandbox has to supply one too.",
 			0);
 		return false;
 	}

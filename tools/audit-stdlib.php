@@ -250,8 +250,21 @@ function buildPresets(): array
     foreach (capabilityFlags() as $flag) {
         $enabled = $untrusted->$flag;
         $sign = $enabled ? '-' : '+';
+        $overrides = [$flag => !$enabled];
 
-        $presets["untrusted{$sign}{$flag}"] = $untrusted->with(...[$flag => !$enabled]);
+        /*
+         * vfsWrite widens vfs rather than standing alone, so luaext_config_check
+         * refuses it on its own. A one-flag delta would therefore throw -- and a
+         * preset that throws contributes no names, which is the under-reporting
+         * failure described at measurePreset(): every member reachable only with
+         * write access would drop into withheld.txt as though nothing could reach
+         * it. Granting the pair keeps this delta measuring something real.
+         */
+        if ($flag === 'vfsWrite' && !$enabled) {
+            $overrides['vfs'] = true;
+        }
+
+        $presets["untrusted{$sign}{$flag}"] = $untrusted->with(...$overrides);
     }
 
     return $presets;
