@@ -2,7 +2,11 @@
 
 This is the reference for what a Lua script actually sees inside a `Sandbox` — which standard library members exist, which are LuaExt's own replacements and why, which upstream members are simply absent, how `io`/`os` map onto the host-controlled virtual filesystem, `require()` semantics, and coroutine behavior.
 
-> **Status: pre-1.0, no working build yet.** This describes the target stdlib policy. Library exposure is assembled by LuaExt's own `luaext_openlibs.c` — nothing unwanted is ever linked into the binary in the first place, there is no post-hoc scrubbing of a fully-open Lua state — but only the build skeleton exists today, so none of the filtering, replacements, or interrupt patches described below are working, tested code yet. One fact here is verified rather than assumed: `os`, `io`, and `package` are structurally impossible to reintroduce because the C source files that implement them were never compiled in — see [Absent entirely](#absent-entirely). A committed golden-file audit (`tools/audit-stdlib.php`) is intended to catch any accidental new surface in a future Lua point release, but that tooling is not built yet either.
+> **Status: pre-1.0, no tagged release.** The stdlib policy described here is **implemented and tested**: library exposure is assembled by LuaExt's own `luaext_openlibs.c`, which copies approved members out of a scratch table rather than scrubbing a fully-open Lua state, and `tools/audit-stdlib.php` enforces the resulting surface against committed golden files on every push.
+>
+> Three sections below describe subsystems that **do not exist yet** and are marked individually: [io/os emulation](#ioos-emulation) (the VFS half), [`require()` semantics](#require-semantics), and [Coroutines](#coroutines). A sandbox today has no `io`, no `package`, no `require`, and no `coroutine`.
+>
+> For the exact surface a default sandbox exposes, run `tools/audit-stdlib.php` — the golden files it checks are the authoritative answer, and this page is prose written to match them.
 
 Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two presets are referenced throughout: **Untrusted** (`new Capabilities()`, the default) and **Trusted** (`Capabilities::trusted()`). See [SECURITY.md](../SECURITY.md) for the full trust model and the reasoning behind each restriction.
 
@@ -11,12 +15,13 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 | Library | Untrusted | Trusted |
 |---|---|---|
 | `base` (globals) | Filtered, with replacements — see below | Adds `load` (text-only; `mode = "b"` additionally requires the `loadBytecode` capability, which stays off even here) |
-| `coroutine` | LuaExt's own wrapper around upstream | Same wrapper |
+| `coroutine` | **Absent** today; will be LuaExt's own wrapper around upstream | Same |
 | `string` | Open; `string.dump` removed; `string.format("%p")` rejected | `string.dump` restored behind the `dumpBytecode` capability |
 | `table` | **All members**, including `table.move` and `table.create` (their loops are patched to be interruptible) | Same |
 | `math` | Open; `math.randomseed` replaced | Same |
 | `utf8` | Open, with an interruptible scan | Same |
-| `io`, `os`, `package` | Upstream versions **never linked into the binary** — replaced entirely, see [io/os emulation](#ioos-emulation) below | Same replacement, not the upstream library |
+| `os` | LuaExt's own, **not** upstream's: `clock`, `date`, `difftime`, `time` under `osTime`; `getenv` under `osEnv` + allowlist | Same |
+| `io`, `package` | Upstream versions **never linked into the binary**. Their LuaExt replacements are not built yet, so both names are simply **absent** — see [io/os emulation](#ioos-emulation) | Same |
 | `debug` | `debug.traceback` only | Adds `debug.getinfo`/`getlocal`/`getupvalue` behind `debugIntrospect`; `debug.sethook` only via the separate `debugHooks` capability (mutually exclusive with a CPU limit — see SECURITY.md) |
 
 ## Replaced members, and why
@@ -24,9 +29,9 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 - **`tostring`** no longer falls through to `lua_topointer` for tables/functions/userdata — printing a value never leaks its heap address.
 - **`print`** writes to the sandbox's configured output sink (`OutputMode::Buffer`/`Callback`/`Discard`) instead of a process-wide stream; there is no stdout to write to inside the sandbox at all.
 - **`pcall` / `xpcall`** catch `RuntimeError`-family (catchable) errors exactly like upstream, but re-raise `FatalError`-family errors (a CPU/wall-clock/memory/output limit trip, a host abort, a coroutine limit, …) instead of returning `false, err`. For `xpcall`, the message handler is not invoked at all when the underlying error is fatal — a script cannot inspect, log, or otherwise interact with a fatal error from inside its own handler.
-- **`collectgarbage`** is restricted to the read/step-only verbs (`count`, `step`, `isrunning`) for untrusted scripts; the tuning verbs are withheld because a script could otherwise defeat the sandbox's own allocator-level GC-pressure tuning. `gcControl` (granted under `Trusted`) restores the tuning verbs.
+- **`collectgarbage`** is restricted to `count`, `step`, `isrunning` and `collect` for untrusted scripts — `collect` is included deliberately, since collecting *more* is the safe direction; the tuning verbs are withheld because a script could otherwise defeat the sandbox's own allocator-level GC-pressure tuning. `gcControl` (granted under `Trusted`) restores the tuning verbs.
 - **`math.randomseed()`** no longer returns anything. Upstream Lua 5.4+ returns the seed components it derived, which are partly address-based — an information leak useful for defeating ASLR. LuaExt's replacement is `void`, takes only integer input, and when called with no arguments seeds from the sandbox's configured seed source (a CSPRNG unless the host explicitly opted into a fixed, deterministic seed).
-- **`os.clock()`** (part of the `io`/`os` emulation, not upstream `os`) is sandbox-local rather than process-wide, and its resolution is intentionally rounded to roughly 20 microseconds to avoid becoming a high-resolution timing side channel.
+- **`os.clock()`** (LuaExt's own `os`, not upstream's) is sandbox-local rather than process-wide, and its resolution is intentionally rounded to roughly 20 microseconds to avoid becoming a high-resolution timing side channel.
 - **`warn`** (Lua 5.4+'s warning system) is gated behind the `warn` capability and, when enabled, routes to the same output sink rather than the process's stderr; `lua_setwarnf` is always installed by the extension so that nothing from an unconfigured warning system reaches the host process's stderr by default.
 - **`lua_newstate`**'s hash-seed is supplied explicitly from the extension's own CSPRNG (or a host-provided fixed seed under `deterministic: true`) rather than Lua's own `luaL_makeseed`, which has the same address-derived-entropy property being avoided elsewhere.
 
@@ -34,12 +39,16 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 
 These are not filtered or wrapped — they simply do not exist in a LuaExt sandbox, because the source files that implement them (`liolib.c`, `loslib.c`, `loadlib.c`, `linit.c`, `lua.c`, `luac.c`) are excluded from the build entirely. This is verified, not assumed: the linked binary carries zero references to `system()`, `tmpnam()`, `popen()`, or `setlocale()` — the code that could call them was never compiled in.
 
-- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. What a script sees under those names is LuaExt's own VFS-backed emulation (`io`) and replacement library (`os`, `package`) — see below — not a restricted view of the real thing.
+- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. `os` is present but is LuaExt's own hand-written table, not a restricted view of upstream's; `io` and `package` have no LuaExt replacement built yet and are absent entirely.
 - **`load`**, **`loadfile`**, **`dofile`** for untrusted scripts. `load` returns under `Trusted` (text mode only, per the table above); `loadfile`/`dofile` are not reintroduced under any preset — module loading goes through `require()` instead (see below).
 - **`string.dump`** for untrusted scripts (returns under `Trusted` behind `dumpBytecode`).
 - **`string.format("%p")`** — rejected as an error at every trust level; it cannot be selectively filtered the way a whole library member can, since the format string itself is otherwise a normal, needed feature.
 
 ## io/os emulation
+
+> **The `io` half of this section is not implemented.** There is no `io` table at any trust level today, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about `io`, paths, quotas and the `package` replacement is the design the next wave builds to.
+>
+> The **`os`** half *is* implemented, with one difference from the description below: LuaExt's `os` is hand-written and has no file operations at all, so `os.remove` and `os.rename` do not exist rather than routing through the VFS.
 
 With the `vfs` capability granted, a script sees a conventional-looking `io` table — `io.open`, file-handle `:read`/`:write`/`:seek`, `io.lines` — but every operation is routed through a C layer (path canonicalization, handle bookkeeping, quota enforcement) to a PHP `FileSystem` implementation the host supplies. Without the `vfs` capability, there is no `io` table at all — not an `io` table whose calls fail, the global simply isn't present.
 
@@ -50,6 +59,8 @@ With the `vfs` capability granted, a script sees a conventional-looking `io` tab
 - **`package` replacement**: exposes only `package.loaded` and `package.preload` (both writable the way upstream's are) and a read-only `package.path`. There is no `package.cpath`, `package.searchers`, or `package.loadlib` — nothing in this table can reach outside the sandbox.
 
 ## `require()` semantics
+
+> **Not implemented.** `require` is absent from every sandbox regardless of capability, and `Sandbox::preloadModule()` throws `Error: ... is not implemented`. Granting the `require` capability is currently accepted without effect. The rest of this section is the specification the next wave builds to.
 
 `require()` only exists at all when the `require` capability is granted (off by default in both presets — `Trusted` turns it on). When available, resolution for a module name matching `[A-Za-z0-9_.-]+` (128 characters max, no `..` segments) proceeds in order:
 
@@ -65,6 +76,8 @@ Resolved source compiles via `luaL_loadbufferx` in text mode (`"t"`) unless the 
 Pure-Lua third-party libraries — including pure-Lua LuaRocks packages such as `dkjson`, `penlight`, or `inspect` — work by vendoring their source into the VFS (or a `ModuleResolver`) and letting `require()` find them there; they execute fully inside the sandbox, under the same CPU/memory/coroutine limits as the rest of the script. Binary (C) LuaRocks cannot be loaded under any configuration — see [SECURITY.md](../SECURITY.md#what-this-does-not-defend-against) for why that's an architectural property, not a missing feature.
 
 ## Coroutines
+
+> **Not implemented.** `coroutine` is absent from every sandbox. The `coroutines` capability defaults to `true` and is accepted, but nothing is installed — unlike `vfs`/`require`, it cannot be refused at construction precisely *because* it defaults on. Upstream's `lcorolib.c` **is** compiled into the binary; what is missing is the wrapper that makes resumption safe to interrupt, which is why the library is withheld rather than exposed raw. Two tests in `tests/03-adversarial/` and `tests/09-conversion/` are marked XFAIL against exactly this. The rest of this section is the specification the next wave builds to.
 
 Coroutines are available by default (`coroutines` capability defaults to `true` even in the Untrusted preset) through LuaExt's own `coroutine` table — a thin wrapper around upstream's `create`/`resume`/`yield`/`status`/`running`/`isyieldable`/`wrap`, not a restricted subset of it.
 

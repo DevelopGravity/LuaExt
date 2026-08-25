@@ -1,14 +1,17 @@
 # LuaExt
 
-[![CI](https://img.shields.io/badge/CI-not_yet_configured-lightgrey)](#) <!-- TODO: point at .github/workflows/ci.yml once it reports status -->
+[![CI](https://github.com/DevelopGravity/LuaExt/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/DevelopGravity/LuaExt/actions/workflows/ci.yml)
+[![Lint](https://github.com/DevelopGravity/LuaExt/actions/workflows/lint.yml/badge.svg?branch=develop)](https://github.com/DevelopGravity/LuaExt/actions/workflows/lint.yml)
 [![Packagist](https://img.shields.io/badge/packagist-not_yet_published-lightgrey)](#) <!-- TODO: point at the Packagist page once developgravity/lua-ext is published -->
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run **untrusted, user-supplied Lua code** safely: portable CPU/wall-clock/memory limits, capability-based trust configuration, coroutines strictly scoped to a single call, a virtual filesystem the host implements in PHP, and host-controlled `require()`.
+A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run **untrusted, user-supplied Lua code** safely: portable CPU/wall-clock/memory limits enforced inside the interpreter itself, and capability-based trust configuration.
 
 Package: `developgravity/lua-ext` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
-> **Status: pre-1.0, no working build yet.** This repository does not have a tagged release, and only the build skeleton exists — no sandboxing behavior has been implemented or tested. The API surface below (classes, methods, parameters, defaults) is pinned and machine-validated against `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php`, the same files that generate the extension's C arginfo, so it will not drift further. What isn't yet true is the runtime: treat every code sample as accurate against that API, not as tested against a working binary.
+> **Status: pre-1.0, no tagged release.** The sandbox runs and its limits are enforced — 98 tests cover compilation, the PHP↔Lua boundary, CPU, wall-clock, memory and output budgets, the capability-gated standard library, and the adversarial cases where a script tries to catch its own limit breach. What is **not** built yet: **coroutines**, the **virtual filesystem**, host-controlled **`require()`**, and the **profiler**. Those four are the next wave; the API for them is pinned in the stubs and described below, but calling it will not work today. Everything else in this README is written against a binary the test suite actually runs.
+>
+> Enforcement is verified on Linux and macOS (x64 and arm64, NTS and ZTS). The **Windows** build is not green yet and is deliberately non-gating in CI — see [Requirements](#requirements).
 
 ## Why this exists
 
@@ -16,15 +19,15 @@ MediaWiki's `luasandbox` extension has three problems that this project exists t
 
 1. **Its CPU limit is a no-op outside Linux.** `setCPULimit()` is built on Linux-only POSIX timers. On macOS and Windows it silently compiles to a stub — the call succeeds, the limit is simply never enforced, and nothing tells you that. LuaExt's `Sandbox::features()` reports the real, per-platform enforcement level (`LimitSupport::Enforced` / `Degraded` / `Unsupported`) so a host can never be silently unprotected.
 2. **It targets an old Lua.** `luasandbox` targets Lua 5.1; 5.4 support only just landed on its master branch, unreleased. LuaExt vendors and patches **Lua 5.5.1** directly — never the system `liblua` — so the sandboxing hooks live in the interpreter's hot loops instead of being bolted on from outside.
-3. **It has no filesystem concept and no coroutines.** `luasandbox` removed coroutines entirely because its timeout hook couldn't span them. LuaExt exposes coroutines by default, capped and strictly scoped to the call that created them, and adds a host-implemented virtual filesystem (`FileSystem` interface) so scripts can do `io`-style work against storage the host controls.
+3. **It has no filesystem concept and no coroutines.** `luasandbox` removed coroutines entirely because its timeout hook couldn't span them. LuaExt will expose coroutines by default, capped and strictly scoped to the call that created them, and add a host-implemented virtual filesystem (`FileSystem` interface) so scripts can do `io`-style work against storage the host controls. *Both are designed and specified but not yet implemented* — today `coroutine` is absent from a sandbox, as is any filesystem surface.
 
 This is a from-scratch rewrite, not a fork. There is no LuaSandbox compatibility shim — see [Migrating from LuaSandbox](#migrating-from-luasandbox) below for the mechanical rename most call sites need.
 
 ## Requirements
 
 - PHP **8.5** or later (NTS and ZTS both supported, including FrankenPHP workers).
-- Linux (x64, arm64) or macOS (x64, arm64): a C compiler toolchain to build from source. No system Lua is used or required.
-- Windows x64: no toolchain needed — installs a prebuilt DLL. Windows on Arm runs the x64 build under emulation for v1; native arm64 is a fast-follow pending upstream `php-windows-builder` support.
+- Linux (x64, arm64) or macOS (x64, arm64): a C compiler toolchain to build from source. No system Lua is used or required. **These are the platforms the test suite runs on**, across NTS/ZTS and debug/release.
+- Windows x64: **not working yet.** The design needs no toolchain on Windows — it is meant to install a prebuilt DLL — but that build does not currently compile, and its CI job is deliberately non-gating because prebuilt DLLs only matter at release time and nothing is released. Windows on Arm is intended to run the x64 build under emulation for v1, with native arm64 a fast-follow pending upstream `php-windows-builder` support.
 
 ## Install
 
@@ -34,8 +37,10 @@ Via [PIE](https://github.com/php/pie):
 pie install developgravity/lua-ext
 ```
 
-- **Linux / macOS**: PIE builds from source (`phpize && configure && make`) against the vendored Lua tree — nothing is downloaded or compiled outside this repository's `third_party/` sources.
-- **Windows**: PIE fetches a prebuilt `php_luaext-{tag}-{php}-{ts|nts}-{vs}-x64.zip` from this repository's GitHub Releases instead of compiling. There is no Windows build toolchain requirement.
+There is no tagged release yet, so that command has nothing to resolve; today the extension is built from a checkout (`phpize && ./configure && make`).
+
+- **Linux / macOS**: PIE builds from source (`phpize && configure && make`) against the vendored Lua tree — nothing is downloaded or compiled outside this repository's `third_party/` sources. CI exercises this path on every push.
+- **Windows**: PIE is intended to fetch a prebuilt `php_luaext-{tag}-{php}-{ts|nts}-{vs}-x64.zip` from this repository's GitHub Releases instead of compiling, with no Windows toolchain requirement. See [Requirements](#requirements) — that build is not green yet, so no such archive exists.
 
 For IDE autocomplete and static analysis without loading the extension, add the stub package as a dev dependency once published:
 
@@ -103,9 +108,9 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `loadBytecode` | `false` | `false` | Stays off even when trusted — see [SECURITY.md](SECURITY.md). Must be opted into explicitly with `with()`. |
 | `compileAtRuntime` (Lua-visible `load()`) | `false` | `true` | |
 | `dumpBytecode` | `false` | `true` | |
-| `require` | `false` | `true` | |
-| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. |
-| `coroutines` | `true` | `true` | On by default in both presets; strictly call-scoped regardless. |
+| `require` | `false` | `true` | **Not implemented yet** — see the note below the table. |
+| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. **Not implemented yet** — see below. |
+| `coroutines` | `true` | `true` | Will be on by default in both presets and strictly call-scoped. **Not implemented yet** — see below. |
 | `osTime` | `true` | `true` | |
 | `osEnv` (+ allowlist) | `false` | `false` | |
 | `debugTraceback` | `true` | `true` | |
@@ -115,6 +120,10 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `utf8` | `true` | `true` | |
 | `gcControl` | `false` | `true` | |
 | `warn` | `false` | `true` | |
+
+> **Four of these flags currently gate nothing**, because the subsystems behind them are the next wave. Granting `require`, `vfsWrite`, or `coroutines` is **accepted silently** and changes nothing — `require`, `coroutine`, `io` and `package` are all absent from the sandbox either way. `vfs` is the one exception, and only incidentally: it is refused because it also requires a `FileSystem` instance that does not exist yet, not because the capability is unimplemented. Treat all four as reserved until the wave lands; do not read acceptance as support.
+>
+> Every other flag in the table gates real behaviour today and is covered by tests.
 
 `Limits` (defaults shown) caps resource use independent of trust level:
 
@@ -133,7 +142,7 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `maxSourceBytes` | 1 MiB |
 | `maxConversionDepth` | 64 |
 
-Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend.
+Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend. `VfsQuota` constructs and validates today, but nothing consumes it yet.
 
 ## Feature support by platform
 
@@ -145,6 +154,8 @@ CPU-limit enforcement is portable in the sense that it never silently does nothi
 | macOS | x64, arm64 | build from source | `thread_info(THREAD_EXTENDED_INFO)` | ~microseconds | `Enforced` |
 | Windows | x64 | prebuilt DLL | `GetThreadTimes` | **~15.6 ms** (scheduler tick) | `Degraded` |
 | Windows | arm64 (WoA) | x64 DLL under emulation | `GetThreadTimes` | ~15.6 ms | `Degraded` |
+
+The Linux and macOS rows are measured — CI asserts them on every push. **The two Windows rows are design intent, not observation**: that build does not compile yet, so its clock backend has never executed and `Degraded` is a prediction from `GetThreadTimes`' documented granularity.
 
 On Windows, that ~15.6ms scheduler-tick resolution means short CPU limits can't be measured precisely. When `cpuSeconds` is set below roughly `4 × cpuResolutionSeconds`, the sandbox automatically arms a companion wall-clock deadline (`max(wallClockSeconds, cpuSeconds × 4 + 50ms)`) and reports `LimitSupport::Degraded`. A spinning script always dies on every platform; only timing *precision* degrades on Windows. Call `Sandbox::features()` at runtime rather than assuming a platform's behavior — it returns `cpuLimit`, `wallClockLimit`, `cpuResolutionSeconds`, `threadSafe`, and `platform`.
 
@@ -167,18 +178,18 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | *(none)* | `->setWallClockLimit($seconds)` | New: an independent wall-clock ceiling, also the Windows CPU-limit backstop. |
 | *(none)* | `->getWallClockUsage()`, or `->stats()->wallClockSeconds` | New: pairs with `setWallClockLimit()`. |
 | `->pauseUsageTimer()` / `->unpauseUsageTimer()` | `->pauseTimers()` / `->resumeTimers()` | Renamed; same segment-accumulator semantics (only the outermost Lua entry arms/disarms). |
-| `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged. |
+| `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged names. **Not implemented yet** — calling either throws `Error: ... is not implemented` rather than silently profiling nothing. Same for `->getProfile()`. |
 | `->getProfilerFunctionReport($units)` with `LuaSandbox::SAMPLES/SECONDS/PERCENT` | `->getProfile(ProfilerUnit $unit = ProfilerUnit::Seconds): array` | Unit constants become the `ProfilerUnit` enum (`Samples`, `Seconds`, `Percent`); default unit is `Seconds`. |
 | `->callFunction($name, ...$args)` | `->call($path, ...$args): array` | Both `call()` and `eval()` return `list<mixed>` and are `#[\NoDiscard]` — cast to `(void)` if you intentionally ignore the result. |
 | `->wrapPhpFunction($callable)` | `->wrapCallable($callable, ?string $name = null): LuaFunction` | Renamed; optional `$name` labels the callable in tracebacks and `debug.getinfo()`. |
 | `->registerLibrary($name, $functions)` | `->registerLibrary($name, $functions)` | Unchanged shape. |
 | *(none)* | `->registerObject($name, $instance, ?array $methods = null)` | New: expose an existing object's methods via an allowlist or `#[LuaMethod]`. |
-| *(none)* | `->preloadModule(...)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. |
+| *(none)* | `->preloadModule(...)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. `interrupt()` and `close()` work today; `preloadModule()` throws `Error: ... is not implemented` until the `require()` wave lands. |
 | `LuaSandboxFunction::call(...)` | `LuaFunction::call(...)` / `LuaFunction::__invoke(...)` | Same "array of all return values" convention. |
 | `LuaSandboxFunction::dump()` | `LuaFunction::dump($strip)` | Now gated behind the `dumpBytecode` capability. |
 | Host-side error → `false` return + `E_WARNING` | Host-side error → typed exception | E.g. calling an undefined global now throws rather than returning `false`. |
 | `LuaSandboxError` / `...RuntimeError` / `...FatalError` / `...SyntaxError` / `...MemoryError` / `...ErrorError` / `...TimeoutError` | `LuaThrowable` interface, implemented by everything the extension throws; abstract `LuaException` → `RuntimeError` (catchable, plus subclasses `VfsError` and `ModuleNotFoundError`) and abstract `FatalError` (uncatchable) → `SyntaxError`, `MemoryLimitError`, `CpuLimitError`, `WallClockLimitError`, `OutputLimitError`, `CoroutineLimitError`, `HostAbortError`, `ErrorHandlerError`, `PanicError`, `ConversionError` | Roughly 1:1: `SyntaxError`←`...SyntaxError`, `MemoryLimitError`←`...MemoryError`, `ErrorHandlerError`←`...ErrorError`, `CpuLimitError`←`...TimeoutError`, plus new `WallClockLimitError` and others with no old equivalent. Host-misuse conditions (`ConfigurationError`, `CapabilityError`, `ClosedSandboxError`, `ThreadAffinityError`) extend a new abstract `LuaLogicException` (a `\LogicException`), not part of the old hierarchy at all. `LuaThrowable` also carries `getLuaTrace()`, `getLuaTraceAsString()`, `getSandbox()`, `getChunkName()`, and `getLuaLine()` — deliberately not `getLine()`, since PHP's `Exception::getLine()` is `final` and reports the PHP call site, not the Lua one. |
-| *(coroutines removed entirely)* | Coroutines on by default, capped, strictly scoped to the call that created them | See [docs/lua-api.md](docs/lua-api.md#coroutines). |
+| *(coroutines removed entirely)* | Coroutines on by default, capped, strictly scoped to the call that created them | **Not implemented yet** — `coroutine` is currently absent here too, so this is not a migration difference today. See [docs/lua-api.md](docs/lua-api.md#coroutines). |
 
 ## Documentation
 
