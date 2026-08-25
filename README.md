@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DevelopGravity/LuaExt/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/DevelopGravity/LuaExt/actions/workflows/ci.yml)
 [![Lint](https://github.com/DevelopGravity/LuaExt/actions/workflows/lint.yml/badge.svg?branch=develop)](https://github.com/DevelopGravity/LuaExt/actions/workflows/lint.yml)
-[![Packagist](https://img.shields.io/badge/packagist-not_yet_published-lightgrey)](#) <!-- TODO: point at the Packagist page once developgravity/lua-ext is published -->
+[![Packagist](https://img.shields.io/packagist/v/developgravity/lua-ext?include_prereleases&label=packagist)](https://packagist.org/packages/developgravity/lua-ext)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run **untrusted, user-supplied Lua code** safely: portable CPU/wall-clock/memory limits enforced inside the interpreter itself, and capability-based trust configuration.
@@ -34,10 +34,10 @@ This is a from-scratch rewrite, not a fork. There is no LuaSandbox compatibility
 Via [PIE](https://github.com/php/pie):
 
 ```bash
-pie install developgravity/lua-ext
+pie install developgravity/lua-ext:dev-develop
 ```
 
-There is no tagged release yet, so that command has nothing to resolve; today the extension is built from a checkout (`phpize && ./configure && make`).
+**The version is not optional yet.** The package is on Packagist but has no tagged release, so `dev-develop` is the only version that resolves — and it tracks the branch tip, meaning you get whatever landed most recently rather than a fixed artifact. Pin a commit (`dev-develop#<sha>`) if you need reproducibility before the first tag. Building from a checkout (`phpize && ./configure && make`) works too and is what CI exercises.
 
 - **Linux / macOS**: PIE builds from source (`phpize && configure && make`) against the vendored Lua tree — nothing is downloaded or compiled outside this repository's `third_party/` sources. CI exercises this path on every push.
 - **Windows**: PIE is intended to fetch a prebuilt `php_luaext-{tag}-{php}-{ts|nts}-{vs}-x64.zip` from this repository's GitHub Releases instead of compiling, with no Windows toolchain requirement. See [Requirements](#requirements) — that build is not green yet, so no such archive exists.
@@ -109,7 +109,7 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `compileAtRuntime` (Lua-visible `load()`) | `false` | `true` | |
 | `dumpBytecode` | `false` | `true` | |
 | `require` | `false` | `true` | **Not implemented yet** — see the note below the table. |
-| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. **Not implemented yet** — see below. |
+| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. Both need a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — it widens read access rather than replacing it. **Not implemented yet** — see below. |
 | `coroutines` | `true` | `true` | Will be on by default in both presets and strictly call-scoped. **Not implemented yet** — see below. |
 | `osTime` | `true` | `true` | |
 | `osEnv` (+ allowlist) | `false` | `false` | |
@@ -121,7 +121,13 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `gcControl` | `false` | `true` | |
 | `warn` | `false` | `true` | |
 
-> **Four of these flags currently gate nothing**, because the subsystems behind them are the next wave. Granting `require`, `vfsWrite`, or `coroutines` is **accepted silently** and changes nothing — `require`, `coroutine`, `io` and `package` are all absent from the sandbox either way. `vfs` is the one exception, and only incidentally: it is refused because it also requires a `FileSystem` instance that does not exist yet, not because the capability is unimplemented. Treat all four as reserved until the wave lands; do not read acceptance as support.
+> **Four of these flags currently gate nothing**, because the subsystems behind them are the next wave: `require`, `vfs`, `vfsWrite` and `coroutines`. Do not read acceptance as support — ask instead:
+>
+> ```php
+> Sandbox::features()['capabilities']['coroutines']; // false in this build
+> ```
+>
+> That map covers every boolean capability and reports whether *this build implements it*, which is a different question from whether a `Capabilities` object will accept it. `vfs` and `vfsWrite` are refused at construction, but only because they need a `FileSystem` — that is a permanent rule, not a stand-in for "unimplemented". `require` and `coroutines` are accepted and simply do nothing, and `coroutines` cannot be refused at all because it defaults to `true`.
 >
 > Every other flag in the table gates real behaviour today and is covered by tests.
 
@@ -151,13 +157,13 @@ CPU-limit enforcement is portable in the sense that it never silently does nothi
 | Platform | Arch | Install | CPU clock source | Typical resolution | `features()->cpuLimit` |
 |---|---|---|---|---|---|
 | Linux | x64, arm64 | build from source | `pthread_getcpuclockid` + `clock_gettime` | ~nanoseconds | `Enforced` |
-| macOS | x64, arm64 | build from source | `thread_info(THREAD_EXTENDED_INFO)` | ~microseconds | `Enforced` |
+| macOS | x64, arm64 | build from source | `thread_info(THREAD_BASIC_INFO)` | ~microseconds | `Enforced` |
 | Windows | x64 | prebuilt DLL | `GetThreadTimes` | **~15.6 ms** (scheduler tick) | `Degraded` |
 | Windows | arm64 (WoA) | x64 DLL under emulation | `GetThreadTimes` | ~15.6 ms | `Degraded` |
 
 The Linux and macOS rows are measured — CI asserts them on every push. **The two Windows rows are design intent, not observation**: that build does not compile yet, so its clock backend has never executed and `Degraded` is a prediction from `GetThreadTimes`' documented granularity.
 
-On Windows, that ~15.6ms scheduler-tick resolution means short CPU limits can't be measured precisely. When `cpuSeconds` is set below roughly `4 × cpuResolutionSeconds`, the sandbox automatically arms a companion wall-clock deadline (`max(wallClockSeconds, cpuSeconds × 4 + 50ms)`) and reports `LimitSupport::Degraded`. A spinning script always dies on every platform; only timing *precision* degrades on Windows. Call `Sandbox::features()` at runtime rather than assuming a platform's behavior — it returns `cpuLimit`, `wallClockLimit`, `cpuResolutionSeconds`, `threadSafe`, and `platform`.
+On Windows, that ~15.6ms scheduler-tick resolution means short CPU limits can't be measured precisely. When `cpuSeconds` is set below roughly `4 × cpuResolutionSeconds`, the sandbox automatically arms a companion wall-clock deadline (`max(wallClockSeconds, cpuSeconds × 4 + 50ms)`) and reports `LimitSupport::Degraded`. A spinning script always dies on every platform; only timing *precision* degrades on Windows. Call `Sandbox::features()` at runtime rather than assuming a platform's behavior — it returns `cpuLimit`, `wallClockLimit`, `cpuResolutionSeconds`, `threadSafe`, `platform`, and `capabilities`.
 
 Native Windows arm64 (rather than x64-under-emulation) and further calibration work (e.g. `QueryThreadCycleTime`) are open items, not committed features — see the project plan's risk list.
 

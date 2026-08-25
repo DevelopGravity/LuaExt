@@ -46,7 +46,9 @@ These are not filtered or wrapped — they simply do not exist in a LuaExt sandb
 
 ## io/os emulation
 
-> **The `io` half of this section is not implemented.** There is no `io` table at any trust level today, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about `io`, paths, quotas and the `package` replacement is the design the next wave builds to.
+> **The `io` half of this section is not implemented** — `Sandbox::features()['capabilities']['vfs']` reports `false`. There is no `io` table at any trust level today, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about `io`, paths, quotas and the `package` replacement is the design the next wave builds to.
+>
+> Two configuration rules are real already and outlive the wave: `vfs` and `vfsWrite` both require a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — write widens read access rather than replacing it. `Capabilities::trusted()` grants `vfs` but deliberately **not** `vfsWrite`.
 >
 > The **`os`** half *is* implemented, with one difference from the description below: LuaExt's `os` is hand-written and has no file operations at all, so `os.remove` and `os.rename` do not exist rather than routing through the VFS.
 
@@ -60,7 +62,7 @@ With the `vfs` capability granted, a script sees a conventional-looking `io` tab
 
 ## `require()` semantics
 
-> **Not implemented.** `require` is absent from every sandbox regardless of capability, and `Sandbox::preloadModule()` throws `Error: ... is not implemented`. Granting the `require` capability is currently accepted without effect. The rest of this section is the specification the next wave builds to.
+> **Not implemented** — `Sandbox::features()['capabilities']['require']` reports `false`. `require` is absent from every sandbox regardless of capability, and `Sandbox::preloadModule()` throws `Error: ... is not implemented`. Granting the capability is accepted without effect, which is why the features map exists. The rest of this section is the specification the next wave builds to.
 
 `require()` only exists at all when the `require` capability is granted (off by default in both presets — `Trusted` turns it on). When available, resolution for a module name matching `[A-Za-z0-9_.-]+` (128 characters max, no `..` segments) proceeds in order:
 
@@ -77,7 +79,7 @@ Pure-Lua third-party libraries — including pure-Lua LuaRocks packages such as 
 
 ## Coroutines
 
-> **Not implemented.** `coroutine` is absent from every sandbox. The `coroutines` capability defaults to `true` and is accepted, but nothing is installed — unlike `vfs`/`require`, it cannot be refused at construction precisely *because* it defaults on. Upstream's `lcorolib.c` **is** compiled into the binary; what is missing is the wrapper that makes resumption safe to interrupt, which is why the library is withheld rather than exposed raw. Two tests in `tests/03-adversarial/` and `tests/09-conversion/` are marked XFAIL against exactly this. The rest of this section is the specification the next wave builds to.
+> **Not implemented** — `Sandbox::features()['capabilities']['coroutines']` reports `false`. `coroutine` is absent from every sandbox. The capability defaults to `true` and is accepted, and unlike `vfs` it cannot be refused at construction precisely *because* it defaults on: refusing it would break every default sandbox. Upstream's `lcorolib.c` **is** compiled into the binary; what is missing is the wrapper that makes resumption safe to interrupt, which is why the library is withheld rather than exposed raw. Two tests in `tests/03-adversarial/` and `tests/09-conversion/` are marked XFAIL against exactly this. The rest of this section is the specification the next wave builds to.
 
 Coroutines are available by default (`coroutines` capability defaults to `true` even in the Untrusted preset) through LuaExt's own `coroutine` table — a thin wrapper around upstream's `create`/`resume`/`yield`/`status`/`running`/`isyieldable`/`wrap`, not a restricted subset of it.
 
