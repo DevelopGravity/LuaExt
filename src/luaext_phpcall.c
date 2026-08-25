@@ -197,6 +197,7 @@ static int luaext_phpcall_invoke(lua_State *L)
 	uint32_t depth_limit;
 	zval *params = NULL;
 	size_t params_bytes = 0;
+	size_t content_bytes = 0;
 	zval result;
 	int argc = lua_gettop(L);
 	int index;
@@ -278,8 +279,20 @@ static int luaext_phpcall_invoke(lua_State *L)
 		ZVAL_UNDEF(&params[index]);
 	}
 
+	/*
+	 * Billed, unlike the conversions that hand a value onward to PHP: these
+	 * zvals are ours and are released below, so the charge has somewhere to be
+	 * given back. Without it a script can hand a callback a large string or
+	 * table and make the process hold a second copy that memoryBytes never saw.
+	 */
 	for (index = 0; index < argc && converted; index++) {
-		converted = luaext_convert_to_zval(sandbox, L, index + 1, &params[index]);
+		size_t billed = 0;
+
+		converted = luaext_convert_to_zval_billed(sandbox, L, index + 1, &params[index], &billed);
+
+		/* Accumulated even when that call failed: a partial conversion has
+		 * already charged for the part it built. */
+		content_bytes += billed;
 	}
 
 	if (converted) {
@@ -346,6 +359,14 @@ static int luaext_phpcall_invoke(lua_State *L)
 
 	for (index = 0; index < argc; index++) {
 		zval_ptr_dtor(&params[index]);
+	}
+
+	/* Unconditional, and separate from params_bytes: a conversion that failed
+	 * part-way still charged for what it built, and argc==0 charges nothing but
+	 * a refused first argument is not argc==0. */
+	if (content_bytes > 0) {
+		luaext_alloc_discharge(sandbox, content_bytes);
+		content_bytes = 0;
 	}
 
 	if (params != NULL) {

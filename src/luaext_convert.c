@@ -35,6 +35,7 @@
 
 #include "luaext_convert.h"
 
+#include "luaext_alloc.h"
 #include "luaext_error.h"
 
 #include <lauxlib.h>
@@ -567,10 +568,72 @@ typedef struct {
 	const char *root;
 
 	uint32_t max_depth;
+
+	/*
+	 * Whether the PHP-side bytes this conversion allocates are charged against
+	 * the sandbox's memory limit -- and why that is the caller's decision rather
+	 * than a property of converting.
+	 *
+	 * A Lua string is already billed by lua_Alloc, but the PHP copy made here is
+	 * a SECOND allocation the limit never saw: hand a callback a large string and
+	 * the process holds both, so a sandbox capped at N bytes transiently holds
+	 * appreciably more. Tables are worse than strings, since a PHP array costs
+	 * more per element than a Lua table does.
+	 *
+	 * It cannot simply be charged everywhere, because a charge is only honest if
+	 * something discharges it. Of the three callers, exactly one owns the zvals
+	 * it asks for: the callback bridge frees its params array when the call
+	 * returns. The other two -- an eval/call result and a global getter -- hand
+	 * the zval to PHP, whose lifetime we neither know nor control, so charging
+	 * there would burn budget that is never given back and shrink the effective
+	 * limit on every call until the sandbox refused to run.
+	 *
+	 * So the converter MEASURES (always, into `produced`) and the boundary that
+	 * owns the lifetime DECIDES (by setting `bill`). Callers that bill must
+	 * discharge `produced` when they release the values.
+	 */
+	bool bill;
+	size_t produced;
 } luaext_convert_to_ctx;
 
 static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_convert_step *step,
 								 uint32_t depth, zval *out);
+
+/*
+ * Account for `bytes` of PHP-side allocation, refusing when it does not fit.
+ *
+ * Charged BEFORE the allocation it describes, so a value too large for the
+ * remaining budget is refused instead of being built and then complained about.
+ * Always accumulates into `produced` even when not billing, so a caller can see
+ * what a conversion cost without having paid for it.
+ */
+static bool luaext_convert_account(luaext_convert_to_ctx *ctx, size_t bytes,
+								   const luaext_convert_step *step)
+{
+	ctx->produced += bytes;
+
+	if (!ctx->bill || bytes == 0) {
+		return true;
+	}
+
+	if (!luaext_alloc_charge(ctx->sandbox, bytes)) {
+		/*
+		 * MemoryLimitError, not ConversionError: the value is perfectly
+		 * convertible and the sandbox simply cannot afford it. Reporting it as a
+		 * conversion problem would send a host looking for a type bug.
+		 */
+		char path[LUAEXT_CONVERT_PATH_MAX];
+
+		luaext_convert_render_path(ctx->root, step, path, sizeof(path));
+		zend_throw_exception_ex(luaext_ce_memory_limit_error, 0,
+								"Converting %s for the host would need %zu more byte(s) than the "
+								"sandbox's memory limit allows",
+								path, bytes);
+		return false;
+	}
+
+	return true;
+}
 
 ZEND_COLD static bool luaext_convert_to_fail(const luaext_convert_to_ctx *ctx,
 											 const luaext_convert_step *step, const char *detail)
@@ -841,6 +904,19 @@ static bool luaext_convert_table(luaext_convert_to_ctx *ctx, int index, luaext_c
 		 * still points into that key, which keeps it anchored against the GC. */
 		lua_pop(L, 1);
 
+		/*
+		 * One hash bucket per entry, plus the key when it is a string. Charged
+		 * per element rather than up front because the array was sized from a
+		 * hint that a script can inflate with one sparse assignment (see
+		 * array_init_size above) -- billing that hint would let a table claiming
+		 * a million entries charge for a million it does not have.
+		 */
+		if (!luaext_convert_account(
+				ctx, sizeof(Bucket) + (child.key_stores_as_index ? 0 : child.key_len), step)) {
+			zval_ptr_dtor(&element);
+			goto failed;
+		}
+
 		if (child.key_stores_as_index) {
 			zend_hash_index_update(target, (zend_ulong)child.key_index, &element);
 		} else {
@@ -883,6 +959,10 @@ static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_c
 		size_t length;
 		const char *bytes = lua_tolstring(L, index, &length);
 
+		if (!luaext_convert_account(ctx, length + sizeof(zend_string), step)) {
+			return false;
+		}
+
 		/* Length-carrying copy: a Lua string is a byte string and its NUL
 		 * bytes are content. */
 		ZVAL_STRINGL_FAST(out, bytes, length);
@@ -913,7 +993,8 @@ static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_c
 	}
 }
 
-bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zval *out)
+static bool luaext_convert_to_zval_inner(luaext_sandbox *sandbox, lua_State *L, int index,
+										 zval *out, bool bill, size_t *billed)
 {
 	luaext_convert_to_ctx ctx;
 	luaext_convert_step root;
@@ -923,6 +1004,8 @@ bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zv
 	ctx.L = L;
 	ctx.root = "value";
 	ctx.max_depth = luaext_convert_depth_limit(sandbox);
+	ctx.bill = bill;
+	ctx.produced = 0;
 
 	luaext_convert_step_root(&root);
 
@@ -935,7 +1018,24 @@ bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zv
 	converted = luaext_convert_value(&ctx, lua_absindex(L, index), &root, 0, out);
 	LUAEXT_NO_RAISE_END(L);
 
+	/* Reported even on failure: a partial conversion has already charged for
+	 * what it managed to build, and the caller has to give that back. */
+	if (billed != NULL) {
+		*billed = ctx.produced;
+	}
+
 	return converted;
+}
+
+bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zval *out)
+{
+	return luaext_convert_to_zval_inner(sandbox, L, index, out, false, NULL);
+}
+
+bool luaext_convert_to_zval_billed(luaext_sandbox *sandbox, lua_State *L, int index, zval *out,
+								   size_t *billed)
+{
+	return luaext_convert_to_zval_inner(sandbox, L, index, out, true, billed);
 }
 
 bool luaext_convert_stack_to_array(luaext_sandbox *sandbox, lua_State *L, int first, int count,

@@ -47,6 +47,26 @@ void luaext_convert_push_zval(luaext_sandbox *sandbox, lua_State *L, zval *value
 bool luaext_convert_to_zval(luaext_sandbox *sandbox, lua_State *L, int index, zval *out);
 
 /*
+ * As above, but bills the PHP-side bytes produced against the memory limit and
+ * reports the total through `billed`.
+ *
+ * For callers that OWN the resulting zval and will release it at a known point.
+ * The bytes a conversion allocates on the PHP side are a second copy the limit
+ * would otherwise never see -- lua_Alloc bills the Lua original, nothing bills
+ * the duplicate. Charging it is only honest where something discharges it, so
+ * this variant exists rather than making every conversion bill: a value handed
+ * onward to PHP has a lifetime this extension does not control, and charging
+ * for it would shrink the effective limit on every call, permanently.
+ *
+ * The caller MUST pass `*billed` to luaext_alloc_discharge() when it releases
+ * the value. `*billed` is meaningful even when the call fails -- a partial
+ * conversion has already charged for what it built -- so discharge it either
+ * way.
+ */
+bool luaext_convert_to_zval_billed(luaext_sandbox *sandbox, lua_State *L, int index, zval *out,
+								   size_t *billed);
+
+/*
  * Convert `count` values starting at `first` into a zero-indexed PHP array,
  * which is how every multi-return crosses the boundary.
  *
