@@ -55,7 +55,7 @@ echo "done\n";
 bool(false)
 bool(true)
 bool(true)
-array(5) {
+array(6) {
   [0]=>
   string(8) "cpuLimit"
   [1]=>
@@ -66,6 +66,8 @@ array(5) {
   string(10) "threadSafe"
   [4]=>
   string(8) "platform"
+  [5]=>
+  string(12) "capabilities"
 }
 int(99)
 bool(false)

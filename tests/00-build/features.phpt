@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+use DevelopGravity\LuaExt\Capabilities;
 use DevelopGravity\LuaExt\LimitSupport;
 use DevelopGravity\LuaExt\Sandbox;
 
@@ -32,9 +33,36 @@ var_dump($features['wallClockLimit'] !== LimitSupport::Unsupported);
 // A resolution of zero would mean "no clock", which contradicts the two above.
 var_dump($features['cpuResolutionSeconds'] > 0.0);
 
+/*
+ * The capabilities map has to cover exactly the boolean flags a Capabilities
+ * object carries, and that correspondence is asserted rather than eyeballed:
+ * the map is a hand-maintained literal in C, so the failure it invites is
+ * someone adding a capability and forgetting it here. A missing key reads as
+ * "this build does not implement it" to any host that checks, which is the
+ * under-reporting direction and the one worth failing the build over.
+ *
+ * osEnvAllowList is excluded because it is a list of names, not a toggle.
+ */
+$declared = array_map(
+	static fn (ReflectionProperty $property): string => $property->getName(),
+	(new ReflectionClass(Capabilities::class))->getProperties(),
+);
+$toggles = array_values(array_diff($declared, ['osEnvAllowList']));
+
+sort($toggles);
+$reported = array_keys($features['capabilities']);
+sort($reported);
+
+var_dump($toggles === $reported);
+var_dump(array_reduce($features['capabilities'], static fn ($carry, $v) => $carry && is_bool($v), true));
+
+// Named individually so that implementing one is a visible, deliberate edit
+// here rather than a silent flip. See docs/lua-api.md for what each still lacks.
+var_dump(array_keys(array_filter($features['capabilities'], static fn (bool $v): bool => !$v)));
+
 ?>
 --EXPECT--
-array(5) {
+array(6) {
   [0]=>
   string(8) "cpuLimit"
   [1]=>
@@ -45,6 +73,8 @@ array(5) {
   string(10) "threadSafe"
   [4]=>
   string(8) "platform"
+  [5]=>
+  string(12) "capabilities"
 }
 bool(true)
 bool(true)
@@ -54,3 +84,15 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
+bool(true)
+bool(true)
+array(4) {
+  [0]=>
+  string(7) "require"
+  [1]=>
+  string(3) "vfs"
+  [2]=>
+  string(8) "vfsWrite"
+  [3]=>
+  string(10) "coroutines"
+}

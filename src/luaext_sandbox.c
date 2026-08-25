@@ -477,11 +477,69 @@ static void luaext_add_limit_support(zval *array, const char *key, luaext_limit_
 	add_assoc_zval(array, key, &value);
 }
 
+/*
+ * Which capabilities this BUILD implements, as opposed to which ones a
+ * Capabilities object will accept.
+ *
+ * The two are not the same thing today and the difference is invisible without
+ * this map. A flag whose subsystem has not been written is still a perfectly
+ * valid property: it is set, it reads back, and the feature it names is simply
+ * absent -- `coroutine` is nil, there is no file API -- so a host granting it
+ * has no way to notice short of testing for the behaviour itself. The two flags
+ * that CAN be refused at construction are (vfs and vfsWrite, which have no
+ * backing store); `coroutines` cannot, because it defaults to true, and
+ * refusing it would break every default sandbox.
+ *
+ * So the honest mechanism is to publish the answer rather than to guess, in the
+ * same spirit as reporting a limit's real enforcement level above. A host that
+ * must not run a script without coroutines can ask, instead of discovering it
+ * from a nil global at runtime.
+ *
+ * Update this table when a subsystem lands. It is deliberately a literal list
+ * rather than something derived from the capability bits: the bits record what
+ * may be requested, and nothing in them knows whether anyone implemented it.
+ */
+static void luaext_add_capability_support(zval *array)
+{
+	static const struct {
+		const char *name;
+		bool implemented;
+	} capabilities[] = {
+		{"loadBytecode", true},
+		{"compileAtRuntime", true},
+		{"dumpBytecode", true},
+		{"require", false},
+		{"vfs", false},
+		{"vfsWrite", false},
+		{"coroutines", false},
+		{"osTime", true},
+		{"osEnv", true},
+		{"debugTraceback", true},
+		{"debugIntrospect", true},
+		{"debugMutate", true},
+		{"debugHooks", true},
+		{"utf8", true},
+		{"gcControl", true},
+		{"warn", true},
+	};
+
+	zval map;
+	size_t index;
+
+	array_init_size(&map, sizeof(capabilities) / sizeof(capabilities[0]));
+
+	for (index = 0; index < sizeof(capabilities) / sizeof(capabilities[0]); index++) {
+		add_assoc_bool(&map, capabilities[index].name, capabilities[index].implemented ? 1 : 0);
+	}
+
+	add_assoc_zval(array, "capabilities", &map);
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 
-	array_init_size(return_value, 5);
+	array_init_size(return_value, 6);
 
 	/*
 	 * Answered by the timer layer, which knows what this platform's clocks can
@@ -512,6 +570,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 	 * normalised name a caller would compare against anyway.
 	 */
 	add_assoc_string(return_value, "platform", PHP_OS_FAMILY);
+
+	luaext_add_capability_support(return_value);
 }
 
 /* -------------------------------------------------------------------------

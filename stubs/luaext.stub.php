@@ -472,17 +472,24 @@ final class Sandbox
     public static function luaVersion(): string {}
 
     /**
-     * What this platform can actually enforce.
+     * What this platform and this build can actually do.
      *
      * Never assume a limit is in force: on platforms with a coarse thread clock
      * the CPU limit is reported as Degraded and backed by a wall-clock deadline.
+     *
+     * `capabilities` answers a different question from the Capabilities object:
+     * not "may this be requested" but "has anyone implemented it". A capability
+     * whose subsystem is not built yet is still a valid flag that sets and reads
+     * back normally, so a host granting it cannot otherwise tell that nothing
+     * happened. Keys match the boolean properties of Capabilities.
      *
      * @return array{
      *     cpuLimit: LimitSupport,
      *     wallClockLimit: LimitSupport,
      *     cpuResolutionSeconds: float,
      *     threadSafe: bool,
-     *     platform: string
+     *     platform: string,
+     *     capabilities: array<string, bool>
      * }
      */
     public static function features(): array {}
