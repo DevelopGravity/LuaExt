@@ -197,6 +197,7 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 - [CHANGELOG.md](CHANGELOG.md) — release notes (currently unreleased-only; no tags exist yet).
 - [docs/cookbook.md](docs/cookbook.md) — practical recipes: host-service exposure (including a PDO/SQLite example), `FileSystem` backends, vendoring pure-Lua libraries, output capture, usage-based billing, coroutine patterns.
 - [docs/lua-api.md](docs/lua-api.md) — the Lua-side reference: exactly which standard library members are available, replaced, or absent, plus `require()` and coroutine semantics.
+- [docs/performance.md](docs/performance.md) — what the sandbox costs to run Lua, measured against stock 5.5.1 by building the same tree three ways. Short version: **0–5% on the interpreter**, against +55% for the hook-based design it replaced.
 
 ## License
 
