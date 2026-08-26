@@ -166,6 +166,7 @@ if test "$PHP_LUAEXT" != "no"; then
      src/luaext_exec.c \
      src/luaext_function.c \
      src/luaext_interrupt.c \
+     src/luaext_iolib.c \
      src/luaext_mathlib.c \
      src/luaext_openlibs.c \
      src/luaext_oslib.c \
@@ -174,6 +175,7 @@ if test "$PHP_LUAEXT" != "no"; then
      src/luaext_phpcall.c \
      src/luaext_thread.c \
      src/luaext_timers.c \
+     src/luaext_vfs.c \
      src/luaext_vfs_path.c \
      src/luaext_watchdog.c],
     [$ext_shared],,

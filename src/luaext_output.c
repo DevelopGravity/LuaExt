@@ -244,9 +244,9 @@ static void luaext_output_release(luaext_sandbox *sandbox)
 /*
  * Hand one chunk to the host, as (string $chunk, bool $isStderr).
  *
- * $isStderr is always false: luaext_output_write() carries no channel, so this
- * subsystem cannot tell warn() apart from print(). Passing false is the honest
- * answer rather than a guess.
+ * $isStderr describes the whole chunk, which is why the write path flushes on a
+ * channel change rather than letting the two interleave: a chunk carrying both
+ * streams could only be labelled by lying about half of it.
  *
  * Returns false with EG(exception) set when the callback threw; the caller
  * decides whether that can be raised into Lua from where it stands.
@@ -259,7 +259,7 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 
 	ZVAL_UNDEF(&callback_result);
 	ZVAL_STR_COPY(&args[0], chunk);
-	ZVAL_FALSE(&args[1]);
+	ZVAL_BOOL(&args[1], sandbox->out.buffered_is_stderr);
 
 	/* The same counters the PHP bridge keeps: an output callback is a call out
 	 * to the host like any other, and stats() should say so. */
@@ -461,6 +461,12 @@ void luaext_output_shutdown(luaext_sandbox *sandbox)
 
 bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length)
 {
+	return luaext_output_write_channel(sandbox, data, length, false);
+}
+
+bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size_t length,
+								 bool is_stderr)
+{
 	luaext_output *out;
 	size_t accepted;
 	bool overflowed;
@@ -476,6 +482,20 @@ bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t lengt
 	if (data == NULL || length == 0) {
 		return true;
 	}
+
+	/*
+	 * A channel change flushes what is pending before the new bytes join it.
+	 * Without this a print() followed by an io.stderr:write() would arrive as
+	 * one chunk carrying one flag, and whichever flag it carried would be wrong
+	 * about the other half.
+	 */
+	if (is_stderr != out->buffered_is_stderr && smart_str_get_len(&out->buf) > 0) {
+		if (!luaext_output_flush(sandbox, true)) {
+			return true; /* an exception is pending; the caller reports it */
+		}
+	}
+
+	out->buffered_is_stderr = is_stderr;
 
 	/*
 	 * What fits. Reaching the cap exactly is not an overflow -- outputBytes is

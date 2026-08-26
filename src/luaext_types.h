@@ -337,6 +337,13 @@ typedef struct {
 	size_t limit;
 	size_t chunk;
 	bool truncated;
+
+	/*
+	 * Which stream the bytes currently buffered came from. A write on the other
+	 * channel flushes first, so one chunk handed to the host never mixes the
+	 * two -- $isStderr describes the whole chunk or it describes nothing.
+	 */
+	bool buffered_is_stderr;
 } luaext_output;
 
 /* -------------------------------------------------------------------------
@@ -408,6 +415,18 @@ struct luaext_sandbox {
 	/* PHP references waiting to be released somewhere the collector is not
 	 * running. See luaext_defer.h. */
 	luaext_deferred deferred;
+
+	/*
+	 * The host's FileSystem, owned rather than borrowed from config_zv, and
+	 * whether it can seek. See luaext_vfs.h.
+	 */
+	zval filesystem_zv;
+	bool vfs_ranged;
+
+	/* Backend calls made by the CALL in progress. VfsQuota::$maxOperations
+	 * bounds one call's demand on the host, not the sandbox's lifetime, so this
+	 * resets at every outermost entry. */
+	uint32_t vfs_ops_this_call;
 
 	bool allow_pause;
 	bool closed;

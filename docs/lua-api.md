@@ -15,13 +15,14 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 | Library | Untrusted | Trusted |
 |---|---|---|
 | `base` (globals) | Filtered, with replacements — see below | Adds `load` (text-only; `mode = "b"` additionally requires the `loadBytecode` capability, which stays off even here) |
-| `coroutine` | **Absent** today; will be LuaExt's own wrapper around upstream | Same |
+| `coroutine` | LuaExt's own wrapper around upstream, gated by the `coroutines` capability (on by default), capped and call-scoped — see [Coroutines](#coroutines) | Same |
 | `string` | Open; `string.dump` removed; `string.format("%p")` rejected | `string.dump` restored behind the `dumpBytecode` capability |
 | `table` | **All members**, including `table.move` and `table.create` (their loops are patched to be interruptible) | Same |
 | `math` | Open; `math.randomseed` replaced | Same |
 | `utf8` | Open, with an interruptible scan | Same |
 | `os` | LuaExt's own, **not** upstream's: `clock`, `date`, `difftime`, `time` under `osTime`; `getenv` under `osEnv` + allowlist | Same |
-| `io`, `package` | Upstream versions **never linked into the binary**. Their LuaExt replacements are not built yet, so both names are simply **absent** — see [io/os emulation](#ioos-emulation) | Same |
+| `io` | LuaExt's own, **not** upstream's. The output half (`io.write`, `io.stdout`, `io.stderr`) is unconditional; the filesystem half (`io.open`, `io.lines`) needs `vfs` and is not built yet — see [io/os emulation](#ioos-emulation) | Same |
+| `package` | Upstream version **never linked into the binary**; its LuaExt replacement is not built yet, so the name is simply **absent** | Same |
 | `debug` | `debug.traceback` only | Adds `debug.getinfo`/`getlocal`/`getupvalue` behind `debugIntrospect`; `debug.sethook` only via the separate `debugHooks` capability (mutually exclusive with a CPU limit — see SECURITY.md) |
 
 ## Replaced members, and why
@@ -39,20 +40,27 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 
 These are not filtered or wrapped — they simply do not exist in a LuaExt sandbox, because the source files that implement them (`liolib.c`, `loslib.c`, `loadlib.c`, `linit.c`, `lua.c`, `luac.c`) are excluded from the build entirely. This is verified, not assumed: the linked binary carries zero references to `system()`, `tmpnam()`, `popen()`, or `setlocale()` — the code that could call them was never compiled in.
 
-- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. `os` is present but is LuaExt's own hand-written table, not a restricted view of upstream's; `io` and `package` have no LuaExt replacement built yet and are absent entirely.
+- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. `os` and `io` are present but are LuaExt's own hand-written tables, not restricted views of upstream's; `package` has no LuaExt replacement built yet and is absent entirely.
+- **`io.read`** and **`io.stdin`**, at every trust level and regardless of capability. A sandbox has no console to read from, and a stub that always returned `nil` would be a surface that looks like it might one day do something.
 - **`load`**, **`loadfile`**, **`dofile`** for untrusted scripts. `load` returns under `Trusted` (text mode only, per the table above); `loadfile`/`dofile` are not reintroduced under any preset — module loading goes through `require()` instead (see below).
 - **`string.dump`** for untrusted scripts (returns under `Trusted` behind `dumpBytecode`).
 - **`string.format("%p")`** — rejected as an error at every trust level; it cannot be selectively filtered the way a whole library member can, since the format string itself is otherwise a normal, needed feature.
 
 ## io/os emulation
 
-> **The `io` half of this section is not implemented** — `Sandbox::features()['capabilities']['vfs']` reports `false`. There is no `io` table at any trust level today, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about `io`, paths, quotas and the `package` replacement is the design the next wave builds to.
+> **The `io` table has two halves, and only one is implemented.**
+>
+> The **output half** — `io.write`, `io.stdout`, `io.stderr` — is built and needs no capability at all. Writing a partial line is not a storage operation, and requiring `vfs` for it would mean a script could not write without also being handed a filesystem backend. These go to the same sink as `print()`; `io.stderr` is what makes the output callback's `$isStderr` parameter true.
+>
+> The **filesystem half** — `io.open`, file handles, `io.lines` — is not implemented. `Sandbox::features()['capabilities']['vfs']` reports `false`, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about paths, handles, quotas and the `package` replacement is the design the next wave builds to.
 >
 > Two configuration rules are real already and outlive the wave: `vfs` and `vfsWrite` both require a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — write widens read access rather than replacing it. `Capabilities::trusted()` grants `vfs` but deliberately **not** `vfsWrite`.
 >
 > The **`os`** half *is* implemented, with one difference from the description below: LuaExt's `os` is hand-written and has no file operations at all, so `os.remove` and `os.rename` do not exist rather than routing through the VFS.
 
-With the `vfs` capability granted, a script sees a conventional-looking `io` table — `io.open`, file-handle `:read`/`:write`/`:seek`, `io.lines` — but every operation is routed through a C layer (path canonicalization, handle bookkeeping, quota enforcement) to a PHP `FileSystem` implementation the host supplies. Without the `vfs` capability, there is no `io` table at all — not an `io` table whose calls fail, the global simply isn't present.
+Every sandbox has an `io` table carrying the output half: `io.write` (which accepts strings and numbers and returns the table so writes chain), plus `io.stdout` and `io.stderr`, each with `:write` and a `:close` that politely refuses the way upstream's does for a standard stream. Nothing here touches storage.
+
+With the `vfs` capability granted, that same table additionally gains the filesystem half — `io.open`, file-handle `:read`/`:write`/`:seek`, `io.lines` — with every operation routed through a C layer (path canonicalization, handle bookkeeping, quota enforcement) to a PHP `FileSystem` implementation the host supplies. Without `vfs`, those names are simply absent from the table rather than present-and-failing, so a script can test for `io.open` to discover whether it has a filesystem.
 
 - **Path model**: a pure, virtual POSIX-style namespace rooted at `/`. `.`/`..` are resolved lexically; a path that would escape the root is an *error*, not silently clamped back to `/`. Backslash is an ordinary filename character, never a separator. NUL bytes, overlength paths, and excessively deep nesting are rejected before a backend ever sees them.
 - **Quotas** (`VfsQuota`, independent of `Limits`): open-handle count, per-file and total byte caps, file count, operation count, path length/depth. See [docs/cookbook.md](cookbook.md) for how these interact with a real backend.
@@ -78,8 +86,6 @@ Resolved source compiles via `luaL_loadbufferx` in text mode (`"t"`) unless the 
 Pure-Lua third-party libraries — including pure-Lua LuaRocks packages such as `dkjson`, `penlight`, or `inspect` — work by vendoring their source into the VFS (or a `ModuleResolver`) and letting `require()` find them there; they execute fully inside the sandbox, under the same CPU/memory/coroutine limits as the rest of the script. Binary (C) LuaRocks cannot be loaded under any configuration — see [SECURITY.md](../SECURITY.md#what-this-does-not-defend-against) for why that's an architectural property, not a missing feature.
 
 ## Coroutines
-
-> **Not implemented** — `Sandbox::features()['capabilities']['coroutines']` reports `false`. `coroutine` is absent from every sandbox. The capability defaults to `true` and is accepted, and unlike `vfs` it cannot be refused at construction precisely *because* it defaults on: refusing it would break every default sandbox. Upstream's `lcorolib.c` **is** compiled into the binary; what is missing is the wrapper that makes resumption safe to interrupt, which is why the library is withheld rather than exposed raw. Two tests in `tests/03-adversarial/` and `tests/09-conversion/` are marked XFAIL against exactly this. The rest of this section is the specification the next wave builds to.
 
 Coroutines are available by default (`coroutines` capability defaults to `true` even in the Untrusted preset) through LuaExt's own `coroutine` table — a thin wrapper around upstream's `create`/`resume`/`yield`/`status`/`running`/`isyieldable`/`wrap`, not a restricted subset of it.
 

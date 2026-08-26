@@ -26,11 +26,15 @@ $members = static function (Sandbox $sandbox, string $table): string {
 
 $sandbox = new Sandbox();
 
-// debug and os are enumerated too, or the claim above is false: both are in the
-// untrusted baseline (debugTraceback and osTime default on, os.clock is
-// unconditional), so leaving them out would let a member appear in every
-// untrusted sandbox without this test noticing.
-foreach (['_G', 'string', 'table', 'math', 'utf8', 'debug', 'os'] as $table) {
+// debug, os and io are enumerated too, or the claim above is false: all three
+// are in the untrusted baseline (debugTraceback and osTime default on, os.clock
+// and io's output half are unconditional), so leaving them out would let a
+// member appear in every untrusted sandbox without this test noticing.
+//
+// io is the one to watch. Its output half needs no capability, but its
+// filesystem half must never join it without vfs -- so an io.open appearing on
+// this line is the signal that the two halves have been conflated.
+foreach (['_G', 'string', 'table', 'math', 'utf8', 'debug', 'os', 'io'] as $table) {
 	printf("%s: %s\n", $table, $members($sandbox, $table));
 }
 
@@ -79,13 +83,14 @@ $sandbox->close();
 
 ?>
 --EXPECT--
-_G: _G _VERSION assert collectgarbage coroutine debug error getmetatable ipairs math next os pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 xpcall
+_G: _G _VERSION assert collectgarbage coroutine debug error getmetatable io ipairs math next os pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 xpcall
 string: byte char find format gmatch gsub len lower match pack packsize rep reverse sub unpack upper
 table: concat create insert move pack remove sort unpack
 math: abs acos asin atan ceil cos deg exp floor fmod frexp huge ldexp log max maxinteger min mininteger modf pi rad random randomseed sin sqrt tan tointeger type ult
 utf8: char charpattern codepoint codes len offset
 debug: traceback
 os: clock date difftime time
+io: stderr stdout write
 untrusted        load=nil warn=nil dofile=nil loadfile=nil
 compileAtRuntime load=function warn=nil dofile=nil loadfile=nil
 warn             load=nil warn=function dofile=nil loadfile=nil

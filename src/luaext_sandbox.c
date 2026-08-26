@@ -27,6 +27,7 @@
 #include "luaext_output.h"
 #include "luaext_phpcall.h"
 #include "luaext_timers.h"
+#include "luaext_vfs.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -243,6 +244,7 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 */
 	luaext_timers_detach(sandbox);
 	luaext_output_shutdown(sandbox);
+	luaext_vfs_shutdown(sandbox);
 
 	L = sandbox->L;
 	sandbox->L = NULL;
@@ -400,6 +402,10 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 		RETURN_THROWS();
 	}
 
+	if (!luaext_vfs_init_from_config(sandbox, config)) {
+		RETURN_THROWS();
+	}
+
 	if (!luaext_openlibs_install(sandbox)) {
 		RETURN_THROWS();
 	}
@@ -522,7 +528,7 @@ static void luaext_add_capability_support(zval *array)
 		{"require", false},
 		{"vfs", false},
 		{"vfsWrite", false},
-		{"coroutines", false},
+		{"coroutines", true},
 		{"osTime", true},
 		{"osEnv", true},
 		{"debugTraceback", true},

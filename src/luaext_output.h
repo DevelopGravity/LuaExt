@@ -49,6 +49,16 @@ void luaext_output_shutdown(luaext_sandbox *sandbox);
  */
 bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length);
 
+/*
+ * As above, naming the stream the bytes came from.
+ *
+ * The plain form is stdout. Switching channel flushes whatever is pending
+ * first, because the host is told $isStderr once per chunk: a chunk carrying
+ * both would have to lie about half of it.
+ */
+bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size_t length,
+								 bool is_stderr);
+
 /* What Sandbox::getOutput() / takeOutput() / getOutputLength() /
  * isOutputTruncated() report. `take` empties the buffer and resets the byte
  * count; the truncation flag survives, because a host that took the output

@@ -86,13 +86,11 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
-array(4) {
+array(3) {
   [0]=>
   string(7) "require"
   [1]=>
   string(3) "vfs"
   [2]=>
   string(8) "vfsWrite"
-  [3]=>
-  string(10) "coroutines"
 }
