@@ -830,15 +830,19 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 			return false;
 		}
 
-		if (!luaext_vfs_charge_buffer_public(L, sandbox, Z_STRLEN(result))) {
-			zval_ptr_dtor(&result);
-			luaext_vfs_handle_release(sandbox, handle);
-			return false;
-		}
-
+		/*
+		 * Ownership first, then the zval goes, then the charge -- which raises.
+		 * Charging while still holding `result` leaked it on every refusal,
+		 * since the raise longjmps past the dtor.
+		 */
 		luaext_vfs_note_bytes(sandbox, Z_STRLEN(result));
 		handle->buffer = zend_string_copy(Z_STR(result));
 		zval_ptr_dtor(&result);
+
+		if (!luaext_vfs_charge_buffer_public(L, sandbox, ZSTR_LEN(handle->buffer))) {
+			luaext_vfs_handle_release(sandbox, handle);
+			return false;
+		}
 	} else {
 		handle->buffer = zend_string_alloc(0, 0);
 		ZSTR_LEN(handle->buffer) = 0;

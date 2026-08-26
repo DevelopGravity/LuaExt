@@ -96,6 +96,23 @@ printf("second: ok=%s\n", var_export($second[0], true));
 
 $sandbox->close();
 
+// A module that does not COMPILE is a different path from one that fails while
+// running: the raise comes from inside the loader, before any chunk exists.
+// It is here so the valgrind leg walks it -- that raise is a longjmp, and the
+// source and chunk name held across it leaked until they were moved into
+// Lua-owned memory. An RSS assertion in a .phpt would be flaky on a shared
+// runner, so the sanitizer legs are the regression guard rather than this file.
+$sandbox = $make(['/broken.lua' => 'this is not ( valid lua']);
+
+try {
+	(void) $sandbox->eval('require("broken")', '=broken');
+	echo "compile: NOT REPORTED\n";
+} catch (Throwable $error) {
+	printf("compile: %s\n", str_contains($error->getMessage(), 'broken') ? 'names the module' : 'unhelpful');
+}
+
+$sandbox->close();
+
 // Names are validated before the VFS or a resolver sees them, because a name
 // becomes part of a path.
 $sandbox = $make([]);
@@ -118,6 +135,7 @@ depth: Loading "m%d" would nest require() 5 deep, which is the sandbox's Limits:
 count: The sandbox has already loaded 3 module(s), which is its Limits::$maxModules
 first:  ok=false
 second: ok=true
+compile: names the module
 name ../etc/passwd    refused
 name a/b              refused
 name nul\0byte        refused

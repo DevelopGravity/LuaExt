@@ -324,23 +324,46 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 		}
 
 		{
-			/* '@' is Lua's convention for "this chunk came from a file", and it
-			 * is what makes a traceback name the module rather than quote it. */
-			smart_str chunk = {0};
+			/*
+			 * The source and the chunk name are moved into LUA-owned memory, and
+			 * every PHP-side allocation is released, before anything that can
+			 * raise runs.
+			 *
+			 * Ordering alone is not enough here, which is the trap worth
+			 * recording: luaext_require_load() raises on a source that does not
+			 * compile, and a raise is a longjmp, so a zend_string still held --
+			 * even one held only to pass to the very call that raises -- is
+			 * simply lost. Lua strings survive that, because unwinding drops
+			 * them and the collector takes them.
+			 *
+			 * '@' is Lua's convention for "this chunk came from a file", and is
+			 * what makes a traceback name the module rather than quote it.
+			 */
+			size_t source_len;
+			const char *source;
+			const char *chunk_name;
 			bool loaded;
 
-			smart_str_appendc(&chunk, '@');
-			smart_str_appends(&chunk, Z_STRVAL(args[0]));
-			smart_str_0(&chunk);
+			lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
+			lua_pushfstring(L, "@%s", Z_STRVAL(args[0]));
 
-			loaded = luaext_require_load(L, sandbox, Z_STRVAL(result), Z_STRLEN(result),
-										 ZSTR_VAL(chunk.s), false);
-
-			smart_str_free(&chunk);
 			zval_ptr_dtor(&args[0]);
 			zval_ptr_dtor(&result);
 
-			return loaded ? 1 : -1;
+			source = lua_tolstring(L, -2, &source_len);
+			chunk_name = lua_tostring(L, -1);
+
+			loaded = luaext_require_load(L, sandbox, source, source_len, chunk_name, false);
+
+			if (!loaded) {
+				return -1;
+			}
+
+			/* [source, name, chunk] -> [chunk] */
+			lua_remove(L, -3);
+			lua_remove(L, -2);
+
+			return 1;
 		}
 	}
 	ZEND_HASH_FOREACH_END();
