@@ -19,6 +19,7 @@
 
 #include "luaext_openlibs.h"
 
+#include "luaext_corolib.h"
 #include "luaext_error.h"
 
 #include <lauxlib.h>
@@ -494,6 +495,10 @@ static int luaext_openlibs_build(lua_State *L)
 
 	if (!luaext_oslib_install(L, sandbox)) {
 		luaL_error(L, "luaext: the \"os\" library could not be assembled");
+	}
+
+	if (!luaext_corolib_install(L, sandbox)) {
+		luaL_error(L, "luaext: the \"coroutine\" library could not be assembled");
 	}
 
 	/*

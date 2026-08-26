@@ -20,6 +20,18 @@
  *
  * Returns false with a typed exception already thrown, stack unchanged.
  */
+/*
+ * The state a call should run on: whichever one is executing.
+ *
+ * Outside a coroutine this is the sandbox's main thread. Inside one it is the
+ * coroutine, because a host callback invoked from a coroutine runs on that
+ * coroutine's C stack and its re-entrant calls belong there too. Callers that
+ * push through the helpers below and then inspect the stack themselves MUST ask
+ * here rather than reaching for sandbox->L, or they will read a stack nothing
+ * was pushed to.
+ */
+lua_State *luaext_exec_state(const luaext_sandbox *sandbox);
+
 bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len,
 					  const char *chunk_name, bool allow_binary);
 

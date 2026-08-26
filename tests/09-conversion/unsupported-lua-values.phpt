@@ -2,8 +2,6 @@
 Lua coroutines are refused on the way to PHP
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs the coroutine library, which is only ever installed through the sandbox's own wrapper; the conversion side already refuses a thread.
 --FILE--
 <?php
 

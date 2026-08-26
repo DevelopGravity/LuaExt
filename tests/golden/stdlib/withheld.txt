@@ -17,14 +17,6 @@
 # comment.
 
 
-coroutine.close
-coroutine.create
-coroutine.isyieldable
-coroutine.resume
-coroutine.running
-coroutine.status
-coroutine.wrap
-coroutine.yield
 debug.debug
 dofile
 loadfile

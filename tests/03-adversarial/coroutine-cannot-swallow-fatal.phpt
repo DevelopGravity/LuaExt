@@ -2,8 +2,6 @@
 No coroutine construct can swallow a CPU-limit breach
 --EXTENSIONS--
 luaext
---XFAIL--
-Needs the coroutine wrapper. The coroutine library is deliberately not installed by the library policy -- upstream's luaopen_coroutine neither caps live coroutines nor stops resume from swallowing a fatal error -- so these attacks currently fail on a nil index rather than on the limit. Split out of fatal-error-uncatchable.phpt, whose other five cases pass.
 --SKIPIF--
 <?php
 // The only --SKIPIF-- shape this suite allows, and it earns its place: every

@@ -825,10 +825,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, call)
 	 * the path. "attempt to call a nil value" is a true statement about a stack
 	 * slot and says nothing about which global the host meant.
 	 */
-	if (!lua_isfunction(sandbox->L, -1)) {
-		const char *found = luaL_typename(sandbox->L, -1);
+	if (!lua_isfunction(luaext_exec_state(sandbox), -1)) {
+		lua_State *L = luaext_exec_state(sandbox);
+		const char *found = luaL_typename(L, -1);
 
-		lua_pop(sandbox->L, 1);
+		lua_pop(L, 1);
 		zend_throw_exception_ex(luaext_ce_runtime_error, 0,
 								"The Lua path \"%s\" names a %s, which is not callable",
 								ZSTR_VAL(path), found);
@@ -860,8 +861,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getGlobal)
 		RETURN_THROWS();
 	}
 
-	converted = luaext_convert_to_zval(sandbox, sandbox->L, -1, return_value);
-	lua_pop(sandbox->L, 1);
+	converted = luaext_convert_to_zval(sandbox, luaext_exec_state(sandbox), -1, return_value);
+	lua_pop(luaext_exec_state(sandbox), 1);
 
 	if (!converted) {
 		RETURN_THROWS();

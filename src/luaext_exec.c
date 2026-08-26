@@ -24,6 +24,7 @@
 #include "luaext_exec.h"
 
 #include "luaext_convert.h"
+#include "luaext_corolib.h"
 #include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_timers.h"
@@ -50,10 +51,8 @@
  * ---------------------------------------------------------------------- */
 
 /*
- * Every helper here dereferences sandbox->L. The ZEND_METHOD wrappers check the
- * sandbox is open and on its owning thread before delegating, so reaching this
- * with a closed sandbox is a bug rather than a user error -- but a bug that
- * would otherwise be a null dereference, so it is reported instead.
+ * Openness is a property of the sandbox's main state, so this asks about that
+ * one; which state the work then runs on is luaext_exec_state()'s question.
  */
 static bool luaext_exec_ready(const luaext_sandbox *sandbox)
 {
@@ -63,6 +62,32 @@ static bool luaext_exec_ready(const luaext_sandbox *sandbox)
 	}
 
 	return true;
+}
+
+/*
+ * The state this call should run on: whichever one is executing, not always the
+ * main thread.
+ *
+ * Outside a coroutine these are the same object and nothing changes. Inside one
+ * they differ, and the difference matters. A host callback invoked from a
+ * coroutine runs on THAT coroutine's C stack, so when it calls back into Lua the
+ * re-entrant call belongs there too -- a C function calling lua_pcall on the
+ * state it was itself called from is the ordinary, documented pattern.
+ *
+ * Using the main thread instead would push a call onto a state that is sitting
+ * inside lua_resume, and lua_resume transfers the C-call budget with
+ * `L->nCcalls = getCcalls(from)`. Spending more of that budget on `from` while
+ * the resume is outstanding makes the accounting that guards against a genuine
+ * C-stack overflow wrong, which turns a Lua error into a crash. Lua's API
+ * checker does not object to it, which is precisely why it is worth writing
+ * down rather than leaving to be rediscovered.
+ *
+ * running_L is set at construction and maintained by the coroutine wrapper
+ * around every resume, so it is never null for an open sandbox.
+ */
+lua_State *luaext_exec_state(const luaext_sandbox *sandbox)
+{
+	return sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
 }
 
 static int luaext_exec_shown(size_t length)
@@ -85,7 +110,7 @@ bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len
 		return false;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 	max_source = sandbox->policy.limits.max_source_bytes;
 
 	/*
@@ -181,7 +206,7 @@ static bool luaext_exec_push_values(luaext_sandbox *sandbox, zval *values, uint3
 		return false;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 	top = lua_gettop(L);
 
 	if (count > (uint32_t)INT_MAX - LUA_MINSTACK || !lua_checkstack(L, (int)count + LUA_MINSTACK)) {
@@ -239,7 +264,7 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 		return false;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 	func_index = lua_absindex(L, func_index);
 
 	/* Everything at or above the function belongs to this call and goes with
@@ -303,6 +328,27 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	 * still raised did not succeed -- something inside it caught the breach and
 	 * carried on -- and its results are not results.
 	 */
+	/*
+	 * INSIDE the bracket, and BEFORE the interrupt is examined. Both halves of
+	 * that placement are load bearing.
+	 *
+	 * Inside, because closing a coroutine runs its <close> variables -- untrusted
+	 * Lua -- and the outermost leave_lua below disarms the watchdog and clears
+	 * the sticky interrupt flag. Sweeping after it would run those handlers
+	 * unmetered and uninterruptible, so `while true do end` in a <close> body
+	 * would hang the process: the denial of service luaext_timers_detach()
+	 * already defends close() against.
+	 *
+	 * Before, because a handler that burns the remaining budget raises the flag
+	 * during the sweep. Asking about the interrupt first would read it too early
+	 * and report a clean return for a call that overran inside its own cleanup.
+	 * lua_closethread's status is not consulted for this: it reports what one
+	 * thread did, whereas the flag is what the whole call did.
+	 */
+	if (sandbox->in_lua == 1) {
+		luaext_corolib_sweep(sandbox);
+	}
+
 	interrupted = status == LUA_OK && luaext_timers_throw_if_interrupted(sandbox);
 
 	luaext_timers_leave_lua(sandbox, &frame);
@@ -475,7 +521,7 @@ bool luaext_exec_push_path(luaext_sandbox *sandbox, const char *path, size_t pat
 		return false;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 	top = lua_gettop(L);
 
 	if (!lua_checkstack(L, 8)) {
@@ -571,7 +617,7 @@ bool luaext_exec_assign_path(luaext_sandbox *sandbox, const char *path, size_t p
 		return false;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 	value_index = lua_gettop(L);
 	base = value_index - 1;
 
@@ -626,7 +672,7 @@ void luaext_exec_make_function(luaext_sandbox *sandbox, zval *sandbox_zv, zval *
 		return;
 	}
 
-	L = sandbox->L;
+	L = luaext_exec_state(sandbox);
 
 	if (!lua_isfunction(L, -1)) {
 		zend_throw_exception_ex(luaext_ce_conversion_error, 0,
