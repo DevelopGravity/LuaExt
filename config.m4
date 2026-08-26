@@ -167,6 +167,7 @@ if test "$PHP_LUAEXT" != "no"; then
      src/luaext_function.c \
      src/luaext_interrupt.c \
      src/luaext_iolib.c \
+     src/luaext_profiler.c \
      src/luaext_require.c \
      src/luaext_mathlib.c \
      src/luaext_openlibs.c \

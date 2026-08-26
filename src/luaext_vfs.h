@@ -210,6 +210,16 @@ bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size
 void luaext_vfs_handle_gc(luaext_sandbox *sandbox, luaext_vfs_handle *handle);
 
 /*
+ * Count bytes that actually crossed the backend boundary, for
+ * SandboxStats::$vfsBytes.
+ *
+ * Counted where they cross rather than where a script asked for them: a read
+ * that returns short, or a write the backend refuses, moved fewer bytes than the
+ * call named, and a host reading this figure wants what the store actually saw.
+ */
+void luaext_vfs_note_bytes(luaext_sandbox *sandbox, size_t bytes);
+
+/*
  * Tell the quota a file is gone, so a script that deletes can create again.
  */
 void luaext_vfs_note_file_removed(luaext_sandbox *sandbox);

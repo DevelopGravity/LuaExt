@@ -365,6 +365,11 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 	return path;
 }
 
+void luaext_vfs_note_bytes(luaext_sandbox *sandbox, size_t bytes)
+{
+	sandbox->vfs_bytes += (uint64_t)bytes;
+}
+
 void luaext_vfs_note_file_removed(luaext_sandbox *sandbox)
 {
 	/* Only meaningful once something has counted. Before that the first
@@ -831,6 +836,7 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 			return false;
 		}
 
+		luaext_vfs_note_bytes(sandbox, Z_STRLEN(result));
 		handle->buffer = zend_string_copy(Z_STR(result));
 		zval_ptr_dtor(&result);
 	} else {
@@ -876,6 +882,7 @@ bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_h
 			return false;
 		}
 
+		luaext_vfs_note_bytes(sandbox, ZSTR_LEN(handle->buffer));
 		zval_ptr_dtor(&result);
 		handle->dirty = false;
 	}

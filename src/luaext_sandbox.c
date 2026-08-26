@@ -27,6 +27,7 @@
 #include "luaext_output.h"
 #include "luaext_phpcall.h"
 #include "luaext_timers.h"
+#include "luaext_profiler.h"
 #include "luaext_require.h"
 #include "luaext_vfs.h"
 
@@ -248,6 +249,7 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	luaext_output_shutdown(sandbox);
 	luaext_vfs_shutdown(sandbox);
 	luaext_require_shutdown(sandbox);
+	luaext_profiler_shutdown(sandbox);
 
 	L = sandbox->L;
 	sandbox->L = NULL;
@@ -1347,15 +1349,72 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, isOutputTruncated)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, enableProfiler)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "enableProfiler");
+	luaext_sandbox *sandbox;
+	double period = 0.002;
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_DOUBLE(period)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!(period > 0.0)) {
+		zend_throw_exception(luaext_ce_configuration_error,
+							 "A profiler period must be greater than zero", 0);
+		RETURN_THROWS();
+	}
+
+	RETURN_BOOL(luaext_profiler_enable(sandbox, period));
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, disableProfiler)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "disableProfiler");
+	luaext_sandbox *sandbox;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	luaext_profiler_disable(sandbox);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getProfile)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "getProfile");
+	luaext_sandbox *sandbox;
+	zval *unit = NULL;
+	uint8_t which = 1; /* Seconds, matching the stub's default */
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_OBJECT_OF_CLASS_OR_NULL(unit, luaext_ce_profiler_unit)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (unit != NULL) {
+		zval *name = zend_enum_fetch_case_name(Z_OBJ_P(unit));
+
+		if (name != NULL && Z_TYPE_P(name) == IS_STRING) {
+			if (zend_string_equals_literal(Z_STR_P(name), "Samples")) {
+				which = 0;
+			} else if (zend_string_equals_literal(Z_STR_P(name), "Percent")) {
+				which = 2;
+			}
+		}
+	}
+
+	luaext_profiler_result(sandbox, which, return_value);
 }

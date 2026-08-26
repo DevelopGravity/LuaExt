@@ -259,6 +259,7 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 		}
 
 		produced = (int)Z_STRLEN(result);
+		luaext_vfs_note_bytes(sandbox, (size_t)produced);
 		lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
 		handle->offset += (uint64_t)produced;
 		zval_ptr_dtor(&result);
@@ -546,6 +547,7 @@ static int luaext_iolib_file_write(lua_State *L)
 				return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
 			}
 
+			luaext_vfs_note_bytes(sandbox, length);
 			zval_ptr_dtor(&args[2]);
 			zval_ptr_dtor(&result);
 		} else {

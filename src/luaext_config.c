@@ -15,6 +15,8 @@
 
 #include "luaext_config.h"
 
+#include "luaext_timers.h"
+
 #include <Zend/zend_closures.h>
 #include <Zend/zend_enum.h>
 #include <Zend/zend_exceptions.h>
@@ -1333,14 +1335,18 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "memoryLimitBytes", &value);
 
 	/*
-	 * TODO: read the consumed CPU and wall time off the watchdog slot once it
-	 * exists. Zero is the honest answer until then: no time has been accounted,
-	 * and reporting a plausible-looking figure would be worse than reporting
-	 * none, because these numbers end up in billing pipelines.
+	 * Read off the watchdog, which is the same quantity the CPU limit enforces
+	 * and the same one getCpuUsage() reports -- so a host billing from these
+	 * figures bills for exactly what would have stopped the script.
+	 *
+	 * These were hardcoded zero behind a TODO waiting for the watchdog to exist.
+	 * It landed two waves ago, and the zeros stayed, which is the failure the
+	 * comment itself warned about: a plausible-looking figure reaching a billing
+	 * pipeline. Zero is only honest while nothing is accounted.
 	 */
-	ZVAL_DOUBLE(&value, 0.0);
+	ZVAL_DOUBLE(&value, luaext_timers_cpu_seconds(sandbox));
 	LUAEXT_SET(object, "cpuSeconds", &value);
-	ZVAL_DOUBLE(&value, 0.0);
+	ZVAL_DOUBLE(&value, luaext_timers_wall_seconds(sandbox));
 	LUAEXT_SET(object, "wallClockSeconds", &value);
 
 	ZVAL_LONG(&value, (zend_long)sandbox->out.written);
