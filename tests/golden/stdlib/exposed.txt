@@ -258,6 +258,9 @@ debug.traceback	function
 error	function
 getmetatable	function
 io	table
+io.close	function
+io.lines	function
+io.open	function
 io.stderr	table
 io.stdout	table
 io.write	function
@@ -863,6 +866,9 @@ debug.traceback	function
 error	function
 getmetatable	function
 io	table
+io.close	function
+io.lines	function
+io.open	function
 io.stderr	table
 io.stdout	table
 io.write	function
@@ -983,6 +989,9 @@ debug.traceback	function
 error	function
 getmetatable	function
 io	table
+io.close	function
+io.lines	function
+io.open	function
 io.stderr	table
 io.stdout	table
 io.write	function
@@ -1022,6 +1031,8 @@ os	table
 os.clock	function
 os.date	function
 os.difftime	function
+os.remove	function
+os.rename	function
 os.time	function
 pairs	function
 pcall	function

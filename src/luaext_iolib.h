@@ -8,6 +8,15 @@
 #include "luaext_types.h"
 
 /*
+ * The handle metatable's name in the registry.
+ *
+ * Carries the extension's prefix so it cannot collide with a name any other
+ * library registers, and luaL_checkudata compares against it to reject a
+ * userdata from somewhere else being passed to a file method.
+ */
+#define LUAEXT_IOLIB_FILE_MT "luaext.file"
+
+/*
  * Build the `io` table and set it as a global.
  *
  * Unconditional: the output half (io.write, io.stdout, io.stderr) is the

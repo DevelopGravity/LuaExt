@@ -28,6 +28,7 @@
 #include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_timers.h"
+#include "luaext_vfs.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -347,6 +348,14 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	 */
 	if (sandbox->in_lua == 1) {
 		luaext_corolib_sweep(sandbox);
+
+		/*
+		 * Open files go the same way, and after the coroutines rather than
+		 * before: a <close> handler running in the sweep above may still write to
+		 * a file, and flushing first would drop exactly the bytes the handler was
+		 * there to produce.
+		 */
+		luaext_vfs_sweep(sandbox);
 	}
 
 	interrupted = status == LUA_OK && luaext_timers_throw_if_interrupted(sandbox);

@@ -45,6 +45,7 @@ extern const char luaext_key_refs;	  /* int -> Lua value, backing PHP handles */
 extern const char luaext_key_errmt;	  /* metatable of the fatal-error userdata */
 extern const char luaext_key_filemt;  /* metatable of VFS file handles */
 extern const char luaext_key_threads; /* weak: thread -> tracking sentinel */
+extern const char luaext_key_handles; /* strong: open VFS handle -> sentinel */
 extern const char luaext_key_loaded;  /* package.loaded */
 extern const char luaext_key_preload; /* package.preload */
 extern const char luaext_key_loading; /* in-flight requires, for cycle detection */
@@ -427,6 +428,18 @@ struct luaext_sandbox {
 	 * bounds one call's demand on the host, not the sandbox's lifetime, so this
 	 * resets at every outermost entry. */
 	uint32_t vfs_ops_this_call;
+
+	/*
+	 * Handles the script currently holds open, and the bytes they are buffering
+	 * between them.
+	 *
+	 * A handle counts as open until it is closed or the call ends, NOT until the
+	 * collector gets to it: an unclosed file is an open file, and letting a
+	 * dropped handle stop counting would make VfsQuota::$maxOpenHandles describe
+	 * how promptly Lua collects rather than how many files a script may hold.
+	 */
+	uint32_t vfs_open_handles;
+	size_t vfs_buffered_bytes;
 
 	bool allow_pause;
 	bool closed;

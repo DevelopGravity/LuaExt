@@ -58,6 +58,7 @@
 
 #include "luaext_openlibs.h"
 #include "luaext_timers.h"
+#include "luaext_vfs.h"
 
 #include <lauxlib.h>
 #include <lualib.h>
@@ -572,6 +573,102 @@ static int luaext_oslib_difftime(lua_State *L)
  * Installation
  * ---------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------
+ * os.remove / os.rename
+ *
+ * The two file operations upstream's os library carries. They route through
+ * exactly the same layer io.open does -- canonicalisation, quota, the VfsError
+ * allowlist -- rather than reaching the backend on their own, so there is one
+ * place where a path becomes a name the host sees and one place where a refusal
+ * is told apart from a failure.
+ *
+ * Absent without the vfs capability, and absent without vfsWrite too: both
+ * modify the store, and read access must not imply the ability to delete.
+ * ---------------------------------------------------------------------- */
+
+static int luaext_oslib_remove(lua_State *L)
+{
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	zend_string *path = luaext_vfs_path_from_lua(L, sandbox, 1);
+	zend_string *refusal = NULL;
+	zval args[1];
+	zval result;
+
+	if (path == NULL) {
+		return lua_error(L);
+	}
+
+	ZVAL_STR(&args[0], path);
+
+	if (luaext_vfs_call(L, sandbox, "delete", 1, args, &result, &refusal) != LUAEXT_VFS_OK) {
+		zend_string_release(path);
+
+		if (refusal == NULL) {
+			return lua_error(L);
+		}
+
+		lua_pushnil(L);
+		lua_pushlstring(L, ZSTR_VAL(refusal), ZSTR_LEN(refusal));
+		zend_string_release(refusal);
+
+		return 2;
+	}
+
+	zend_string_release(path);
+	zval_ptr_dtor(&result);
+
+	lua_pushboolean(L, 1);
+
+	return 1;
+}
+
+static int luaext_oslib_rename(lua_State *L)
+{
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	zend_string *from = luaext_vfs_path_from_lua(L, sandbox, 1);
+	zend_string *to;
+	zend_string *refusal = NULL;
+	zval args[2];
+	zval result;
+
+	if (from == NULL) {
+		return lua_error(L);
+	}
+
+	to = luaext_vfs_path_from_lua(L, sandbox, 2);
+
+	if (to == NULL) {
+		zend_string_release(from);
+		return lua_error(L);
+	}
+
+	ZVAL_STR(&args[0], from);
+	ZVAL_STR(&args[1], to);
+
+	if (luaext_vfs_call(L, sandbox, "rename", 2, args, &result, &refusal) != LUAEXT_VFS_OK) {
+		zend_string_release(from);
+		zend_string_release(to);
+
+		if (refusal == NULL) {
+			return lua_error(L);
+		}
+
+		lua_pushnil(L);
+		lua_pushlstring(L, ZSTR_VAL(refusal), ZSTR_LEN(refusal));
+		zend_string_release(refusal);
+
+		return 2;
+	}
+
+	zend_string_release(from);
+	zend_string_release(to);
+	zval_ptr_dtor(&result);
+
+	lua_pushboolean(L, 1);
+
+	return 1;
+}
+
 bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox)
 {
 	luaext_oslib_clock_state *clock_state;
@@ -605,6 +702,17 @@ bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox)
 		luaext_oslib_push_env_allow_list(L, sandbox);
 		lua_pushcclosure(L, luaext_oslib_getenv, 1);
 		lua_setfield(L, -2, "getenv");
+	}
+
+	/* Both need vfsWrite, not merely vfs: deleting and renaming are how a
+	 * script destroys what the host stored, and a read grant must not carry
+	 * that. */
+	if (luaext_vfs_writable(sandbox)) {
+		lua_pushcfunction(L, luaext_oslib_remove);
+		lua_setfield(L, -2, "remove");
+
+		lua_pushcfunction(L, luaext_oslib_rename);
+		lua_setfield(L, -2, "rename");
 	}
 
 	lua_setglobal(L, LUA_OSLIBNAME);

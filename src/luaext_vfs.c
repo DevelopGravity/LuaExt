@@ -6,6 +6,7 @@
 
 #include "luaext_error.h"
 #include "luaext_timers.h"
+#include "luaext_vfs_path.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -162,7 +163,13 @@ luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const c
 	 * mistake here rather than a runtime condition, but it is still checked: a
 	 * null dereference is a worse way to learn about it.
 	 */
-	name = zend_string_init_interned(method, strlen(method), 0);
+	/*
+	 * Lowercased, because that is how a class's function_table is keyed. Without
+	 * it every single-word method resolves and every camelCase one does not --
+	 * exists() and read() would work while readRange() reported a FileSystem
+	 * that "does not implement" a method it plainly does.
+	 */
+	name = zend_string_tolower_ex(zend_string_init(method, strlen(method), 0), false);
 	fn = zend_hash_find_ptr(&Z_OBJCE(sandbox->filesystem_zv)->function_table, name);
 	zend_string_release(name);
 
@@ -196,15 +203,28 @@ luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const c
 	 */
 	if (instanceof_function(EG(exception)->ce, luaext_ce_vfs_error)) {
 		if (refusal != NULL) {
-			zval message;
+			zval scratch;
+			zval *message;
 
-			ZVAL_UNDEF(&message);
-			zend_read_property_ex(zend_get_exception_base(EG(exception)), EG(exception),
-								  ZSTR_KNOWN(ZEND_STR_MESSAGE), 1, &message);
+			/*
+			 * The RETURN VALUE, not the scratch zval. zend_read_property_ex only
+			 * writes through its last argument for properties it has to
+			 * materialise; for an ordinary declared property -- which
+			 * Exception::$message is -- it hands back a pointer to the property
+			 * itself and leaves the scratch untouched. Reading the scratch left
+			 * every refusal looking like it carried no message, which sent it
+			 * down the host-failure path and turned a `nil, message` a script
+			 * should have handled into an uncatchable error.
+			 */
+			ZVAL_UNDEF(&scratch);
+			message = zend_read_property_ex(zend_get_exception_base(EG(exception)), EG(exception),
+											ZSTR_KNOWN(ZEND_STR_MESSAGE), 1, &scratch);
 
-			if (Z_TYPE(message) == IS_STRING) {
-				*refusal = zend_string_copy(Z_STR(message));
+			if (message != NULL && Z_TYPE_P(message) == IS_STRING) {
+				*refusal = zend_string_copy(Z_STR_P(message));
 			}
+
+			zval_ptr_dtor(&scratch);
 		}
 
 		zend_clear_exception();
@@ -287,4 +307,457 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
 	}
 
 	return true;
+}
+
+/*
+ * Canonicalise a script-supplied path into a zend_string the backend may see.
+ *
+ * The buffer is the caller's, sized from the input, because the canonical form
+ * is never longer than the input plus a leading slash -- canonicalisation only
+ * removes components.
+ */
+zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int index)
+{
+	const char *raw;
+	size_t raw_len;
+	char *buffer;
+	size_t out_len = 0;
+	luaext_vfs_path_status status;
+	zend_string *path;
+
+	raw = luaL_checklstring(L, index, &raw_len);
+
+	/*
+	 * Bounded before allocating. A quota of zero means "no bound from the
+	 * quota", so the buffer bound below is what remains, and it is the same
+	 * ceiling the path module documents.
+	 */
+	if (raw_len > LUAEXT_VFS_PATH_MAX_INPUT) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false,
+						   "A path of %zu bytes is longer than this sandbox will canonicalise",
+						   raw_len);
+		return NULL;
+	}
+
+	buffer = emalloc(raw_len + 2);
+
+	status = luaext_vfs_path_canonical(raw, raw_len, buffer, raw_len + 2, &out_len,
+									   sandbox->policy.vfs_quota.max_path_length,
+									   sandbox->policy.vfs_quota.max_path_depth);
+
+	if (status != LUAEXT_VFS_PATH_OK) {
+		efree(buffer);
+
+		/*
+		 * Fatal rather than `nil, message`, and deliberately so for the escape
+		 * case: a script probing for the root's real location learns nothing from
+		 * a catchable error it can loop over. The others join it because a
+		 * malformed path is a bug in the script, not a condition of the store.
+		 */
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "This path cannot be used: %s",
+						   luaext_vfs_path_reason(status));
+		return NULL;
+	}
+
+	path = zend_string_init(buffer, out_len, 0);
+	efree(buffer);
+
+	return path;
+}
+
+/* -------------------------------------------------------------------------
+ * Open files
+ * ---------------------------------------------------------------------- */
+
+/*
+ * The strong table of open handles, keyed by the handle userdata.
+ *
+ * Deliberately not weak, unlike the coroutine table. A coroutine that becomes
+ * garbage is finished and holds nothing the host needs; a dropped file handle
+ * may still be carrying unwritten bytes, and letting the collector decide when
+ * those reach the backend would make a write's durability depend on GC timing.
+ */
+static void luaext_vfs_push_handles(lua_State *L)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_handles) == LUA_TTABLE) {
+		return;
+	}
+
+	lua_pop(L, 1);
+	lua_createtable(L, 0, 8);
+
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_handles);
+}
+
+/*
+ * Charge or refund a handle's buffer against both budgets.
+ *
+ * A buffer is the sandbox's memory as much as a Lua string is, so it answers to
+ * Limits::$memoryBytes as well as to the VFS's own maxTotalBytes. Charging only
+ * the VFS quota would let a script hold eight megabytes of file buffers inside a
+ * one megabyte sandbox.
+ */
+bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size_t bytes)
+{
+	size_t cap = sandbox->policy.vfs_quota.max_total_bytes;
+
+	if (cap != 0 && bytes > cap - sandbox->vfs_buffered_bytes) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, true,
+						   "Buffering %zu more byte(s) would pass the %zu byte "
+						   "VfsQuota::$maxTotalBytes",
+						   bytes, cap);
+		return false;
+	}
+
+	sandbox->vfs_buffered_bytes += bytes;
+
+	return true;
+}
+
+static void luaext_vfs_refund_buffer(luaext_sandbox *sandbox, size_t bytes)
+{
+	/* Clamped rather than trusted. The counter is maintained across paths that
+	 * can unwind, and a wrapped size_t here would read as an enormous budget. */
+	sandbox->vfs_buffered_bytes =
+		bytes > sandbox->vfs_buffered_bytes ? 0 : sandbox->vfs_buffered_bytes - bytes;
+}
+
+/* Release what a handle owns and stop counting it. Never calls the backend. */
+static void luaext_vfs_handle_release(luaext_sandbox *sandbox, luaext_vfs_handle *handle)
+{
+	if (handle->buffer != NULL) {
+		luaext_vfs_refund_buffer(sandbox, ZSTR_LEN(handle->buffer));
+		zend_string_release(handle->buffer);
+		handle->buffer = NULL;
+	}
+
+	if (handle->path != NULL) {
+		zend_string_release(handle->path);
+		handle->path = NULL;
+	}
+
+	if (!handle->closed) {
+		handle->closed = true;
+
+		if (sandbox->vfs_open_handles > 0) {
+			sandbox->vfs_open_handles--;
+		}
+	}
+}
+
+void luaext_vfs_handle_gc(luaext_sandbox *sandbox, luaext_vfs_handle *handle)
+{
+	luaext_vfs_handle_release(sandbox, handle);
+}
+
+/* Parse Lua's mode string. Returns false for anything that is not one of the
+ * six upstream accepts, rather than guessing at an intent. */
+static bool luaext_vfs_parse_mode(const char *mode, bool *readable, bool *writable, bool *append,
+								  bool *truncate)
+{
+	size_t index = 0;
+
+	if (mode == NULL || mode[0] == '\0') {
+		return false;
+	}
+
+	*readable = false;
+	*writable = false;
+	*append = false;
+	*truncate = false;
+
+	switch (mode[0]) {
+	case 'r':
+		*readable = true;
+		break;
+	case 'w':
+		*writable = true;
+		*truncate = true;
+		break;
+	case 'a':
+		*writable = true;
+		*append = true;
+		break;
+	default:
+		return false;
+	}
+
+	for (index = 1; mode[index] != '\0'; index++) {
+		if (mode[index] == '+') {
+			*readable = true;
+			*writable = true;
+		} else if (mode[index] != 'b') {
+			/* 'b' is accepted and ignored: the VFS moves bytes either way, so
+			 * there is no text translation for it to select. */
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, const char *mode,
+					 zend_string **refusal)
+{
+	luaext_vfs_handle *handle;
+	uint32_t cap = sandbox->policy.vfs_quota.max_open_handles;
+	bool readable;
+	bool writable;
+	bool append;
+	bool truncate;
+	bool exists = false;
+
+	*refusal = NULL;
+
+	if (!luaext_vfs_parse_mode(mode, &readable, &writable, &append, &truncate)) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false,
+						   "\"%s\" is not a file mode; use r, w, a, r+, w+ or a+", mode);
+		return false;
+	}
+
+	if (writable && !luaext_vfs_writable(sandbox)) {
+		/*
+		 * Catchable, unlike a quota. A script asking to write without the
+		 * capability is asking for something the host chose not to grant, which
+		 * is exactly the kind of refusal a script is meant to handle -- and
+		 * unlike a quota, retrying cannot cost the host anything.
+		 */
+		*refusal = zend_string_init("the sandbox may not write files",
+									strlen("the sandbox may not write files"), 0);
+		return false;
+	}
+
+	if (cap != 0 && sandbox->vfs_open_handles >= cap) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, true,
+						   "The sandbox already has %u file(s) open, which is its "
+						   "VfsQuota::$maxOpenHandles",
+						   (unsigned int)cap);
+		return false;
+	}
+
+	/*
+	 * Existence decides two different things -- whether "r" fails and whether a
+	 * buffered open has anything to load -- so it is asked once here rather than
+	 * inferred from a later read's refusal.
+	 */
+	{
+		zval args[1];
+		zval result;
+
+		ZVAL_STR(&args[0], path);
+
+		if (luaext_vfs_call(L, sandbox, "exists", 1, args, &result, refusal) != LUAEXT_VFS_OK) {
+			return false;
+		}
+
+		exists = Z_TYPE(result) == IS_TRUE;
+		zval_ptr_dtor(&result);
+	}
+
+	if (!exists && !writable) {
+		*refusal = zend_string_init("no such file", strlen("no such file"), 0);
+		return false;
+	}
+
+	handle = (luaext_vfs_handle *)lua_newuserdatauv(L, sizeof(*handle), 0);
+	memset(handle, 0, sizeof(*handle));
+
+	handle->readable = readable;
+	handle->writable = writable;
+	handle->append = append;
+	handle->ranged = sandbox->vfs_ranged;
+	handle->path = zend_string_copy(path);
+
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_filemt);
+	lua_setmetatable(L, -2);
+
+	/*
+	 * Counted BEFORE anything else can fail, and the registry entry goes in with
+	 * it. Between those two steps a raised error would leave a handle that is
+	 * counted but unreachable -- so nothing that can raise belongs in the middle.
+	 */
+	sandbox->vfs_open_handles++;
+
+	luaext_vfs_push_handles(L);
+	lua_pushvalue(L, -2);
+	lua_pushboolean(L, 1);
+	lua_rawset(L, -3);
+	lua_pop(L, 1);
+
+	if (handle->ranged) {
+		/*
+		 * Nothing to load. A ranged truncate is the backend's job and is issued
+		 * here so "w" means the same thing to both kinds of backend.
+		 */
+		if (truncate && exists) {
+			zval args[2];
+			zval result;
+
+			ZVAL_STR(&args[0], path);
+			ZVAL_LONG(&args[1], 0);
+
+			if (luaext_vfs_call(L, sandbox, "truncate", 2, args, &result, refusal) !=
+				LUAEXT_VFS_OK) {
+				luaext_vfs_handle_release(sandbox, handle);
+				return false;
+			}
+
+			zval_ptr_dtor(&result);
+		}
+
+		if (append && exists) {
+			zval args[1];
+			zval result;
+
+			ZVAL_STR(&args[0], path);
+
+			if (luaext_vfs_call(L, sandbox, "stat", 1, args, &result, refusal) != LUAEXT_VFS_OK) {
+				luaext_vfs_handle_release(sandbox, handle);
+				return false;
+			}
+
+			if (Z_TYPE(result) == IS_OBJECT) {
+				zval *size = zend_read_property(luaext_ce_file_stat, Z_OBJ(result), "size",
+												strlen("size"), 1, NULL);
+
+				if (size != NULL && Z_TYPE_P(size) == IS_LONG && Z_LVAL_P(size) > 0) {
+					handle->offset = (uint64_t)Z_LVAL_P(size);
+				}
+			}
+
+			zval_ptr_dtor(&result);
+		}
+
+		return true;
+	}
+
+	/* Buffered: load the whole file unless the mode says its old contents are
+	 * about to be thrown away. */
+	if (exists && !truncate) {
+		zval args[1];
+		zval result;
+
+		ZVAL_STR(&args[0], path);
+
+		if (luaext_vfs_call(L, sandbox, "read", 1, args, &result, refusal) != LUAEXT_VFS_OK) {
+			luaext_vfs_handle_release(sandbox, handle);
+			return false;
+		}
+
+		if (Z_TYPE(result) != IS_STRING) {
+			zval_ptr_dtor(&result);
+			luaext_vfs_handle_release(sandbox, handle);
+			luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+							   "FileSystem::read() did not return a string");
+			return false;
+		}
+
+		if (!luaext_vfs_charge_buffer_public(L, sandbox, Z_STRLEN(result))) {
+			zval_ptr_dtor(&result);
+			luaext_vfs_handle_release(sandbox, handle);
+			return false;
+		}
+
+		handle->buffer = zend_string_copy(Z_STR(result));
+		zval_ptr_dtor(&result);
+	} else {
+		handle->buffer = zend_string_alloc(0, 0);
+		ZSTR_LEN(handle->buffer) = 0;
+		ZSTR_VAL(handle->buffer)[0] = '\0';
+
+		/* A truncating open of an existing file is itself a change, or closing
+		 * without writing would leave the old contents behind. */
+		handle->dirty = truncate && exists;
+	}
+
+	if (append) {
+		handle->offset = ZSTR_LEN(handle->buffer);
+	}
+
+	return true;
+}
+
+bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_handle *handle,
+							 zend_string **refusal)
+{
+	*refusal = NULL;
+
+	if (handle->closed) {
+		return true;
+	}
+
+	if (handle->dirty && handle->buffer != NULL) {
+		zval args[2];
+		zval result;
+
+		ZVAL_STR(&args[0], handle->path);
+		ZVAL_STR(&args[1], handle->buffer);
+
+		if (luaext_vfs_call(L, sandbox, "write", 2, args, &result, refusal) != LUAEXT_VFS_OK) {
+			/*
+			 * Released even so. The bytes are gone either way -- there is nowhere
+			 * else to put them -- and keeping the handle open would leak the
+			 * buffer and the quota slot on every failed close.
+			 */
+			luaext_vfs_handle_release(sandbox, handle);
+			return false;
+		}
+
+		zval_ptr_dtor(&result);
+		handle->dirty = false;
+	}
+
+	luaext_vfs_handle_release(sandbox, handle);
+
+	return true;
+}
+
+void luaext_vfs_sweep(luaext_sandbox *sandbox)
+{
+	lua_State *L = sandbox->L;
+
+	if (L == NULL || sandbox->vfs_open_handles == 0) {
+		return;
+	}
+
+	luaext_vfs_push_handles(L);
+
+	lua_pushnil(L);
+
+	while (lua_next(L, -2) != 0) {
+		luaext_vfs_handle *handle = (luaext_vfs_handle *)lua_touserdata(L, -2);
+
+		lua_pop(L, 1); /* value; the key stays for lua_next */
+
+		if (handle != NULL && !handle->closed) {
+			zend_string *refusal = NULL;
+
+			/*
+			 * A failure here cannot be reported: the call is returning and no
+			 * script is left to hear it. What must NOT happen is a pending PHP
+			 * exception escaping into the caller's teardown, so it is cleared --
+			 * the flush was best-effort by the time we reached the sweep.
+			 */
+			(void)luaext_vfs_handle_close(L, sandbox, handle, &refusal);
+
+			if (refusal != NULL) {
+				zend_string_release(refusal);
+			}
+
+			if (EG(exception)) {
+				zend_clear_exception();
+			}
+		}
+	}
+
+	lua_pop(L, 1);
+
+	/* The table is rebuilt empty rather than drained key by key: every handle in
+	 * it is closed now, and clearing during the walk above would be a mutation
+	 * lua_next does not allow. */
+	lua_createtable(L, 0, 8);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_handles);
+
+	sandbox->vfs_open_handles = 0;
 }

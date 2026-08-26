@@ -57,6 +57,7 @@ const char luaext_key_refs = 0;
 const char luaext_key_errmt = 0;
 const char luaext_key_filemt = 0;
 const char luaext_key_threads = 0;
+const char luaext_key_handles = 0;
 const char luaext_key_loaded = 0;
 const char luaext_key_preload = 0;
 const char luaext_key_loading = 0;

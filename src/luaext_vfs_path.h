@@ -36,6 +36,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * The longest input this module will look at, independent of any quota.
+ *
+ * A ceiling exists so a caller can size its output buffer from the input length
+ * without a script being able to name a length that makes that arithmetic
+ * interesting. VfsQuota::$maxPathLength is the tighter, configurable bound; this
+ * is the one that always applies.
+ */
+#define LUAEXT_VFS_PATH_MAX_INPUT 8192u
+
 /* Why a canonicalisation failed. The caller turns this into a message. */
 typedef enum {
 	LUAEXT_VFS_PATH_OK = 0,
