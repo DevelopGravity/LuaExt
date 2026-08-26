@@ -186,17 +186,38 @@ static void luaext_sandbox_unlink(luaext_sandbox *sandbox)
  * ---------------------------------------------------------------------- */
 
 /*
- * Reached only when Lua raises outside a protected call. Nothing in Wave 1 runs
- * unprotected Lua except luaL_requiref during construction, but an interpreter
- * without a panic function calls abort(), which is never an acceptable outcome
- * for a request.
+ * Reached only when Lua raises outside a protected call, which is meant to be
+ * unreachable: every entry into the interpreter goes through lua_pcall, and the
+ * host-side helpers that build Lua values from a PHP method protect their own
+ * pushes (luaext_phpcall_push, luaext_require_preload) precisely so that a
+ * memory error there unwinds to them instead of arriving here.
  *
- * TODO: raise PanicError and mark the sandbox unusable instead of aborting the
- * request outright.
+ * THE OLD TODO HERE SAID TO RAISE PanicError INSTEAD. That is not implementable,
+ * and the reason is worth writing down so nobody spends another afternoon on it:
+ * a panic function may not return. Lua calls abort() the moment it does, so
+ * throwing a PHP exception and returning 0 would trade a controlled request
+ * failure for killing the whole process -- strictly worse in a worker SAPI. The
+ * only ways out are longjmp to a recovery point, which needs a setjmp at every
+ * unprotected entry and there are none left to put one at, or ending the request.
+ *
+ * So it ends the request, and the cost is honest rather than hidden:
+ * zend_error_noreturn bails out past lua_close, and the Lua heap -- malloc'd
+ * rather than emalloc'd, so PHP's allocator will not reclaim it -- is leaked for
+ * the life of the process. That is the price of a condition that should never
+ * occur; making it cheaper would mean making it survivable, and a state that has
+ * panicked is not one to keep running scripts on.
+ *
+ * The flag is set first so anything that still looks at this sandbox during
+ * shutdown sees that its interpreter is not to be touched.
  */
 static int luaext_sandbox_panic(lua_State *L)
 {
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	const char *message = lua_tostring(L, -1);
+
+	if (sandbox != NULL) {
+		sandbox->panicked = true;
+	}
 
 	zend_error_noreturn(E_ERROR, "luaext: unprotected error in the Lua interpreter: %s",
 						message != NULL ? message : "(no message)");

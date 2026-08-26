@@ -636,6 +636,18 @@ static int luaext_require_call(lua_State *L)
  * preloadModule
  * ---------------------------------------------------------------------- */
 
+/* Arguments: the loader, then the module name. Runs under the protected call
+ * below, so a memory error building the table unwinds there. */
+static int luaext_require_preload_store(lua_State *L)
+{
+	luaext_require_push_table(L, &luaext_key_preload);
+	lua_pushvalue(L, 2); /* name */
+	lua_pushvalue(L, 1); /* loader */
+	lua_rawset(L, -3);
+
+	return 0;
+}
+
 bool luaext_require_preload(lua_State *L, luaext_sandbox *sandbox, const char *name,
 							size_t name_len)
 {
@@ -650,11 +662,39 @@ bool luaext_require_preload(lua_State *L, luaext_sandbox *sandbox, const char *n
 		return false;
 	}
 
-	luaext_require_push_table(L, &luaext_key_preload);
+	if (!lua_checkstack(L, 4)) {
+		lua_pop(L, 1);
+		zend_throw_exception(luaext_ce_memory_limit_error,
+							 "Cannot preload a module: the interpreter stack cannot grow", 0);
+		return false;
+	}
+
+	/*
+	 * PROTECTED, and that is the point rather than ceremony.
+	 *
+	 * This runs from a PHP method, so there is no enclosing lua_pcall to catch
+	 * anything it raises -- and building the preload table allocates, which means
+	 * a memory error here would reach the panic function. A panic cannot return
+	 * (Lua calls abort() if it does), so the handler has to end the request, and
+	 * it does so by longjmping straight past lua_close: the whole Lua heap, which
+	 * lives outside PHP's allocator, is leaked.
+	 *
+	 * luaext_phpcall_push() protects its own pushes for exactly this reason. This
+	 * is the same shape.
+	 */
+	lua_pushcfunction(L, luaext_require_preload_store);
+	lua_insert(L, -2); /* [store, loader] */
 	lua_pushlstring(L, name, name_len);
-	lua_pushvalue(L, -3); /* the loader, below both pushes */
-	lua_rawset(L, -3);
-	lua_pop(L, 2); /* the preload table and the loader */
+
+	if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+		const char *message = lua_tostring(L, -1);
+
+		zend_throw_exception_ex(luaext_ce_memory_limit_error, 0, "Cannot preload \"%s\": %s", name,
+								message != NULL ? message : "the interpreter ran out of memory");
+		lua_pop(L, 1);
+
+		return false;
+	}
 
 	return true;
 }
