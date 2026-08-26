@@ -103,6 +103,7 @@ if (PHP_LUAEXT != "no") {
 		"src\\luaext_debuglib.c src\\luaext_defer.c src\\luaext_error.c " +
 		"src\\luaext_exec.c " +
 		"src\\luaext_function.c src\\luaext_interrupt.c src\\luaext_iolib.c " +
+		"src\\luaext_require.c " +
 		"src\\luaext_mathlib.c " +
 		"src\\luaext_openlibs.c src\\luaext_oslib.c src\\luaext_output.c " +
 		"src\\luaext_pending.c src\\luaext_phpcall.c src\\luaext_thread.c " +

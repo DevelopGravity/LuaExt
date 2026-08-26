@@ -302,6 +302,10 @@ os.clock	function
 os.date	function
 os.difftime	function
 os.time	function
+package	table
+package.loaded	table
+package.path	string
+package.preload	table
 pairs	function
 pcall	function
 print	function
@@ -309,6 +313,7 @@ rawequal	function
 rawget	function
 rawlen	function
 rawset	function
+require	function
 select	function
 setmetatable	function
 string	table
@@ -786,6 +791,10 @@ os.clock	function
 os.date	function
 os.difftime	function
 os.time	function
+package	table
+package.loaded	table
+package.path	string
+package.preload	table
 pairs	function
 pcall	function
 print	function
@@ -793,6 +802,7 @@ rawequal	function
 rawget	function
 rawlen	function
 rawset	function
+require	function
 select	function
 setmetatable	function
 string	table

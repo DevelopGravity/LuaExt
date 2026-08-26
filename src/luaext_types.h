@@ -441,6 +441,27 @@ struct luaext_sandbox {
 	uint32_t vfs_open_handles;
 	size_t vfs_buffered_bytes;
 
+	/*
+	 * Files the backend holds, for VfsQuota::$maxFiles.
+	 *
+	 * Counted once on the first creation and maintained from there, rather than
+	 * recounted per create: counting means walking the namespace through the
+	 * backend, and paying for that on every new file would make the quota cost
+	 * more than the operation it bounds.
+	 */
+	uint32_t vfs_file_count;
+	bool vfs_file_count_known;
+
+	/*
+	 * The host's ModuleResolver and the search patterns require() walks, owned
+	 * rather than borrowed from config_zv -- same rule as filesystem_zv.
+	 */
+	zval module_resolver_zv;
+	zval module_paths_zv;
+
+	/* Nesting depth of require() calls in flight, for maxRequireDepth. */
+	uint32_t require_depth;
+
 	bool allow_pause;
 	bool closed;
 	bool panicked;

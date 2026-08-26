@@ -23,6 +23,15 @@
  *     carries. A one-byte write at offset 2^40 asks the backend for a one
  *     terabyte file, and the per-file quota has to see it as one.
  *
+ * QUOTAS SPLIT IN TWO as well, along the line of what a refusal costs the host.
+ * A RESOURCE bound -- open handles, total buffered bytes, file count, backend
+ * operations -- is FATAL, because each caps something already spent or still
+ * held, and a script able to catch one would retry until the host paid again.
+ * REQUEST VALIDATION -- a range past maxFileBytes, an overlong or too-deep path
+ * -- is CATCHABLE, because all of it is refused before the backend is called, so
+ * a refusal costs nothing and a script may legitimately adapt. Catching one
+ * never lets a script exceed the bound, only learn where it is.
+ *
  * ERRORS SPLIT IN TWO, and the split is an allowlist rather than a catch-all.
  * A VfsError from the backend is the script's business: it comes back as
  * `nil, message` the way any io error does. ANY other exception is the host's
@@ -199,6 +208,11 @@ bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size
  * needs the backend has to have happened at the sweep already.
  */
 void luaext_vfs_handle_gc(luaext_sandbox *sandbox, luaext_vfs_handle *handle);
+
+/*
+ * Tell the quota a file is gone, so a script that deletes can create again.
+ */
+void luaext_vfs_note_file_removed(luaext_sandbox *sandbox);
 
 /*
  * Close every handle still open, at the end of the outermost call.

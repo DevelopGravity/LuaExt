@@ -56,8 +56,10 @@ sort($reported);
 var_dump($toggles === $reported);
 var_dump(array_reduce($features['capabilities'], static fn ($carry, $v) => $carry && is_bool($v), true));
 
-// Named individually so that implementing one is a visible, deliberate edit
-// here rather than a silent flip. See docs/lua-api.md for what each still lacks.
+// Every capability this build implements is now implemented, so this list is
+// empty. It stays asserted rather than deleted: adding a capability without its
+// subsystem must show up here as a name appearing, which is the under-reporting
+// direction and the one worth failing a build over.
 var_dump(array_keys(array_filter($features['capabilities'], static fn (bool $v): bool => !$v)));
 
 ?>
@@ -86,11 +88,5 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
-array(3) {
-  [0]=>
-  string(7) "require"
-  [1]=>
-  string(3) "vfs"
-  [2]=>
-  string(8) "vfsWrite"
+array(0) {
 }

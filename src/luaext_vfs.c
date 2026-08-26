@@ -365,6 +365,15 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 	return path;
 }
 
+void luaext_vfs_note_file_removed(luaext_sandbox *sandbox)
+{
+	/* Only meaningful once something has counted. Before that the first
+	 * creation does a full walk and sees the post-delete truth anyway. */
+	if (sandbox->vfs_file_count_known && sandbox->vfs_file_count > 0) {
+		sandbox->vfs_file_count--;
+	}
+}
+
 /* -------------------------------------------------------------------------
  * Open files
  * ---------------------------------------------------------------------- */
@@ -497,6 +506,163 @@ static bool luaext_vfs_parse_mode(const char *mode, bool *readable, bool *writab
 	return true;
 }
 
+/* -------------------------------------------------------------------------
+ * VfsQuota::$maxFiles
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Count the files under `dir`, recursively, stopping once `ceiling` is passed.
+ *
+ * FileSystem::list() reports direct children only, and nothing in the interface
+ * says which of them are directories, so each entry costs a stat(). That is why
+ * the walk stops early: the caller only ever needs to know whether the count has
+ * reached the quota, never what it is exactly, and a namespace far larger than
+ * the quota must not cost proportionally more to refuse.
+ *
+ * Depth is bounded by the same quota the path canonicaliser uses, so a backend
+ * reporting a cyclic namespace cannot recurse forever.
+ */
+static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const char *dir,
+								   uint32_t ceiling, uint32_t depth, uint32_t *count)
+{
+	zval args[1];
+	zval result;
+	zend_string *refusal = NULL;
+	zval *entry;
+	uint32_t max_depth = sandbox->policy.vfs_quota.max_path_depth;
+
+	if (max_depth != 0 && depth > max_depth) {
+		return true;
+	}
+
+	ZVAL_STR(&args[0], zend_string_init(dir, strlen(dir), 0));
+
+	if (luaext_vfs_call(L, sandbox, "list", 1, args, &result, &refusal) != LUAEXT_VFS_OK) {
+		zval_ptr_dtor(&args[0]);
+
+		if (refusal != NULL) {
+			/* A directory the backend will not list contributes nothing rather
+			 * than aborting the count -- the same "treat it as absent" rule the
+			 * module search uses. */
+			zend_string_release(refusal);
+			return true;
+		}
+
+		return false;
+	}
+
+	zval_ptr_dtor(&args[0]);
+
+	if (Z_TYPE(result) != IS_ARRAY) {
+		zval_ptr_dtor(&result);
+		return true;
+	}
+
+	ZEND_HASH_FOREACH_VAL(Z_ARRVAL(result), entry)
+	{
+		smart_str child = {0};
+		zval stat_args[1];
+		zval stat_result;
+		bool is_dir = false;
+
+		if (*count > ceiling) {
+			break;
+		}
+
+		if (Z_TYPE_P(entry) != IS_STRING) {
+			continue;
+		}
+
+		smart_str_appends(&child, dir);
+
+		if (strcmp(dir, "/") != 0) {
+			smart_str_appendc(&child, '/');
+		}
+
+		smart_str_appendl(&child, Z_STRVAL_P(entry), Z_STRLEN_P(entry));
+		smart_str_0(&child);
+
+		ZVAL_STR(&stat_args[0], zend_string_copy(child.s));
+
+		if (luaext_vfs_call(L, sandbox, "stat", 1, stat_args, &stat_result, &refusal) ==
+			LUAEXT_VFS_OK) {
+			if (Z_TYPE(stat_result) == IS_OBJECT) {
+				zval *flag = zend_read_property(luaext_ce_file_stat, Z_OBJ(stat_result),
+												"isDirectory", strlen("isDirectory"), 1, NULL);
+
+				is_dir = flag != NULL && Z_TYPE_P(flag) == IS_TRUE;
+			}
+
+			zval_ptr_dtor(&stat_result);
+		} else if (refusal != NULL) {
+			zend_string_release(refusal);
+		} else {
+			zval_ptr_dtor(&stat_args[0]);
+			smart_str_free(&child);
+			zval_ptr_dtor(&result);
+			return false;
+		}
+
+		zval_ptr_dtor(&stat_args[0]);
+
+		if (is_dir) {
+			if (!luaext_vfs_count_files(L, sandbox, ZSTR_VAL(child.s), ceiling, depth + 1, count)) {
+				smart_str_free(&child);
+				zval_ptr_dtor(&result);
+				return false;
+			}
+		} else {
+			(*count)++;
+		}
+
+		smart_str_free(&child);
+	}
+	ZEND_HASH_FOREACH_END();
+
+	zval_ptr_dtor(&result);
+
+	return true;
+}
+
+/*
+ * Refuse a new file when the namespace is already at VfsQuota::$maxFiles.
+ *
+ * Fatal rather than a refusal a script may handle, like the other quotas: a
+ * script that could catch this would create in a loop, and the bound exists to
+ * cap what the host's store has to hold.
+ */
+static bool luaext_vfs_charge_new_file(lua_State *L, luaext_sandbox *sandbox)
+{
+	uint32_t cap = sandbox->policy.vfs_quota.max_files;
+
+	if (cap == 0) {
+		return true;
+	}
+
+	if (!sandbox->vfs_file_count_known) {
+		uint32_t count = 0;
+
+		if (!luaext_vfs_count_files(L, sandbox, "/", cap, 0, &count)) {
+			return false;
+		}
+
+		sandbox->vfs_file_count = count;
+		sandbox->vfs_file_count_known = true;
+	}
+
+	if (sandbox->vfs_file_count >= cap) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, true,
+						   "The filesystem already holds %u file(s), which is its "
+						   "VfsQuota::$maxFiles",
+						   (unsigned int)cap);
+		return false;
+	}
+
+	sandbox->vfs_file_count++;
+
+	return true;
+}
+
 bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, const char *mode,
 					 zend_string **refusal)
 {
@@ -557,6 +723,12 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 
 	if (!exists && !writable) {
 		*refusal = zend_string_init("no such file", strlen("no such file"), 0);
+		return false;
+	}
+
+	/* The one place a file comes into existence. Charged before the handle is
+	 * built, so a refusal costs nothing to unwind. */
+	if (!exists && !luaext_vfs_charge_new_file(L, sandbox)) {
 		return false;
 	}
 

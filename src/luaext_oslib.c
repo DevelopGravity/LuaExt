@@ -617,6 +617,8 @@ static int luaext_oslib_remove(lua_State *L)
 	zend_string_release(path);
 	zval_ptr_dtor(&result);
 
+	luaext_vfs_note_file_removed(sandbox);
+
 	lua_pushboolean(L, 1);
 
 	return 1;

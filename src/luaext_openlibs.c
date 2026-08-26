@@ -22,6 +22,7 @@
 #include "luaext_corolib.h"
 #include "luaext_error.h"
 #include "luaext_iolib.h"
+#include "luaext_require.h"
 
 #include <lauxlib.h>
 #include <lualib.h>
@@ -504,6 +505,10 @@ static int luaext_openlibs_build(lua_State *L)
 
 	if (!luaext_iolib_install(L, sandbox)) {
 		luaL_error(L, "luaext: the \"io\" library could not be assembled");
+	}
+
+	if (!luaext_require_install(L, sandbox)) {
+		return false;
 	}
 
 	/*

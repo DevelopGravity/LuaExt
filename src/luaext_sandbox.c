@@ -27,6 +27,7 @@
 #include "luaext_output.h"
 #include "luaext_phpcall.h"
 #include "luaext_timers.h"
+#include "luaext_require.h"
 #include "luaext_vfs.h"
 
 #include <lauxlib.h>
@@ -246,6 +247,7 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	luaext_timers_detach(sandbox);
 	luaext_output_shutdown(sandbox);
 	luaext_vfs_shutdown(sandbox);
+	luaext_require_shutdown(sandbox);
 
 	L = sandbox->L;
 	sandbox->L = NULL;
@@ -407,6 +409,10 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 		RETURN_THROWS();
 	}
 
+	if (!luaext_require_init_from_config(sandbox, config)) {
+		RETURN_THROWS();
+	}
+
 	if (!luaext_openlibs_install(sandbox)) {
 		RETURN_THROWS();
 	}
@@ -526,9 +532,9 @@ static void luaext_add_capability_support(zval *array)
 		{"loadBytecode", true},
 		{"compileAtRuntime", true},
 		{"dumpBytecode", true},
-		{"require", false},
-		{"vfs", false},
-		{"vfsWrite", false},
+		{"require", true},
+		{"vfs", true},
+		{"vfsWrite", true},
 		{"coroutines", true},
 		{"osTime", true},
 		{"osEnv", true},
@@ -1005,7 +1011,68 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 {
-	LUAEXT_METHOD_PENDING(Z_LUAEXT_SANDBOX_P(ZEND_THIS), "preloadModule");
+	luaext_sandbox *sandbox;
+	zend_string *name;
+	zval *loader;
+	lua_State *L;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+	Z_PARAM_STR(name)
+	Z_PARAM_ZVAL(loader)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Refused when the capability is absent rather than stored for later. A
+	 * preload that no require() can ever reach is a host mistake, and reporting
+	 * it here names the line that made it -- storing it silently would surface
+	 * as a module simply not being found, somewhere else entirely.
+	 */
+	if (!luaext_has_cap(&sandbox->policy, LUAEXT_CAP_REQUIRE)) {
+		zend_throw_exception(luaext_ce_capability_error,
+							 "Preloading a module needs the require capability, which this sandbox "
+							 "was not granted",
+							 0);
+		RETURN_THROWS();
+	}
+
+	L = sandbox->L;
+
+	if (!lua_checkstack(L, 4)) {
+		zend_throw_exception(luaext_ce_memory_limit_error,
+							 "Cannot preload a module: the interpreter stack cannot grow", 0);
+		RETURN_THROWS();
+	}
+
+	/*
+	 * A LuaFunction is already a Lua value and goes in as itself; anything else
+	 * is a PHP callable and becomes a bound closure, the same one registerLibrary
+	 * builds. Either way what lands in package.preload is a Lua function, so
+	 * require() has one shape to call rather than two.
+	 */
+	if (Z_TYPE_P(loader) == IS_OBJECT &&
+		instanceof_function(Z_OBJCE_P(loader), luaext_ce_lua_function)) {
+		luaext_function_obj *handle = luaext_function_from_obj(Z_OBJ_P(loader));
+
+		if (handle->ref < 0) {
+			zend_throw_exception(luaext_ce_configuration_error,
+								 "That LuaFunction belongs to a sandbox that has been closed", 0);
+			RETURN_THROWS();
+		}
+
+		luaext_convert_ref_push(sandbox, L, handle->ref);
+	} else if (!luaext_phpcall_push(sandbox, loader, ZSTR_VAL(name))) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_require_preload(L, sandbox, ZSTR_VAL(name), ZSTR_LEN(name))) {
+		RETURN_THROWS();
+	}
 }
 
 /*
