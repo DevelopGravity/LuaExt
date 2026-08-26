@@ -83,6 +83,11 @@ ZEND_STATIC_ASSERT(sizeof(lua_Integer) == 8, "luaext assumes 64-bit Lua integers
  * Ceiling on the size hint taken from a Lua table before reading it. The hint
  * comes from lua_rawlen, which a script controls.
  */
+/* Elements between interrupt checks in the Lua -> PHP walk. A power of two so
+ * the test is a mask; 1024 keeps the check off the per-element cost while still
+ * bounding how long a walk can outlive a tripped limit. */
+#define LUAEXT_CONVERT_IRQ_STRIDE 1024u
+
 #define LUAEXT_CONVERT_SIZE_HINT_MAX 1024u
 
 /* -------------------------------------------------------------------------
@@ -594,6 +599,11 @@ typedef struct {
 	 */
 	bool bill;
 	size_t produced;
+
+	/* Elements walked, for the strided interrupt check. Counts across the whole
+	 * conversion rather than per table, so a wide tree of small tables is bounded
+	 * the same way one large table is. */
+	uint32_t elements;
 } luaext_convert_to_ctx;
 
 static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_convert_step *step,
@@ -870,6 +880,36 @@ static bool luaext_convert_table(luaext_convert_to_ctx *ctx, int index, luaext_c
 		zval element;
 		int value_index = lua_gettop(L);
 
+		/*
+		 * Asked, not raised. LUAEXT_CHECK would longjmp, and this loop holds a
+		 * half-built PHP array plus two Lua stack slots -- so it unwinds through
+		 * the ordinary failure path instead, which releases both.
+		 *
+		 * Strided, like the interrupt checks patched into the vendored string and
+		 * utf8 loops, because this one is per ELEMENT rather than per allocation:
+		 * a relaxed load is cheap but a million of them is not free, and the
+		 * quantity being bounded is time, which a stride still bounds.
+		 *
+		 * WHAT THIS CATCHES, precisely. The callback bridge already tests the flag
+		 * before entering PHP, so a conversion that starts after a breach never
+		 * begins. This is the other half: a conversion ALREADY UNDERWAY when the
+		 * watchdog raises the flag mid-walk. Before it, that walk ran to
+		 * completion however long it took -- bounded by memoryBytes, since the
+		 * table had to be built inside the sandbox, but not by the CPU or
+		 * wall-clock limit the host actually set.
+		 *
+		 * That window is a race with a background thread and has no deterministic
+		 * test; it is guarded by reasoning rather than by a .phpt, which is worth
+		 * stating plainly rather than implying coverage that does not exist.
+		 */
+		if ((++ctx->elements & (LUAEXT_CONVERT_IRQ_STRIDE - 1u)) == 0u &&
+			luaext_interrupt_pending(L)) {
+			lua_pop(L, 2);
+
+			return luaext_convert_to_fail(
+				ctx, step, "Converting a Lua table to PHP was interrupted by a limit");
+		}
+
 		child.parent = step;
 		child.container = NULL;
 
@@ -996,7 +1036,10 @@ static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_c
 static bool luaext_convert_to_zval_inner(luaext_sandbox *sandbox, lua_State *L, int index,
 										 zval *out, bool bill, size_t *billed)
 {
-	luaext_convert_to_ctx ctx;
+	/* Zeroed rather than assigned field by field: `bill` and `produced` decide
+	 * whether the memory limit is charged, so a field left out is not a missing
+	 * value but a wrong one. */
+	luaext_convert_to_ctx ctx = {0};
 	luaext_convert_step root;
 	bool converted;
 
@@ -1006,6 +1049,7 @@ static bool luaext_convert_to_zval_inner(luaext_sandbox *sandbox, lua_State *L, 
 	ctx.max_depth = luaext_convert_depth_limit(sandbox);
 	ctx.bill = bill;
 	ctx.produced = 0;
+	ctx.elements = 0;
 
 	luaext_convert_step_root(&root);
 
@@ -1068,7 +1112,17 @@ bool luaext_convert_stack_to_array(luaext_sandbox *sandbox, lua_State *L, int fi
 	LUAEXT_NO_RAISE_BEGIN(L);
 
 	for (offset = 0; offset < count && converted; offset++) {
-		luaext_convert_to_ctx ctx;
+		/*
+		 * Zeroed, and that is a FIX rather than tidying: this site assigned only
+		 * sandbox/L/root/max_depth and left `bill` and `produced` as stack
+		 * garbage, both of which luaext_convert_account() reads. A non-zero
+		 * `bill` here charges the memory limit for values on the results path --
+		 * the one path the design says must never be charged, because nothing
+		 * ever discharges it. It would have shrunk the effective limit on every
+		 * call until the sandbox refused to run, and only stayed invisible
+		 * because that stack slot happened to be zero.
+		 */
+		luaext_convert_to_ctx ctx = {0};
 		luaext_convert_step root;
 		char label[48];
 		zval element;

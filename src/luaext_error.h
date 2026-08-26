@@ -49,6 +49,14 @@
 #define LUAEXT_NO_RAISE_END(L) ((void)(L))
 #endif
 
+/*
+ * Whether an interrupt is pending, without raising one.
+ *
+ * For code that holds PHP state and therefore must not longjmp -- the Lua -> PHP
+ * conversion loops. Defined in luaext_interrupt.c beside luaext_raise_interrupt.
+ */
+bool luaext_interrupt_pending(lua_State *L);
+
 /* Install the error metatable in the registry. Called once per lua_State. */
 void luaext_error_init(luaext_sandbox *sandbox);
 

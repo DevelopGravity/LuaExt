@@ -31,6 +31,25 @@
  * only thing that stops the script at the next instruction. Clearing it on raise
  * would make "catch it by dying in a finaliser" a working escape.
  */
+/*
+ * Whether an interrupt is pending, WITHOUT raising.
+ *
+ * The companion to luaext_raise_interrupt, and it exists because the Lua -> PHP
+ * direction may not raise. Conversion runs with PHP zvals in hand and, in the
+ * callback direction, underneath a C frame that PHP is about to return through:
+ * a longjmp from there strands whatever the converter has built. So the loops
+ * ask, and unwind through their own failure path instead.
+ *
+ * Relaxed like the hot-path check, and for the same reason -- it only answers
+ * "is anything pending?". The caller is not acting on the reason, only stopping.
+ */
+bool luaext_interrupt_pending(lua_State *L)
+{
+	const luaext_irq *queue = LUAEXT_IRQ(L);
+
+	return queue != NULL && atomic_load_explicit(&queue->interrupted, memory_order_relaxed) != 0;
+}
+
 void luaext_raise_interrupt(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
