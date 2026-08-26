@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 2d1c4607a2cbe02169e4b6d00ca365960ba92e38 */
+ * Stub hash: 7d43c6cf51a7ef4effdcae9ad0b7496777386259 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaTrace, 0, 0, IS_ARRAY, 1)
 ZEND_END_ARG_INFO()
@@ -14,6 +14,13 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exce
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaLine, 0, 0, IS_LONG, 1)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaException___serialize, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaException___unserialize, 0, 1, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, data, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
 #define arginfo_class_DevelopGravity_LuaExt_Exception_LuaException_getLuaTrace arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaTrace
@@ -36,6 +43,8 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_DevelopGravity_LuaExt_Exception_LuaLogicException_getLuaLine arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaLine
 
+ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __serialize);
+ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __unserialize);
 ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, getLuaTrace);
 ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, getLuaTraceAsString);
 ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, getSandbox);
@@ -57,6 +66,8 @@ static const zend_function_entry class_DevelopGravity_LuaExt_Exception_LuaThrowa
 };
 
 static const zend_function_entry class_DevelopGravity_LuaExt_Exception_LuaException_methods[] = {
+	ZEND_ME(DevelopGravity_LuaExt_Exception_LuaException, __serialize, arginfo_class_DevelopGravity_LuaExt_Exception_LuaException___serialize, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Exception_LuaException, __unserialize, arginfo_class_DevelopGravity_LuaExt_Exception_LuaException___unserialize, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Exception_LuaException, getLuaTrace, arginfo_class_DevelopGravity_LuaExt_Exception_LuaException_getLuaTrace, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Exception_LuaException, getLuaTraceAsString, arginfo_class_DevelopGravity_LuaExt_Exception_LuaException_getLuaTraceAsString, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Exception_LuaException, getSandbox, arginfo_class_DevelopGravity_LuaExt_Exception_LuaException_getSandbox, ZEND_ACC_PUBLIC)

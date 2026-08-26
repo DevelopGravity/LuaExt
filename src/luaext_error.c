@@ -1129,6 +1129,215 @@ static void luaext_return_lua_line(zval *this_zv, zval *return_value)
 	RETURN_LONG(line);
 }
 
+/* -------------------------------------------------------------------------
+ * Serialization
+ *
+ * Sandbox exceptions have to survive a queue. A host that runs Lua from a job
+ * gets its failures reported through whatever the framework does with an
+ * exception, and several of those paths serialize the object -- so an exception
+ * that refuses to serialize breaks the reporting rather than the sandbox.
+ *
+ * It cannot simply be allowed, either. The Lua context lives under mangled keys
+ * that no PHP syntax can write, which is what stops a host forging a traceback
+ * onto an exception it made itself -- but unserialize() is not PHP syntax. It
+ * writes straight into the property table, so before these handlers existed a
+ * crafted payload produced a working getLuaTrace(), getLuaLine() and rendered
+ * traceback out of nothing.
+ *
+ * Owning both directions fixes both problems at once: __serialize decides what
+ * leaves, and __unserialize decides what is allowed back in. THE INPUT IS
+ * HOSTILE. Every frame and every field is checked, and anything that does not
+ * match the shape luaext_error_capture() produces is discarded WHOLE rather than
+ * partially honoured -- a half-validated traceback is a type confusion waiting
+ * to happen, in the one code path that only runs when something already failed.
+ * ---------------------------------------------------------------------- */
+
+/* The serialized form's keys. Deliberately ordinary names: the mangled keys are
+ * an internal storage detail and are never accepted from a payload. */
+#define LUAEXT_SER_MESSAGE "message"
+#define LUAEXT_SER_CODE "code"
+#define LUAEXT_SER_FILE "file"
+#define LUAEXT_SER_LINE "line"
+#define LUAEXT_SER_TRACE "luaTrace"
+
+/* Copy one declared property of the base Exception into the outgoing array. */
+static void luaext_ser_put_base(zval *out, zend_object *exception, const char *name, const char *as)
+{
+	zval scratch;
+	zval *value;
+
+	ZVAL_UNDEF(&scratch);
+	value = zend_read_property(zend_get_exception_base(exception), exception, name, strlen(name), 1,
+							   &scratch);
+
+	if (value != NULL && Z_TYPE_P(value) != IS_UNDEF) {
+		Z_TRY_ADDREF_P(value);
+		add_assoc_zval(out, as, value);
+	}
+
+	zval_ptr_dtor(&scratch);
+}
+
+/*
+ * Whether `frame` is shaped like something luaext_error_capture() produced.
+ *
+ * Field-by-field rather than "is an array", because the readers downstream index
+ * it by name and assume the type: luaext_frame_string() would hand a caller an
+ * integer's bytes if a payload put an integer under "source".
+ *
+ * Unknown keys are refused too. A frame carrying anything the capture path does
+ * not emit did not come from the capture path, and guessing which extras are
+ * harmless is exactly the judgement this function exists to avoid making.
+ */
+static bool luaext_ser_frame_ok(const zval *frame)
+{
+	zend_string *key;
+	zval *value;
+
+	if (Z_TYPE_P(frame) != IS_ARRAY) {
+		return false;
+	}
+
+	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(frame), key, value)
+	{
+		if (key == NULL) {
+			/* An integer key: the capture path emits only named fields. */
+			return false;
+		}
+
+		if (zend_string_equals_literal(key, "source") || zend_string_equals_literal(key, "what") ||
+			zend_string_equals_literal(key, "name") ||
+			zend_string_equals_literal(key, "nameWhat")) {
+			/* Null is what capture writes for a frame with no name. */
+			if (Z_TYPE_P(value) != IS_STRING && Z_TYPE_P(value) != IS_NULL) {
+				return false;
+			}
+		} else if (zend_string_equals_literal(key, "currentLine") ||
+				   zend_string_equals_literal(key, "lineDefined") ||
+				   zend_string_equals_literal(key, "lastLineDefined")) {
+			if (Z_TYPE_P(value) != IS_LONG) {
+				return false;
+			}
+		} else if (zend_string_equals_literal(key, "isTailCall")) {
+			if (Z_TYPE_P(value) != IS_TRUE && Z_TYPE_P(value) != IS_FALSE) {
+				return false;
+			}
+		} else {
+			return false;
+		}
+	}
+	ZEND_HASH_FOREACH_END();
+
+	return true;
+}
+
+/*
+ * Validate a whole incoming traceback. All or nothing, deliberately.
+ *
+ * Bounded by the same ceiling the capture path uses: a payload claiming ten
+ * thousand frames did not come from a sandbox, and honouring it would let a
+ * serialized blob decide how much work every later getLuaTraceAsString() does.
+ */
+static bool luaext_ser_trace_ok(const zval *trace)
+{
+	zval *frame;
+	uint32_t count = 0;
+
+	if (Z_TYPE_P(trace) != IS_ARRAY) {
+		return false;
+	}
+
+	if (zend_hash_num_elements(Z_ARRVAL_P(trace)) > LUAEXT_ERROR_TRACE_FRAMES) {
+		return false;
+	}
+
+	ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(trace), frame)
+	{
+		if (!luaext_ser_frame_ok(frame)) {
+			return false;
+		}
+
+		count++;
+	}
+	ZEND_HASH_FOREACH_END();
+
+	return count > 0;
+}
+
+static void luaext_error_serialize(zval *this_zv, zval *return_value)
+{
+	zend_object *exception = Z_OBJ_P(this_zv);
+	zval *trace;
+
+	array_init(return_value);
+
+	luaext_ser_put_base(return_value, exception, "message", LUAEXT_SER_MESSAGE);
+	luaext_ser_put_base(return_value, exception, "code", LUAEXT_SER_CODE);
+	luaext_ser_put_base(return_value, exception, "file", LUAEXT_SER_FILE);
+	luaext_ser_put_base(return_value, exception, "line", LUAEXT_SER_LINE);
+
+	/*
+	 * The Lua traceback goes; the sandbox does not. Nothing else from the object
+	 * travels either -- see the header comment on getTrace()/getPrevious().
+	 */
+	trace = luaext_error_fetch(exception, LUAEXT_KEY_TRACE, LUAEXT_KEY_TRACE_LEN);
+
+	if (trace != NULL && Z_TYPE_P(trace) == IS_ARRAY) {
+		Z_TRY_ADDREF_P(trace);
+		add_assoc_zval(return_value, LUAEXT_SER_TRACE, trace);
+	}
+}
+
+static void luaext_error_unserialize(zval *this_zv, HashTable *data)
+{
+	zend_object *exception = Z_OBJ_P(this_zv);
+	zend_class_entry *base = zend_get_exception_base(exception);
+	zval *value;
+
+	value = zend_hash_str_find(data, ZEND_STRL(LUAEXT_SER_MESSAGE));
+
+	if (value != NULL && Z_TYPE_P(value) == IS_STRING) {
+		zend_update_property_ex(base, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE), value);
+	}
+
+	value = zend_hash_str_find(data, ZEND_STRL(LUAEXT_SER_CODE));
+
+	if (value != NULL && Z_TYPE_P(value) == IS_LONG) {
+		zend_update_property_ex(base, exception, ZSTR_KNOWN(ZEND_STR_CODE), value);
+	}
+
+	value = zend_hash_str_find(data, ZEND_STRL(LUAEXT_SER_FILE));
+
+	if (value != NULL && Z_TYPE_P(value) == IS_STRING) {
+		zend_update_property(base, exception, ZEND_STRL("file"), value);
+	}
+
+	value = zend_hash_str_find(data, ZEND_STRL(LUAEXT_SER_LINE));
+
+	if (value != NULL && Z_TYPE_P(value) == IS_LONG) {
+		zend_update_property(base, exception, ZEND_STRL("line"), value);
+	}
+
+	/*
+	 * The traceback, and the only place a payload can reach the Lua context.
+	 * Stored only when it matches the shape a real capture produces; otherwise
+	 * nothing is stored at all, so getLuaTrace() answers null and every accessor
+	 * built on it answers null too.
+	 *
+	 * No sandbox is ever restored. There is no lua_State on this side of the
+	 * boundary, and a payload naming one would be describing an object it does
+	 * not have.
+	 */
+	value = zend_hash_str_find(data, ZEND_STRL(LUAEXT_SER_TRACE));
+
+	if (value != NULL && luaext_ser_trace_ok(value)) {
+		zval copy;
+
+		ZVAL_COPY(&copy, value);
+		luaext_error_store(exception, LUAEXT_KEY_TRACE, LUAEXT_KEY_TRACE_LEN, &copy);
+	}
+}
+
 #define LUAEXT_DEFINE_TRACE_ACCESSORS(base_class)                                                  \
 	ZEND_METHOD(base_class, getLuaTrace)                                                           \
 	{                                                                                              \
@@ -1162,3 +1371,27 @@ static void luaext_return_lua_line(zval *this_zv, zval *return_value)
 
 LUAEXT_DEFINE_TRACE_ACCESSORS(DevelopGravity_LuaExt_Exception_LuaException)
 LUAEXT_DEFINE_TRACE_ACCESSORS(DevelopGravity_LuaExt_Exception_LuaLogicException)
+
+/*
+ * Only LuaException gets these. LuaLogicException reports host misuse, is raised
+ * before or around execution, never carries a traceback or a sandbox, and
+ * already round-trips under PHP's default serialization -- so there is nothing
+ * to strip and nothing to validate.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __serialize)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	luaext_error_serialize(ZEND_THIS, return_value);
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __unserialize)
+{
+	HashTable *data;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_ARRAY_HT(data)
+	ZEND_PARSE_PARAMETERS_END();
+
+	luaext_error_unserialize(ZEND_THIS, data);
+}

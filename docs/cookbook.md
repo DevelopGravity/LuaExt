@@ -428,6 +428,77 @@ $estimatedCostInUsd = $usageSnapshot->cpuSeconds * self::PRICE_PER_CPU_SECOND_IN
 
 Because `stats()` stays readable until `close()`, a long-running or multi-call sandbox can be sampled progressively (e.g. from an output callback) for near-real-time metering rather than only a single end-of-run total.
 
+## Running Lua from a queued job
+
+A `Sandbox` wraps a live `lua_State` — a C heap outside PHP's allocator, pinned to the
+thread that made it — so it cannot be serialized, exactly as a PDO connection or a curl
+handle cannot. Queue the **configuration**, and build the sandbox on the worker.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use DevelopGravity\LuaExt\Capabilities;
+use DevelopGravity\LuaExt\Limits;
+use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
+use DevelopGravity\LuaExt\Exception\LuaException;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+
+final class RunUserScript implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        private readonly string $source,
+        private readonly SandboxConfig $config,
+    ) {}
+
+    public function handle(): void
+    {
+        // Built here, never carried in the payload.
+        $sandbox = new Sandbox($this->config);
+
+        try {
+            [$result] = $sandbox->eval($this->source, '@user-script.lua');
+
+            // ... persist $result ...
+        } catch (LuaException $error) {
+            // Survives the boundary: message, code, and the Lua traceback are all
+            // intact if this exception is itself serialized by the failed-job
+            // machinery. getSandbox() is null on the far side, deliberately.
+            report($error);
+
+            throw $error;
+        } finally {
+            $sandbox->close();
+        }
+    }
+}
+
+RunUserScript::dispatch(
+    'return 6 * 7',
+    new SandboxConfig(limits: new Limits(cpuSeconds: 2.0, memoryBytes: 16 * 1024 * 1024)),
+);
+```
+
+`Limits`, `Capabilities`, `VfsQuota` and `SandboxConfig` are plain readonly value objects
+and serialize normally — pinned by `tests/01-basic/config-objects-survive-a-queue.phpt` so
+it stays that way.
+
+**The one thing that cannot travel is an output callback.** `SandboxConfig::$outputCallback`
+is typed `?\Closure`, and PHP refuses to serialize closures. `laravel/serializable-closure`
+does not help, because a `SerializableClosure` is not a `Closure` and will not satisfy the
+type. Queue the config without a callback and attach the behaviour worker-side — use
+`OutputMode::Buffer` and read `takeOutput()` after the call, which is the shape that
+survives a queue anyway.
+
+**In-process deferred work is unaffected.** `defer()`, `terminating()` and
+`register_shutdown_function` all run in the same process and serialize nothing, so a live
+sandbox is still there. Only a real queue worker crosses a process boundary.
+
 ## Coroutine patterns
 
 Coroutines fit naturally into the strictly call-scoped model as long as they're used for in-script control flow that starts and finishes within one `call()`/`eval()` — generators, iterators, small cooperative schedulers. What they cannot do is survive past that call, or suspend across a PHP callback.

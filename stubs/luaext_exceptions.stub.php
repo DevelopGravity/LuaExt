@@ -66,6 +66,35 @@ interface LuaThrowable extends \Throwable
  */
 abstract class LuaException extends \RuntimeException implements LuaThrowable
 {
+    /**
+     * Serialize without the sandbox.
+     *
+     * A sandbox wraps a live `lua_State`, so it cannot cross a process boundary
+     * and is dropped here — `getSandbox()` returns null on the far side, which is
+     * the honest answer rather than a revived object that is not the same one.
+     * The Lua traceback survives as plain data, so a queued job that failed
+     * inside Lua can still be inspected where it lands.
+     *
+     * PHP's own `getTrace()` and `getPrevious()` are NOT preserved: both can
+     * capture arbitrary live objects — including the sandbox — and keeping them
+     * would make serialization fail exactly where it is most needed.
+     *
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array {}
+
+    /**
+     * Restore from {@see self::__serialize()}.
+     *
+     * Treats its input as hostile, because `unserialize()` writes into an object
+     * without going through any constructor: a traceback whose shape does not
+     * match what the sandbox produces is discarded whole rather than
+     * partially honoured.
+     *
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void {}
+
     /** @inheritDoc */
     public function getLuaTrace(): ?array {}
 
