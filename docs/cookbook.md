@@ -352,6 +352,10 @@ $capturedOutput = $sandbox->takeOutput();
 
 `getOutput()` reads without clearing; `takeOutput()` reads and clears in one step — useful when a sandbox handles several `call()`s and you want per-call output rather than an ever-growing buffer. `isOutputTruncated()` tells you whether `Limits::outputBytes` was hit under `OverflowBehavior::Truncate`.
 
+> **`Limits::$outputBytes` bounds what is buffered at once, not what a script may produce in total.** `takeOutput()` hands over the bytes *and* the budget they occupied, so a host draining in a loop gives the script room to print again — which is the point of draining. The truncation flag deliberately does **not** reset: a host that took a truncated buffer still needs to know it was incomplete.
+>
+> The consequence worth planning for: a host that calls `takeOutput()` from inside an output callback, or in a loop around `call()`, places no ceiling on a script's *cumulative* output. Memory stays bounded, because only one buffer exists at a time; wall-clock and CPU limits still apply. If you need a total cap, count the bytes you drain and stop calling in yourself — the extension deliberately does not guess a policy here.
+
 Streaming, for a script whose output should reach a client incrementally rather than all at once at the end:
 
 ```php

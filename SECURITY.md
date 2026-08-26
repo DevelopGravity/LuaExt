@@ -55,6 +55,23 @@ The flag is deliberately **sticky** — nothing clears it on raise. That is what
 
 What has **no test coverage** is the behaviour under real concurrency. `.phpt` cannot spawn PHP threads, and the sanitizer legs build NTS php-src, so pool contention, cross-thread slot recycling, and the MSHUTDOWN join have never been exercised against more than one PHP thread. The design is reasoned; it is not demonstrated. Hosts running a threaded SAPI should treat this as the least-proven part of the extension, and should build a sandbox per request rather than caching one across worker threads — a `Sandbox` picked up by a different thread throws `ThreadAffinityError` by design.
 
+**Handing a sandbox to its own script defeats every limit it has.** This is the one failure mode where the host, not the script, is the vulnerability — and it is not guarded against.
+
+Every limit in this extension is enforced in C, below anything a script can reach. But `Sandbox` is an ordinary PHP object, and the callback bridge will expose any callable a host registers. So both of these hand a script the controls:
+
+```php
+$sandbox->registerObject('box', $sandbox);              // direct
+$sandbox->registerLibrary('u', [                        // indirect, via capture
+    'go' => fn () => $sandbox->setCpuLimit(3600.0),
+]);
+```
+
+A script holding either can call `setCpuLimit()` and `setMemoryLimit()` to raise its own ceilings, `takeOutput()` in a loop to keep resetting the output budget (see [docs/cookbook.md](docs/cookbook.md) on what that limit bounds), `interrupt()` to abort a sibling call, or `close()` to destroy the interpreter mid-flight. None of that is an escape from the sandbox in the memory-safety sense; it is the host having granted authority it did not mean to grant.
+
+**There is deliberately no check for this, and the reason is that a partial one would be worse than none.** An `instanceof Sandbox` guard in `registerObject()` is bypassed in one line by wrapping the call in a closure, which `registerLibrary()` accepts and must accept — closures over host state are the entire point of the callback bridge. Shipping that guard would let a host believe the case was handled while leaving the one-line bypass wide open. A guarantee that looks real and is not is a worse security property than a documented gap.
+
+The rule is short: **never let the sandbox object, or anything closing over it, cross into the script.** Expose services, not the machinery that bounds them.
+
 ## Trust model
 
 Trust is expressed as a single `Capabilities` value object, not a global setting or an implicit default tied to configuration elsewhere:
