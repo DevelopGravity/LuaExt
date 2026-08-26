@@ -91,7 +91,33 @@ $pauseGranted = null;
  * sandbox is armed yet at this point, and process CPU is the right question
  * anyway. Where it is unavailable or nonsensical the fallback is pessimistic,
  * since guessing high is the failure that makes rows starve.
+ *
+ * It calibrates with the SAME loop shape burn() runs, and that is the part the
+ * first version got wrong. A bare spin issues no system calls; the burn issues
+ * two per iteration and did no arithmetic at all between them. On an idle
+ * machine both run at ratio 1.0 and the difference is invisible -- measured at
+ * 0.998 and 1.000 on an uncontended arm64 Mac. On a contended runner the burn
+ * spends its wall clock waiting on the kernel rather than spending CPU, so a
+ * calibration that never called the kernel systematically over-estimated how
+ * fast the burn would accumulate and handed it a ceiling it could not meet.
+ * That is what "no/short" was reporting on every macOS leg.
  */
+function burnWork(): float
+{
+	/*
+	 * Arithmetic with no syscall in it, sized so the checks around it are a small
+	 * fraction of each pass. This is the actual burning; without it the loop is
+	 * almost entirely measurement, which is the opposite of what a burn is for.
+	 */
+	$sink = 0.0;
+
+	for ($i = 1; $i <= 20000; $i++) {
+		$sink += $i * 0.5;
+	}
+
+	return $sink;
+}
+
 function measureCpuEfficiency(): float
 {
 	$cpu = static function (): ?float {
@@ -109,6 +135,7 @@ function measureCpuEfficiency(): float
 	$start = microtime(true);
 
 	while (microtime(true) - $start < 0.05) {
+		burnWork();
 	}
 
 	$wall = microtime(true) - $start;
@@ -125,13 +152,31 @@ function measureCpuEfficiency(): float
 }
 
 /*
- * Derived, not chosen. Floored so a pathological reading cannot produce a
- * ceiling too short to ever finish, and capped so one wedged row fails inside
- * the harness timeout instead of hanging it. Stays under WALL_BACKSTOP_SECONDS
- * so a burn running long is an ordinary outcome, never a backstop trip reported
- * as the wrong exception class.
+ * Derived, then floored, then capped -- and the FLOOR is the part that matters.
+ *
+ * Calibration runs once, here, before any row. On a CI runner that is idle at
+ * process start it measures an efficiency near 1.0, and the derived ceiling
+ * comes out at a small multiple of BURN_SECONDS. The old formula produced 0.30s
+ * for a burn that has to accumulate 0.20s of CPU, which silently demanded 67%
+ * sustained efficiency for the whole burn. Contention arriving after startup --
+ * which is the normal condition of a shared runner, and bursty -- then starved
+ * the burn and printed "no/short" on every macOS leg.
+ *
+ * A measurement taken while idle cannot be allowed to produce a ceiling with no
+ * headroom in it, so the floor stands independently of what was measured: at
+ * 2.0s a burn needing 0.20s of CPU survives down to 10% sustained efficiency.
+ * The cap keeps one wedged row failing inside the harness timeout, and both stay
+ * under WALL_BACKSTOP_SECONDS so a slow burn is an ordinary outcome rather than
+ * a backstop trip reported as the wrong exception class.
+ *
+ * The paused rows do not pay for this: they give up on BURN_PROBE_SECONDS, not
+ * on the ceiling. Only a genuinely starved row waits this long, and that row is
+ * reporting a failure either way.
  */
-define('BURN_CEILING_SECONDS', min(BURN_SECONDS / max(measureCpuEfficiency(), 0.10) * 1.5, 2.0));
+define(
+	'BURN_CEILING_SECONDS',
+	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 2.0), 4.0),
+);
 
 function burn(float $seconds): void
 {
@@ -159,6 +204,8 @@ function burn(float $seconds): void
 	$ceiling = microtime(true) + BURN_CEILING_SECONDS;
 
 	while (true) {
+		burnWork();
+
 		$spent = $sandbox->getCpuUsage();
 
 		if ($spent >= $target) {
@@ -280,6 +327,20 @@ $script = <<<'LUA'
 	-- The same three exits as the PHP burn(), for the same reasons: reaching the
 	-- CPU target, discovering on a short probe that this frame is not billed at
 	-- all, or giving up at the ceiling. See burn() in the PHP half.
+	-- The Lua twin of burnWork(): real arithmetic between the checks. These rows
+	-- pass today, but the loop has the same shape the PHP one did -- and it
+	-- crosses into PHP for php.now() on every pass, which is the most expensive
+	-- thing in it. Spending CPU between checks is what makes it a burn.
+	local function work()
+		local sink = 0.0
+
+		for index = 1, 20000 do
+			sink = sink + index * 0.5
+		end
+
+		return sink
+	end
+
 	local function burn(seconds)
 		local start = clock()
 		local target = start + seconds
@@ -287,6 +348,8 @@ $script = <<<'LUA'
 		local ceiling = php.now() + CEILING
 
 		while true do
+			work()
+
 			local spent = clock()
 
 			if spent >= target then return end
