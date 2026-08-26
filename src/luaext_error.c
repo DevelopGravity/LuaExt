@@ -230,6 +230,33 @@ static luaext_error_ud *luaext_error_push(lua_State *L, luaext_err_kind kind, bo
 		return NULL;
 	}
 
+	/*
+	 * A plain string once the state is closing, because a userdata built here
+	 * would leak.
+	 *
+	 * lua_close() sets GCSTPCLS for its whole run, and luaC_checkfinalizer()
+	 * returns early when that bit is set -- so an object created inside a
+	 * finaliser is never added to the finobj list and its __gc NEVER RUNS. The
+	 * persistent zend_string below would then never be released. That is not a
+	 * corner case: teardown deliberately raises ABORT so a spinning __gc cannot
+	 * hang close(), which means a sandbox running untrusted finalisers leaks one
+	 * string on every close, and a worker SAPI accumulates them.
+	 *
+	 * Nothing is lost by the downgrade. An error raised during lua_close() is
+	 * caught by GCTM's own protected call and warned away; no script can catch
+	 * it, and nothing inspects its kind. The unforgeable userdata exists so a
+	 * script cannot fake or swallow a fatal, and by this point there is no script
+	 * left to try.
+	 */
+	{
+		const luaext_sandbox *owner = LUAEXT_SB(L);
+
+		if (owner != NULL && owner->closed) {
+			lua_pushlstring(L, message, message_len);
+			return NULL;
+		}
+	}
+
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_errmt);
 
 	if (lua_type(L, -1) != LUA_TTABLE) {
