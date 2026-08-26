@@ -340,6 +340,34 @@ typedef struct {
 } luaext_output;
 
 /* -------------------------------------------------------------------------
+ * Deferred releases
+ *
+ * PHP references a Lua finaliser must not drop where it stands, because doing
+ * so can run a __destruct that re-enters the collecting state. See
+ * luaext_defer.h.
+ * ---------------------------------------------------------------------- */
+
+typedef enum {
+	LUAEXT_DEFER_ZVAL,
+	LUAEXT_DEFER_FCC,
+} luaext_defer_kind;
+
+typedef struct {
+	luaext_defer_kind kind;
+
+	union {
+		zval value;
+		zend_fcall_info_cache fcc;
+	} as;
+} luaext_defer_item;
+
+typedef struct {
+	luaext_defer_item *items; /* pemalloc'd; __gc outlives the request allocator */
+	size_t count;
+	size_t capacity;
+} luaext_deferred;
+
+/* -------------------------------------------------------------------------
  * Sandbox
  * ---------------------------------------------------------------------- */
 
@@ -376,6 +404,10 @@ struct luaext_sandbox {
 	uint32_t co_live;
 	uint32_t co_depth;
 	uint32_t co_peak_depth;
+
+	/* PHP references waiting to be released somewhere the collector is not
+	 * running. See luaext_defer.h. */
+	luaext_deferred deferred;
 
 	bool allow_pause;
 	bool closed;

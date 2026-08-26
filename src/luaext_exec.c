@@ -24,6 +24,7 @@
 #include "luaext_exec.h"
 
 #include "luaext_convert.h"
+#include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_timers.h"
 
@@ -305,6 +306,19 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	interrupted = status == LUA_OK && luaext_timers_throw_if_interrupted(sandbox);
 
 	luaext_timers_leave_lua(sandbox, &frame);
+
+	/*
+	 * The routine drain point, and the reason it is here rather than deeper:
+	 * this is where the outermost call has fully unwound, so no Lua execution is
+	 * in progress and a __destruct released now cannot re-enter the collector it
+	 * was queued from. See luaext_defer.h.
+	 *
+	 * Draining on every outermost return, not only at close, keeps the queue
+	 * from growing across a long-lived sandbox's many calls.
+	 */
+	if (sandbox->in_lua == 0) {
+		luaext_defer_drain(sandbox);
+	}
 
 	if (interrupted) {
 		lua_settop(L, base);

@@ -26,6 +26,7 @@
 
 #include "luaext_alloc.h"
 #include "luaext_convert.h"
+#include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_timers.h"
 
@@ -96,7 +97,19 @@ static int luaext_phpcall_release(lua_State *L)
 	slot->magic = 0;
 
 	if (ZEND_FCC_INITIALIZED(slot->fcc)) {
-		zend_fcc_dtor(&slot->fcc);
+		/*
+		 * Handed to the deferred queue rather than released here. Releasing can
+		 * drop the last reference to the bound object and run its __destruct,
+		 * which is arbitrary host code, and this frame is inside the collector
+		 * of the state that code is free to call back into. See luaext_defer.h.
+		 *
+		 * If the queue cannot grow, release anyway: leaking the reference is
+		 * worse than the narrow re-entrancy window, and a failed allocation here
+		 * means the process is already out of memory.
+		 */
+		if (!luaext_defer_fcc(LUAEXT_SB(L), &slot->fcc)) {
+			zend_fcc_dtor(&slot->fcc);
+		}
 	}
 
 	if (slot->name != NULL) {

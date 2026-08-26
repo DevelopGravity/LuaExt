@@ -20,6 +20,7 @@
 #include "luaext_alloc.h"
 #include "luaext_config.h"
 #include "luaext_convert.h"
+#include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_exec.h"
 #include "luaext_openlibs.h"
@@ -250,6 +251,16 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	if (L != NULL) {
 		lua_close(L);
 	}
+
+	/*
+	 * After lua_close(), which is the whole point: closing runs every pending
+	 * finaliser, and those hand their PHP references here rather than releasing
+	 * them mid-sweep. By this line the state does not exist, so a __destruct
+	 * released below cannot re-enter it -- the sandbox is already marked closed,
+	 * so one that touches it gets a ClosedSandboxError rather than undefined
+	 * behaviour.
+	 */
+	luaext_defer_shutdown(sandbox);
 
 	luaext_sandbox_unlink(sandbox);
 

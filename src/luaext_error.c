@@ -20,6 +20,8 @@
 
 #include "luaext_error.h"
 
+#include "luaext_defer.h"
+
 #include <lauxlib.h>
 #include <lua.h>
 
@@ -94,7 +96,19 @@ static int luaext_error_gc(lua_State *L)
 	}
 
 	if (Z_TYPE(error->php_exception) == IS_OBJECT) {
-		zval_ptr_dtor(&error->php_exception);
+		/*
+		 * Deferred rather than released here: this is the last reference to a
+		 * host exception object, and dropping it runs that object's __destruct
+		 * inside the collector of the state the destructor may call back into.
+		 * See luaext_defer.h. Released directly only if the queue cannot grow,
+		 * where leaking would be the worse outcome.
+		 *
+		 * The message above needs no such care -- a zend_string has no
+		 * destructor and releasing one cannot run user code.
+		 */
+		if (!luaext_defer_zval(LUAEXT_SB(L), &error->php_exception)) {
+			zval_ptr_dtor(&error->php_exception);
+		}
 	}
 
 	ZVAL_UNDEF(&error->php_exception);
