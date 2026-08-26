@@ -401,6 +401,10 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		return -1;
 	}
 
+	/* Holds zvals from here. The END is placed at each exit, and immediately
+	 * before luaext_require_load(), which raises by design. */
+	LUAEXT_NO_RAISE_BEGIN(L);
+
 	ZVAL_STR(&args[0], zend_string_init(name, name_len, 0));
 	ZVAL_STR(&args[1], zend_string_init(requested_by, strlen(requested_by), 0));
 
@@ -417,12 +421,14 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		 * found" would hide a real fault behind a script-visible condition.
 		 */
 		zval_ptr_dtor(&result);
+		LUAEXT_NO_RAISE_END(L);
 		return -1;
 	}
 
 	if (Z_TYPE(result) != IS_OBJECT) {
 		/* Null is the documented "I do not provide this one". */
 		zval_ptr_dtor(&result);
+		LUAEXT_NO_RAISE_END(L);
 		return 0;
 	}
 
@@ -436,6 +442,7 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 	if (code == NULL || Z_TYPE_P(code) != IS_STRING || chunk_name == NULL ||
 		Z_TYPE_P(chunk_name) != IS_STRING) {
 		zval_ptr_dtor(&result);
+		LUAEXT_NO_RAISE_END(L);
 		luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
 						   "ModuleResolver::resolve() returned something that is not a "
 						   "ModuleSource");

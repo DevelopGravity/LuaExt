@@ -119,8 +119,20 @@ bool luaext_vfs_charge_operation(lua_State *L, luaext_sandbox *sandbox)
 	return true;
 }
 
-luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const char *method,
-								  uint32_t argc, zval *args, zval *result, zend_string **refusal)
+/*
+ * The body of luaext_vfs_call, with charging made optional.
+ *
+ * The quota exists to bound what a SCRIPT can demand of the host. The file-count
+ * walk is not that: it is this layer's own bookkeeping, run once per sandbox to
+ * answer a question the script never asked. Charging it would make creating a
+ * file spend a budget the script cannot see, and -- worse -- would put a raising
+ * call inside a loop that holds zvals, so exhausting the quota mid-walk would
+ * longjmp past every dtor in it.
+ */
+static luaext_vfs_result luaext_vfs_call_maybe_charged(lua_State *L, luaext_sandbox *sandbox,
+													   const char *method, uint32_t argc,
+													   zval *args, zval *result,
+													   zend_string **refusal, bool charge)
 {
 	zend_string *name;
 	zend_function *fn;
@@ -139,8 +151,14 @@ luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const c
 		return LUAEXT_VFS_FAILED;
 	}
 
-	if (!luaext_vfs_charge_operation(L, sandbox)) {
+	if (charge && !luaext_vfs_charge_operation(L, sandbox)) {
 		return LUAEXT_VFS_FAILED;
+	}
+
+	/* Still counted for SandboxStats::$vfsOperations either way: the host really
+	 * did make the call, whoever asked for it. */
+	if (!charge) {
+		sandbox->vfs_operations++;
 	}
 
 	/*
@@ -249,6 +267,12 @@ luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const c
 	}
 
 	return LUAEXT_VFS_FAILED;
+}
+
+luaext_vfs_result luaext_vfs_call(lua_State *L, luaext_sandbox *sandbox, const char *method,
+								  uint32_t argc, zval *args, zval *result, zend_string **refusal)
+{
+	return luaext_vfs_call_maybe_charged(L, sandbox, method, argc, args, result, refusal, true);
 }
 
 bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Integer offset,
@@ -540,9 +564,17 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 		return true;
 	}
 
+	/*
+	 * Everything from here to the matching END holds zvals. A raise inside it is
+	 * a longjmp past every dtor below, so the assertion says out loud what the
+	 * uncharged call above quietly guarantees.
+	 */
+	LUAEXT_NO_RAISE_BEGIN(L);
+
 	ZVAL_STR(&args[0], zend_string_init(dir, strlen(dir), 0));
 
-	if (luaext_vfs_call(L, sandbox, "list", 1, args, &result, &refusal) != LUAEXT_VFS_OK) {
+	if (luaext_vfs_call_maybe_charged(L, sandbox, "list", 1, args, &result, &refusal, false) !=
+		LUAEXT_VFS_OK) {
 		zval_ptr_dtor(&args[0]);
 
 		if (refusal != NULL) {
@@ -550,9 +582,11 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 			 * than aborting the count -- the same "treat it as absent" rule the
 			 * module search uses. */
 			zend_string_release(refusal);
+			LUAEXT_NO_RAISE_END(L);
 			return true;
 		}
 
+		LUAEXT_NO_RAISE_END(L);
 		return false;
 	}
 
@@ -560,6 +594,7 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 
 	if (Z_TYPE(result) != IS_ARRAY) {
 		zval_ptr_dtor(&result);
+		LUAEXT_NO_RAISE_END(L);
 		return true;
 	}
 
@@ -589,8 +624,8 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 
 		ZVAL_STR(&stat_args[0], zend_string_copy(child.s));
 
-		if (luaext_vfs_call(L, sandbox, "stat", 1, stat_args, &stat_result, &refusal) ==
-			LUAEXT_VFS_OK) {
+		if (luaext_vfs_call_maybe_charged(L, sandbox, "stat", 1, stat_args, &stat_result, &refusal,
+										  false) == LUAEXT_VFS_OK) {
 			if (Z_TYPE(stat_result) == IS_OBJECT) {
 				zval *flag = zend_read_property(luaext_ce_file_stat, Z_OBJ(stat_result),
 												"isDirectory", strlen("isDirectory"), 1, NULL);
@@ -605,6 +640,7 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 			zval_ptr_dtor(&stat_args[0]);
 			smart_str_free(&child);
 			zval_ptr_dtor(&result);
+			LUAEXT_NO_RAISE_END(L);
 			return false;
 		}
 
@@ -614,6 +650,7 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 			if (!luaext_vfs_count_files(L, sandbox, ZSTR_VAL(child.s), ceiling, depth + 1, count)) {
 				smart_str_free(&child);
 				zval_ptr_dtor(&result);
+				LUAEXT_NO_RAISE_END(L);
 				return false;
 			}
 		} else {
@@ -625,6 +662,8 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 	ZEND_HASH_FOREACH_END();
 
 	zval_ptr_dtor(&result);
+
+	LUAEXT_NO_RAISE_END(L);
 
 	return true;
 }
