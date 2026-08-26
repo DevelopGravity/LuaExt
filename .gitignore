@@ -78,8 +78,12 @@ stubs/**/*_arginfo.h
 fuzz/corpus/
 fuzz/crashes/
 fuzz/*.o
-fuzz/*_fuzzer
+# Built targets. Makefile.dev globs fuzz/fuzz_*.c and builds ${src%.c}, so the
+# binaries are fuzz/fuzz_<name> with no suffix -- the older *_fuzzer pattern
+# never matched one and would have let a 3 MB instrumented binary into the tree.
+fuzz/fuzz_*
 !fuzz/*.c
+!fuzz/Makefile
 
 # Agent scratch space. Worktrees created here are whole checkouts with their own
 # .git, so committing one embeds a repository inside this one.
