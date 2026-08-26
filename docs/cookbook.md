@@ -4,7 +4,7 @@ Practical recipes for building a host around `Sandbox`. Each recipe assumes you'
 
 > **Status: pre-1.0, no tagged release.** These recipes are written against the pinned public API in `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` — class, method, and parameter names, including on `SandboxStats` and `FileStat`, are accurate and will not drift.
 >
-> Recipes that use only sandbox construction, `eval`/`call`/`compile`, `registerLibrary`/`registerObject`, the limits, output capture and the exception hierarchy run against a working binary today. Recipes involving a **`FileSystem` backend**, **`require()`/vendored Lua libraries**, **coroutine patterns**, or the **profiler** describe subsystems that are not built yet and will not run — see the status note in [README.md](../README.md). They are kept here because they are the specification those subsystems are being built to, not because they work.
+> Every recipe here runs against a working binary: sandbox construction, `eval`/`call`/`compile`, `registerLibrary`/`registerObject`, the limits, output capture, the exception hierarchy, a `FileSystem` backend, `require()` with vendored Lua libraries, coroutine patterns, and the profiler.
 
 ## Exposing host services via `registerObject()`
 

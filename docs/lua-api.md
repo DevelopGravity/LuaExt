@@ -4,8 +4,6 @@ This is the reference for what a Lua script actually sees inside a `Sandbox` —
 
 > **Status: pre-1.0, no tagged release.** The stdlib policy described here is **implemented and tested**: library exposure is assembled by LuaExt's own `luaext_openlibs.c`, which copies approved members out of a scratch table rather than scrubbing a fully-open Lua state, and `tools/audit-stdlib.php` enforces the resulting surface against committed golden files on every push.
 >
-> Three sections below describe subsystems that **do not exist yet** and are marked individually: [io/os emulation](#ioos-emulation) (the VFS half), [`require()` semantics](#require-semantics), and [Coroutines](#coroutines). A sandbox today has no `io`, no `package`, no `require`, and no `coroutine`.
->
 > For the exact surface a default sandbox exposes, run `tools/audit-stdlib.php` — the golden files it checks are the authoritative answer, and this page is prose written to match them.
 
 Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two presets are referenced throughout: **Untrusted** (`new Capabilities()`, the default) and **Trusted** (`Capabilities::trusted()`). See [SECURITY.md](../SECURITY.md) for the full trust model and the reasoning behind each restriction.
@@ -21,8 +19,8 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 | `math` | Open; `math.randomseed` replaced | Same |
 | `utf8` | Open, with an interruptible scan | Same |
 | `os` | LuaExt's own, **not** upstream's: `clock`, `date`, `difftime`, `time` under `osTime`; `getenv` under `osEnv` + allowlist | Same |
-| `io` | LuaExt's own, **not** upstream's. The output half (`io.write`, `io.stdout`, `io.stderr`) is unconditional; the filesystem half (`io.open`, `io.lines`) needs `vfs` and is not built yet — see [io/os emulation](#ioos-emulation) | Same |
-| `package` | Upstream version **never linked into the binary**; its LuaExt replacement is not built yet, so the name is simply **absent** | Same |
+| `io` | LuaExt's own, **not** upstream's. The output half (`io.write`, `io.stdout`, `io.stderr`) is unconditional; the filesystem half (`io.open`, `io.lines`, handles) needs `vfs` — see [io/os emulation](#ioos-emulation) | Same |
+| `package` | Upstream version **never linked into the binary**. LuaExt's replacement appears with the `require` capability and carries only `loaded`, `preload` and a read-only `path` — no `cpath`, `searchers` or `loadlib` | Same |
 | `debug` | `debug.traceback` only | Adds `debug.getinfo`/`getlocal`/`getupvalue` behind `debugIntrospect`; `debug.sethook` only via the separate `debugHooks` capability (mutually exclusive with a CPU limit — see SECURITY.md) |
 
 ## Replaced members, and why
@@ -40,7 +38,7 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 
 These are not filtered or wrapped — they simply do not exist in a LuaExt sandbox, because the source files that implement them (`liolib.c`, `loslib.c`, `loadlib.c`, `linit.c`, `lua.c`, `luac.c`) are excluded from the build entirely. This is verified, not assumed: the linked binary carries zero references to `system()`, `tmpnam()`, `popen()`, or `setlocale()` — the code that could call them was never compiled in.
 
-- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. `os` and `io` are present but are LuaExt's own hand-written tables, not restricted views of upstream's; `package` has no LuaExt replacement built yet and is absent entirely.
+- Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. All three are present only as LuaExt's own hand-written tables, never as restricted views of upstream's — which is why `package` carries no `cpath`, `searchers` or `loadlib` to restrict in the first place.
 - **`io.read`** and **`io.stdin`**, at every trust level and regardless of capability. A sandbox has no console to read from, and a stub that always returned `nil` would be a surface that looks like it might one day do something.
 - **`load`**, **`loadfile`**, **`dofile`** for untrusted scripts. `load` returns under `Trusted` (text mode only, per the table above); `loadfile`/`dofile` are not reintroduced under any preset — module loading goes through `require()` instead (see below).
 - **`string.dump`** for untrusted scripts (returns under `Trusted` behind `dumpBytecode`).
@@ -48,15 +46,11 @@ These are not filtered or wrapped — they simply do not exist in a LuaExt sandb
 
 ## io/os emulation
 
-> **The `io` table has two halves, and only one is implemented.**
+> **The `io` table has two halves, and they answer to different things.**
 >
-> The **output half** — `io.write`, `io.stdout`, `io.stderr` — is built and needs no capability at all. Writing a partial line is not a storage operation, and requiring `vfs` for it would mean a script could not write without also being handed a filesystem backend. These go to the same sink as `print()`; `io.stderr` is what makes the output callback's `$isStderr` parameter true.
+> The **output half** — `io.write`, `io.stdout`, `io.stderr` — needs no capability at all. Writing a partial line is not a storage operation, and requiring `vfs` for it would mean a script could not write without also being handed a filesystem backend. These go to the same sink as `print()`; `io.stderr` is what makes the output callback's `$isStderr` parameter true.
 >
-> The **filesystem half** — `io.open`, file handles, `io.lines` — is not implemented. `Sandbox::features()['capabilities']['vfs']` reports `false`, no `FileSystem` is ever consulted, and `VfsQuota` is validated but unused. Everything below about paths, handles, quotas and the `package` replacement is the design the next wave builds to.
->
-> Two configuration rules are real already and outlive the wave: `vfs` and `vfsWrite` both require a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — write widens read access rather than replacing it. `Capabilities::trusted()` grants `vfs` but deliberately **not** `vfsWrite`.
->
-> The **`os`** half *is* implemented, with one difference from the description below: LuaExt's `os` is hand-written and has no file operations at all, so `os.remove` and `os.rename` do not exist rather than routing through the VFS.
+> The **filesystem half** — `io.open`, file handles, `io.lines` — needs the `vfs` capability and a `FileSystem` behind it. Writing additionally needs `vfsWrite`.
 
 Every sandbox has an `io` table carrying the output half: `io.write` (which accepts strings and numbers and returns the table so writes chain), plus `io.stdout` and `io.stderr`, each with `:write` and a `:close` that politely refuses the way upstream's does for a standard stream. Nothing here touches storage.
 
@@ -69,8 +63,6 @@ With the `vfs` capability granted, that same table additionally gains the filesy
 - **`package` replacement**: exposes only `package.loaded` and `package.preload` (both writable the way upstream's are) and a read-only `package.path`. There is no `package.cpath`, `package.searchers`, or `package.loadlib` — nothing in this table can reach outside the sandbox.
 
 ## `require()` semantics
-
-> **Not implemented** — `Sandbox::features()['capabilities']['require']` reports `false`. `require` is absent from every sandbox regardless of capability, and `Sandbox::preloadModule()` throws `Error: ... is not implemented`. Granting the capability is accepted without effect, which is why the features map exists. The rest of this section is the specification the next wave builds to.
 
 `require()` only exists at all when the `require` capability is granted (off by default in both presets — `Trusted` turns it on). When available, resolution for a module name matching `[A-Za-z0-9_.-]+` (128 characters max, no `..` segments) proceeds in order:
 

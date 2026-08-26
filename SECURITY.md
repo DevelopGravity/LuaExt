@@ -4,8 +4,6 @@ LuaExt's entire purpose is running Lua code you do not trust. This document is t
 
 > **Status: pre-1.0, no tagged release, and no external audit.** Two of the three defenses described here are implemented and covered by tests: the **watchdog** (CPU, wall-clock, memory and output budgets, enforced from inside the interpreter's own dispatch loop) and the **stdlib policy** (an allow-list assembled member by member, enforced against committed golden files on every push). The adversarial suite covers a script trying to catch its own limit breach through `pcall`, nested `pcall`, `xpcall`, a `__gc` finaliser and a `<close>` handler.
 >
-> The **VFS is not built** — `io` carries only its output half (`io.write`, `io.stdout`, `io.stderr`, which touch no storage), there is no `io.open`, and no `FileSystem` is ever consulted. Every VFS claim below is design, not defense.
->
 > One coverage gap is worth stating plainly rather than burying: the **multi-threaded SAPI paths have no test coverage** — `.phpt` cannot spawn PHP threads, and the sanitizer legs build NTS php-src, so the watchdog has never been exercised against more than one PHP thread. See [what this does not defend against](#what-this-does-not-defend-against).
 >
 > No part of this has been reviewed by anyone outside the project. Treat it as a design specification with a growing amount of test evidence behind it, not as an audited, hardened binary. The [security regression policy](#security-regression-policy) below is the mechanism intended to keep that honest.

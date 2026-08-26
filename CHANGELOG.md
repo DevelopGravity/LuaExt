@@ -20,10 +20,17 @@ Nothing is released yet, so this section is a running record of what exists rath
 - **Coroutines**, on by default and strictly call-scoped: every coroutine created during a call is force-closed when that call returns, so no suspended Lua state survives it. Capped by `maxLiveCoroutines` and `maxCoroutineDepth`, with a collection before the cap is enforced so the limit describes what is alive rather than what was ever created. The interrupt follows whichever coroutine is running, so work moved into one is still billed to the sandbox's CPU and memory budgets.
 - **Fatal errors that user Lua cannot swallow**, covered by an adversarial suite spanning `pcall`, nested `pcall`, `xpcall`, `__gc` finalisers, `<close>` handlers, and — for both the CPU and the memory case — `resume`, `wrap`, nested `resume` and `resume` inside `xpcall`. The memory case is checked on the `lua_resume` status rather than the error value, because a refused allocation raises `LUA_ERRMEM` carrying Lua's own string instead of the extension's unforgeable marker.
 - **`io` output half**: `io.write`, `io.stdout` and `io.stderr`, needing no capability because they touch no storage. Writing to `io.stderr` is what makes the output callback's `$isStderr` argument true; the sink flushes on a channel change so interleaved writes keep their order.
+- **Virtual filesystem**: `io.open` with `:read`/`:write`/`:seek`/`:close`/`:flush`/`:lines`, plus `io.lines` and `os.remove`/`os.rename`, all behind the `vfs` capability and a host `FileSystem`. A backend implementing `RangedFileSystem` is streamed through `readRange`/`writeRange`; anything else is buffered whole-file, and a script cannot tell which it got. Every `VfsQuota` field is enforced, including the file count. Handles are call-scoped like coroutines: an unclosed file is flushed and closed when the call that opened it returns.
+- **`require()`** behind its capability, resolving through `package.loaded`, a cycle guard, the two limits, `package.preload`, the filesystem along `modulePaths`, and finally a host `ModuleResolver`. `package` exposes only `loaded`, `preload` and a read-only `path` — no `cpath`, `searchers` or `loadlib`, because each of those exists to reach a shared object. A module that fails while loading is not cached, so a later `require()` retries rather than replaying the failure.
+- **Sampling profiler**, off by default: `enableProfiler()`/`disableProfiler()`/`getProfile()`. Arming the count hook costs ~2.6x on dispatch-bound code, which is why the shipped hot path stays hook-free and this is opt-in. `enableProfiler()` returns `false` rather than displacing the count hook on a build where it is carrying the CPU limit.
+- **`SandboxStats` reports measured figures**, including CPU and wall-clock time read off the watchdog and bytes moved through the filesystem. Those were hardcoded zeros behind a TODO.
 - **Output sink** with buffer, callback and discard modes, billed against the memory limit.
 - Project documentation: `README.md`, `SECURITY.md`, `docs/cookbook.md`, `docs/lua-api.md`.
 - CI across Linux and macOS (x64 and arm64, NTS and ZTS, debug and release), plus valgrind, sanitizer and lint jobs.
 
-### Not yet implemented
+### Known gaps
 
-Named here because their API is already pinned in the stubs and described in the docs: the **virtual filesystem** (`io.open` and file handles; the output half above is unrelated to it and does exist), host-controlled **`require()`**, and the **profiler**. The Windows build does not compile yet and its CI job is non-gating.
+Every capability the extension defines is implemented, and `Sandbox::features()['capabilities']` reports so. What remains:
+
+- The **Windows build does not compile yet**, and its CI job is non-gating.
+- The **multi-threaded SAPI paths have no test coverage** — `.phpt` cannot spawn PHP threads.

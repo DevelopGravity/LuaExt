@@ -9,7 +9,7 @@ A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run
 
 Package: `developgravity/lua-ext` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
-> **Status: pre-1.0, no tagged release.** The sandbox runs and its limits are enforced — 104 tests cover compilation, the PHP↔Lua boundary, CPU, wall-clock, memory and output budgets, the capability-gated standard library, **coroutines**, and the adversarial cases where a script tries to catch its own limit breach. What is **not** built yet: the **virtual filesystem** (the `io` output half exists; `io.open` and file handles do not), host-controlled **`require()`**, and the **profiler**. Those are the rest of the current wave; the API for them is pinned in the stubs and described below, but calling it will not work today. Everything else in this README is written against a binary the test suite actually runs.
+> **Status: pre-1.0, no tagged release.** Every capability this extension defines is now implemented — `Sandbox::features()['capabilities']` reports `true` for all of them — and 110 tests cover compilation, the PHP↔Lua boundary, CPU, wall-clock, memory and output budgets, the capability-gated standard library, coroutines, the virtual filesystem, `require()`, the profiler, and the adversarial cases where a script tries to catch its own limit breach. This README is written against a binary the test suite actually runs.
 >
 > Enforcement is verified on Linux and macOS (x64 and arm64, NTS and ZTS). The **Windows** build is not green yet and is deliberately non-gating in CI — see [Requirements](#requirements).
 
@@ -19,7 +19,7 @@ MediaWiki's `luasandbox` extension has three problems that this project exists t
 
 1. **Its CPU limit is a no-op outside Linux.** `setCPULimit()` is built on Linux-only POSIX timers. On macOS and Windows it silently compiles to a stub — the call succeeds, the limit is simply never enforced, and nothing tells you that. LuaExt's `Sandbox::features()` reports the real, per-platform enforcement level (`LimitSupport::Enforced` / `Degraded` / `Unsupported`) so a host can never be silently unprotected.
 2. **It targets an old Lua.** `luasandbox` targets Lua 5.1; 5.4 support only just landed on its master branch, unreleased. LuaExt vendors and patches **Lua 5.5.1** directly — never the system `liblua` — so the sandboxing hooks live in the interpreter's hot loops instead of being bolted on from outside.
-3. **It has no filesystem concept and no coroutines.** `luasandbox` removed coroutines entirely because its timeout hook couldn't span them. LuaExt exposes coroutines by default, capped and strictly scoped to the call that created them — the interrupt follows whichever coroutine is actually running, so a script cannot dodge a limit by moving work into one. The host-implemented virtual filesystem (`FileSystem` interface), which lets scripts do `io`-style work against storage the host controls, is *specified but not yet implemented*: today `io` carries only its output half and no filesystem surface.
+3. **It has no filesystem concept and no coroutines.** `luasandbox` removed coroutines entirely because its timeout hook couldn't span them. LuaExt exposes coroutines by default, capped and strictly scoped to the call that created them — the interrupt follows whichever coroutine is actually running, so a script cannot dodge a limit by moving work into one. It also adds a host-implemented virtual filesystem (`FileSystem` interface) so scripts can do `io`-style work against storage the host controls, with every path canonicalised and every quota enforced before a backend is called.
 
 This is a from-scratch rewrite, not a fork. There is no LuaSandbox compatibility shim — see [Migrating from LuaSandbox](#migrating-from-luasandbox) below for the mechanical rename most call sites need.
 
@@ -108,8 +108,8 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `loadBytecode` | `false` | `false` | Stays off even when trusted — see [SECURITY.md](SECURITY.md). Must be opted into explicitly with `with()`. |
 | `compileAtRuntime` (Lua-visible `load()`) | `false` | `true` | |
 | `dumpBytecode` | `false` | `true` | |
-| `require` | `false` | `true` | **Not implemented yet** — see the note below the table. |
-| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. Both need a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — it widens read access rather than replacing it. **Not implemented yet** — see below. |
+| `require` | `false` | `true` | Resolution order is `package.loaded` → cycle guard → limits → `package.preload` → the VFS along `modulePaths` → `ModuleResolver`. |
+| `vfs` / `vfsWrite` | `false` / `false` | `true` / `false` | Write access is a separate flag even when trusted. Both need a `FileSystem`, and `vfsWrite` cannot be granted without `vfs` — it widens read access rather than replacing it. |
 | `coroutines` | `true` | `true` | On by default in both presets, capped by `maxLiveCoroutines`/`maxCoroutineDepth`, and strictly call-scoped. |
 | `osTime` | `true` | `true` | |
 | `osEnv` (+ allowlist) | `false` | `false` | |
@@ -121,15 +121,13 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `gcControl` | `false` | `true` | |
 | `warn` | `false` | `true` | |
 
-> **Three of these flags currently gate nothing**, because the subsystems behind them are the rest of this wave: `require`, `vfs` and `vfsWrite`. Do not read acceptance as support — ask instead:
+> **Every flag in this table gates real behaviour and is covered by tests.** That was not always true, so the map that says so is still worth asking:
 >
 > ```php
-> Sandbox::features()['capabilities']['vfs']; // false in this build
+> Sandbox::features()['capabilities']['vfs']; // true in this build
 > ```
 >
-> That map covers every boolean capability and reports whether *this build implements it*, which is a different question from whether a `Capabilities` object will accept it. `vfs` and `vfsWrite` are refused at construction, but only because they need a `FileSystem` — that is a permanent rule, not a stand-in for "unimplemented". `require` is accepted and simply does nothing.
->
-> Every other flag in the table gates real behaviour today and is covered by tests.
+> It covers every boolean capability and reports whether *this build implements it*, which is a different question from whether a `Capabilities` object will accept it. `vfs` and `vfsWrite` are still refused at construction without a `FileSystem` — that is a permanent rule about configuration, not a statement about what is built.
 
 `Limits` (defaults shown) caps resource use independent of trust level:
 
@@ -184,7 +182,7 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | *(none)* | `->setWallClockLimit($seconds)` | New: an independent wall-clock ceiling, also the Windows CPU-limit backstop. |
 | *(none)* | `->getWallClockUsage()`, or `->stats()->wallClockSeconds` | New: pairs with `setWallClockLimit()`. |
 | `->pauseUsageTimer()` / `->unpauseUsageTimer()` | `->pauseTimers()` / `->resumeTimers()` | Renamed; same segment-accumulator semantics (only the outermost Lua entry arms/disarms). |
-| `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged names. **Not implemented yet** — calling either throws `Error: ... is not implemented` rather than silently profiling nothing. Same for `->getProfile()`. |
+| `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged names. Sampling is opt-in because arming the count hook costs ~2.6x on dispatch-bound code; `getProfile()` reports each function's share of the samples, scaled by measured CPU time. |
 | `->getProfilerFunctionReport($units)` with `LuaSandbox::SAMPLES/SECONDS/PERCENT` | `->getProfile(ProfilerUnit $unit = ProfilerUnit::Seconds): array` | Unit constants become the `ProfilerUnit` enum (`Samples`, `Seconds`, `Percent`); default unit is `Seconds`. |
 | `->callFunction($name, ...$args)` | `->call($path, ...$args): array` | Both `call()` and `eval()` return `list<mixed>` and are `#[\NoDiscard]` — cast to `(void)` if you intentionally ignore the result. |
 | `->wrapPhpFunction($callable)` | `->wrapCallable($callable, ?string $name = null): LuaFunction` | Renamed; optional `$name` labels the callable in tracebacks and `debug.getinfo()`. |
