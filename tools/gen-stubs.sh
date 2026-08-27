@@ -141,6 +141,19 @@ done < <(find "$SCRATCH/stubs" -name '*_arginfo.h' -print0)
 
 if [ "$FOUND_ANY" -eq 0 ]; then
 	echo "gen-stubs --check: no *.stub.php produced any *_arginfo.h — nothing to compare (stubs/ empty or has no stub files yet)."
+else
+	# The loop above only proves every GENERATED header has a committed
+	# twin. The other direction matters just as much: delete a .stub.php
+	# and its arginfo stays in src/ forever, still compiled in, describing
+	# a class that no longer has a source of truth. Depth-limited because
+	# copy_arginfo flattens everything into src/'s top level.
+	while IFS= read -r -d '' committed; do
+		name="$(basename "$committed")"
+		if [ ! -f "$SCRATCH/stubs/$name" ]; then
+			echo "gen-stubs --check: $committed is an orphan — no stub in $STUBS_DIR generates it. Delete it, or restore the .stub.php it came from." >&2
+			STATUS=1
+		fi
+	done < <(find "$SRC_DIR" -maxdepth 1 -name '*_arginfo.h' -print0)
 fi
 
 if [ "$STATUS" -ne 0 ]; then

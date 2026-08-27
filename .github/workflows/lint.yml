@@ -134,6 +134,13 @@ jobs:
       - name: Run actionlint
         run: ./actionlint -color
 
+      # actionlint checks each workflow against itself; nothing checks them
+      # against each other. A workflow-level env does not cross files, so the
+      # PHP version is spelled out eight more times outside ci.yml -- including
+      # in release.yml, which no push exercises.
+      - name: Check every workflow pins the same PHP version
+        run: tools/check-workflow-php-version.sh
+
   # -------------------------------------------------------------------
   # Generated-artifact drift: anything checked in that's derived from a
   # pinned upstream source must match what re-deriving it produces.
@@ -209,10 +216,26 @@ jobs:
       - name: Check the watchdog reaches nothing PHP owns
         run: tools/check-watchdog-purity.sh
 
+  # -------------------------------------------------------------------
+  # Some C idioms compile cleanly, read correctly, and crash. ZVAL_ARR on
+  # a HashTable that turns out to be zend_empty_array is the motivating
+  # one: the refcount it then stamps as live sits in read-only memory.
+  # A compiler cannot warn about it, so this refuses the spelling.
+  # -------------------------------------------------------------------
+  banned-idioms:
+    name: Banned C idioms
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check src/ for idioms that compile and still fail
+        run: tools/check-banned-idioms.sh
+
   lint-required:
     name: Lint required checks
     if: always()
-    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api, watchdog-purity]
+    needs: [clang-format, editorconfig, shellcheck, actionlint, drift-checks, docs-api, watchdog-purity, banned-idioms]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs
