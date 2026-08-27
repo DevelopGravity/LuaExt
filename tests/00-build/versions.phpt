@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 use DevelopGravity\LuaExt\Sandbox;
 
 // Pinned by third_party/lua-5.5.1; a vendoring bump must update this test.

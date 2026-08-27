@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 const NS = 'DevelopGravity\\LuaExt\\Exception\\';
 
 // A script may catch a RuntimeError with pcall but never a FatalError, and the

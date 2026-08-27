@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 use DevelopGravity\LuaExt\Exception\ClosedSandboxError;
 use DevelopGravity\LuaExt\Sandbox;
 

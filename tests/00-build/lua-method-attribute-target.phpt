@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 #[DevelopGravity\LuaExt\LuaMethod]
 class Host
 {

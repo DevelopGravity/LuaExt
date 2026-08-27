@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 use DevelopGravity\LuaExt\Capabilities;
 use DevelopGravity\LuaExt\LimitSupport;
 use DevelopGravity\LuaExt\Sandbox;

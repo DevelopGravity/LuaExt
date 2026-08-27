@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 use DevelopGravity\LuaExt\LuaMethod;
 
 // The stub carries no #[Attribute] marker; MINIT registers it instead, so this

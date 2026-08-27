@@ -5,6 +5,7 @@ luaext
 --FILE--
 <?php
 
+declare(strict_types=1);
 $extension = new ReflectionExtension('luaext');
 
 var_dump($extension->getName());
