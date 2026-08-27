@@ -2,12 +2,10 @@
  * luaext — the Sandbox object: an isolated lua_State with its own policy,
  * budget and output sink.
  *
- * This file currently covers the lifecycle, the memory budget and execution:
- * creating the interpreter, opening a library subset, reporting and re-ceiling
- * what it may allocate, compiling and running chunks, reading and writing
- * globals, and tearing it down again. The timing limits, the callback bridge
- * and the output sink arrive with their own subsystems; the methods that need
- * them throw until then.
+ * This file owns the lifecycle and the object surface: creating the
+ * interpreter, opening a library subset, reporting and re-ceiling what it may
+ * allocate, compiling and running chunks, reading and writing globals, exposing
+ * host callables, profiling, and tearing it all down again.
  *
  * The execution methods are thin on purpose. Each one checks thread affinity
  * and open state, translates its arguments, and hands the work to
@@ -74,6 +72,12 @@ static zend_object_handlers luaext_sandbox_handlers;
 /*
  * Identity of the thread a sandbox belongs to. Only interrupt() may be called
  * from anywhere else, and enforcing that needs a comparable thread identity.
+ *
+ * This is not a needless reimplementation of TSRM's tsrm_thread_id(): that is
+ * declared inside TSRM.h's `#ifdef ZTS` block and simply does not exist in an
+ * NTS build, which this extension supports and tests. THREAD_T resolves to
+ * pthread_t / DWORD -- exactly the two branches below -- so calling it where it
+ * exists would buy nothing and cost an #ifdef around every call site.
  */
 static zend_always_inline uintptr_t luaext_current_thread(void)
 {
@@ -124,22 +128,6 @@ static bool luaext_sandbox_check_thread(const luaext_sandbox *sandbox)
 
 	return true;
 }
-
-/*
- * Wave 1 ships the interpreter lifecycle only. Methods whose subsystem has not
- * landed yet say so plainly instead of returning a plausible-looking lie.
- *
- * TODO: remove each case as its subsystem lands.
- */
-#define LUAEXT_METHOD_PENDING(sandbox, name)                                                       \
-	do {                                                                                           \
-		if (!luaext_sandbox_check_thread(sandbox) || !luaext_sandbox_check_open(sandbox)) {        \
-			RETURN_THROWS();                                                                       \
-		}                                                                                          \
-		zend_throw_error(NULL, "DevelopGravity\\LuaExt\\Sandbox::%s() is not implemented yet",     \
-						 (name));                                                                  \
-		RETURN_THROWS();                                                                           \
-	} while (0)
 
 /* -------------------------------------------------------------------------
  * Per-thread live list

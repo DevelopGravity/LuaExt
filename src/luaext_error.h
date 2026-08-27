@@ -57,6 +57,17 @@
  */
 bool luaext_interrupt_pending(lua_State *L);
 
+/*
+ * There is deliberately no luaext_error_throw() counterpart to the raise
+ * functions below. Host-side failures call zend_throw_exception_ex() directly,
+ * and a wrapper would elide exactly one literal argument (the zero code) while
+ * having to restate ZEND_ATTRIBUTE_FORMAT(printf, 3, 4) to keep the format
+ * checking the Zend function already provides. Where a subsystem genuinely
+ * shares more than that -- rendering a conversion path into the message, say --
+ * it has its own helper (luaext_convert_to_fail), which is the right size for
+ * the duplication that actually exists.
+ */
+
 /* Install the error metatable in the registry. Called once per lua_State. */
 void luaext_error_init(luaext_sandbox *sandbox);
 
