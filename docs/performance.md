@@ -78,6 +78,71 @@ So the `lvm.c` patch buys roughly a **35× reduction in enforcement overhead**
 the interpreter carries the check itself, so there is no INI setting that can silently
 disarm a security guarantee.
 
+## What the profiler costs
+
+`enableProfiler()` arms a `LUA_MASKCOUNT` hook — which is precisely the `hooked` build
+above. That column is therefore not only a historical comparison; it is the price list
+for sampling, and no separate benchmark is needed to state it.
+
+| Workload shape | Cost with the profiler on |
+|---|---:|
+| tight arithmetic loop | 2.75× |
+| function calls | 2.60× |
+| numeric `for` | 2.32× |
+| table writes | 2.01× |
+| tail recursion | 1.91× |
+| string concat | 1.35× |
+| generic `for` | 1.24× |
+| `pcall` churn | 1.08× |
+| **whole suite** | **1.55×** |
+
+> **Sampling costs ~2.6× on dispatch-bound code, up to 2.75× worst case, and ~1.55×
+> across a mixed workload.**
+
+The spread is the whole point, and it is not proportional to how much work a script
+does. The cost is per *instruction dispatched*, because a non-zero `hookmask` sets
+`ci->u.l.trap` and a set trap routes `vmfetch` through `luaG_traceexec` on every
+instruction. So a loop doing almost nothing per iteration pays most, and `pcall` churn —
+228 ns of call machinery per iteration — barely notices at 1.08×.
+
+Two consequences worth stating plainly. Lowering the sampling period does **not** reduce
+this: the period throttles the hook *body*, not the per-instruction call that reaches
+it, so a rarely-firing profiler costs nearly what a busy one does. And this is exactly
+why sampling is opt-in rather than always-armed — paying 2.6× on every call to collect a
+profile nobody reads is the trade the shipped design refuses.
+
+## Memory across many sandboxes
+
+A long-lived worker creates and closes sandboxes indefinitely, so "does a create/close
+cycle leave anything behind" is a different question from anything above.
+
+**Apple M2 Max, arm64** · PHP 8.5.9 NTS · macOS 26.6.2 · measured 2026-08-27 against
+`91a9c2f`, with `leaks --atExit` under `MallocStackLogging=1`. Each cycle constructs a
+sandbox, evaluates a small table-building script, and closes it.
+
+```
+1,600 cycles   →   0 leaks for 0 total leaked bytes
+10,000 cycles  →   RSS +560 KiB, PHP heap flat at 2,048 KiB throughout
+```
+
+Nothing is unreachable, and the RSS figure is allocator arena growth rather than
+accumulation. The per-1,000-cycle deltas say so directly:
+
+```
++0, +144, +16, +16, +0, +32, +0, +32, +288, +32 KiB
+```
+
+Three rounds grew by nothing at all, and a genuine per-cycle leak cannot skip rounds. At
+the observed 0.056 KiB/cycle average a real leak would have cost ~5.6 MiB over the same
+run; the actual total is a tenth of that and flat in the middle. For reference, a PHP
+process with no extension loaded grows ~176 KiB on its own over a comparable loop.
+
+> **A create/close cycle leaks nothing.** Worker-mode use does not accumulate.
+
+This is deliberately not a `.phpt`. An RSS assertion on a shared CI runner measures the
+runner's allocator and its neighbours as much as it measures this extension, and the
+project has twice declined to write that test.
+
 ## Caveats
 
 - **arm64 and clang only.** The `lvm.c` patch has never been compiled by GCC on
@@ -87,5 +152,9 @@ disarm a security guarantee.
 - **Release flags.** `-O2`, matching a release build. A `-O0` comparison would flatter
   the patched build by drowning it in dispatch cost.
 - **Not a throughput benchmark for the extension.** Anything involving
-  `registerLibrary` callbacks, value conversion, or sandbox construction is a different
-  measurement that this file does not make.
+  `registerLibrary` callbacks or value conversion is a different measurement that this
+  file does not make. Sandbox construction and profiling *are* covered, in the two
+  sections above.
+- **The memory figures are macOS-only.** `leaks` has no Linux equivalent used here; the
+  valgrind CI leg covers that platform on a much shorter run, and the plateau shape
+  above has not been reproduced under a different allocator.
