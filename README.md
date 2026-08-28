@@ -146,13 +146,13 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `maxSourceBytes` | 1 MiB |
 | `maxConversionDepth` | 64 |
 
-Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend. `VfsQuota` constructs and validates today, but nothing consumes it yet.
+Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend. Every field is enforced: reads and writes are billed against the byte caps, each host call counts against the operation cap, and paths are rejected on length or depth before the backend sees them.
 
 ## Feature support by platform
 
 CPU-limit enforcement is portable in the sense that it never silently does nothing — but its *precision* is platform-dependent, and `Sandbox::features()` reports the honest number rather than a boolean. This is the direct answer to `luasandbox`'s silent no-op problem.
 
-| Platform | Arch | Install | CPU clock source | Typical resolution | `features()->cpuLimit` |
+| Platform | Arch | Install | CPU clock source | Typical resolution | `features()['cpuLimit']` |
 |---|---|---|---|---|---|
 | Linux | x64, arm64 | build from source | `pthread_getcpuclockid` + `clock_gettime` | ~nanoseconds | `Enforced` |
 | macOS | x64, arm64 | build from source | `thread_info(THREAD_BASIC_INFO)` | ~microseconds | `Enforced` |
@@ -188,7 +188,7 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | `->wrapPhpFunction($callable)` | `->wrapCallable($callable, ?string $name = null): LuaFunction` | Renamed; optional `$name` labels the callable in tracebacks and `debug.getinfo()`. |
 | `->registerLibrary($name, $functions)` | `->registerLibrary($name, $functions)` | Unchanged shape. |
 | *(none)* | `->registerObject($name, $instance, ?array $methods = null)` | New: expose an existing object's methods via an allowlist or `#[LuaMethod]`. |
-| *(none)* | `->preloadModule(...)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. `interrupt()` and `close()` work today; `preloadModule()` throws `Error: ... is not implemented` until the `require()` wave lands. |
+| *(none)* | `->preloadModule($name, LuaFunction\|callable $loader)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. The loader is a callable or `LuaFunction` returning the module value — not a source string — and `require()` finds it ahead of the VFS and the resolver. |
 | `LuaSandboxFunction::call(...)` | `LuaFunction::call(...)` / `LuaFunction::__invoke(...)` | Same "array of all return values" convention. |
 | `LuaSandboxFunction::dump()` | `LuaFunction::dump($strip)` | Now gated behind the `dumpBytecode` capability. |
 | Host-side error → `false` return + `E_WARNING` | Host-side error → typed exception | E.g. calling an undefined global now throws rather than returning `false`. |
