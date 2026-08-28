@@ -49,7 +49,12 @@ undefined="$(nm -u "$module" 2>/dev/null | grep 'luaext_' || true)"
 if [ -n "$undefined" ]; then
 	echo "check-linkage: $module has undefined luaext symbols." >&2
 	echo >&2
-	echo "$undefined" | sed 's/^/  /' >&2
+	while IFS= read -r symbol; do
+		[ -n "$symbol" ] || continue
+		printf '  %s\n' "$symbol" >&2
+	done <<-EOF
+		$undefined
+	EOF
 	echo >&2
 	echo "A source file is missing from the build. Add it to config.m4 (and" >&2
 	echo "config.w32), then re-run: phpize && ./configure && make" >&2
