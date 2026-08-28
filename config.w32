@@ -69,9 +69,20 @@ if (PHP_LUAEXT != "no") {
 	// MSVC stops at vcruntime_c11_stdatomic.h with "C atomics are disabled",
 	// so the failure looks like a vendored-Lua problem rather than a missing
 	// compiler switch.
-	var luaext_flags = "/std:c11 /experimental:c11atomics " +
-		"/DLUAEXT_LUA_HOOKS=1 /I" + luaext_root + "\\src /I" +
-		luaext_lua_dir + " ";
+	// The include paths are QUOTED. configure_module_dirname is wherever the
+	// checkout happens to live, and an unquoted /I stops at the first space --
+	// which on a developer machine ("C:\Users\Some Name\...") turns into a
+	// header-not-found error naming a path that visibly exists.
+	//
+	// /W3 mirrors config.m4's -Wall -Wextra. Without it our sources compile at
+	// MSVC's default /W1 while the same code is held to a much higher bar
+	// everywhere else, so Windows-only mistakes stay quiet until someone builds
+	// on Unix. The vendored files are exempt: CFLAGS_BD_LUAEXT_LUA appends /w
+	// after this, and the last warning-level flag on the command line wins.
+	var luaext_flags = "/std:c11 /experimental:c11atomics /W3 " +
+		"/DLUAEXT_LUA_HOOKS=1 " +
+		"/I\"" + luaext_root + "\\src\" " +
+		"/I\"" + luaext_lua_dir + "\" ";
 
 	if (PHP_LUAEXT_DEBUG != "no") {
 		luaext_flags += "/DLUAEXT_DEBUG=1 /DLUA_USE_APICHECK=1 ";
@@ -82,8 +93,29 @@ if (PHP_LUAEXT != "no") {
 			? "address"
 			: PHP_LUAEXT_SANITIZE;
 
-		// MSVC only implements the address sanitizer, and only with /Zi.
+		// config.m4 test-compiles the sanitizer flag before committing to it.
+		// There is no equivalent probe here, so the list is validated against
+		// what MSVC actually implements -- which is address, and nothing else.
+		// Splicing the string in raw instead turns "--enable-luaext-sanitize=
+		// undefined" into a cl.exe error a thousand lines into the build.
+		var luaext_allowed_sanitizers = { "address": true };
+		var luaext_requested = luaext_sanitizers.split(",");
+
+		for (var luaext_index = 0; luaext_index < luaext_requested.length; luaext_index++) {
+			var luaext_name = luaext_requested[luaext_index].replace(/\s+/g, "");
+
+			if (luaext_name.length > 0 && !luaext_allowed_sanitizers[luaext_name]) {
+				ERROR("luaext: MSVC does not implement the '" + luaext_name +
+					"' sanitizer; only 'address' is supported on Windows");
+			}
+		}
+
+		// MSVC's ASan needs /Zi to symbolise a report, and /Zi only emits a PDB
+		// if the LINKER is told to keep one. Without /DEBUG the build succeeds
+		// and every report comes back as bare addresses, which is the least
+		// useful possible outcome for the one job a sanitizer build has.
 		luaext_flags += "/fsanitize=" + luaext_sanitizers + " /Zi ";
+		ADD_FLAG("LDFLAGS_LUAEXT", "/DEBUG");
 	}
 
 	// Shared is passed explicitly rather than left null. A null third argument

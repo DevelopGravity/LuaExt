@@ -42,6 +42,11 @@ if ! tools/gen-stubs.sh --check; then
 	STATUS=1
 fi
 
+section "Build-file source lists (tools/check-source-lists.sh)"
+if ! tools/check-source-lists.sh; then
+	STATUS=1
+fi
+
 section "Stdlib surface golden files (tools/audit-stdlib.php --check)"
 if [ -f tools/audit-stdlib.php ]; then
 	if ! php tools/audit-stdlib.php --check; then
