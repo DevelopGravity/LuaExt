@@ -489,6 +489,87 @@ echo json_encode($sandbox->validate('return ((', '@draft.lua'));
 Validating does not guarantee the script will *succeed* — it only guarantees it parses.
 Runtime failures, and every resource limit, still apply when it actually runs.
 
+## Not paying to compile the same script twice
+
+`eval()` parses its source on every call. On a 3.5 KB script that is ~79 µs per call, so a
+loop or a long-lived worker pays for the same parse over and over. There are two ways out,
+and which applies depends entirely on whether your sandbox outlives the work.
+
+### If the sandbox is long-lived: turn the cache on
+
+```php
+$sandbox = new Sandbox(new SandboxConfig(
+    limits: new Limits(maxCachedChunks: 64),   // the default
+    cacheCompiledChunks: true,
+));
+```
+
+Measured **5.6×** on that 3.5 KB script (84.3 µs → 15.0 µs). Cached chunks are billed
+against `memoryBytes` and counted by `stats()->cachedChunks`, and past `maxCachedChunks`
+evaluation keeps working and simply stops caching — a full cache never turns a working
+call into a failing one.
+
+**It does nothing for a sandbox built per request.** That shape starts with an empty
+cache every time, so it pays the parse anyway and the retention is pure cost. The setting
+is off by default for exactly this reason: it is a win for one usage shape and a waste in
+the other, and only you know which you have.
+
+### If the sandbox is per-request: cache bytecode yourself, carefully
+
+`compile()` + `dump()` produces a binary chunk that `compileBinary()` loads about 6.9×
+faster than parsing, which is **2.1× on a whole construct/eval/close cycle** — the one
+thing the built-in cache cannot help with. Nothing in the extension does this for you,
+because of what follows.
+
+```php
+// In-process ONLY. Read the warning below before adapting this.
+final class InProcessBytecodeCache
+{
+    /** @var array<string, string> */
+    private array $compiled = [];
+
+    public function __construct(private readonly Capabilities $capabilities) {}
+
+    public function bytecodeFor(string $source, string $chunkName): string
+    {
+        $cacheKey = hash('xxh128', $chunkName . "\0" . $source);
+
+        if (!isset($this->compiled[$cacheKey])) {
+            $builder = new Sandbox(new SandboxConfig(capabilities: $this->capabilities));
+
+            try {
+                $this->compiled[$cacheKey] = $builder->compile($source, $chunkName)->dump(true);
+            } finally {
+                $builder->close();
+            }
+        }
+
+        return $this->compiled[$cacheKey];
+    }
+}
+```
+
+> **Never put Lua bytecode in a store anything else can write.** Not Redis, not
+> memcached, not a file, not a shared cache — only memory private to the process.
+
+This is not conservatism. Lua validates a binary chunk's *header* and nothing else, which
+is measurable:
+>
+| Corruption | Result |
+|---|---|
+| Truncated | refused — `bad binary format (truncated chunk)` |
+| Wrong version header | refused — `bad binary format (version mismatch)` |
+| **One byte flipped in the body** | **SIGBUS — the PHP process dies** |
+
+A single corrupted byte killed the process; a *crafted* chunk is arbitrary native code
+running inside your workers. Anyone who can write a key in a shared cache owns the
+process, and no validation you add helps, because Lua does the validating and Lua does
+not validate. This is also why `loadBytecode` stays off even under
+`Capabilities::trusted()` and has to be enabled by hand — see
+[SECURITY.md](../SECURITY.md).
+
+If you cannot guarantee the store is process-private, use source and pay the parse.
+
 ## Running Lua from a queued job
 
 A `Sandbox` wraps a live `lua_State` — a C heap outside PHP's allocator, pinned to the

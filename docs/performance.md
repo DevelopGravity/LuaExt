@@ -111,6 +111,40 @@ it, so a rarely-firing profiler costs nearly what a busy one does. And this is e
 why sampling is opt-in rather than always-armed — paying 2.6× on every call to collect a
 profile nobody reads is the trade the shipped design refuses.
 
+## What the eval() compile cache saves, and when it saves nothing
+
+`eval()` parses its source on every call and discards the chunk.
+`SandboxConfig(cacheCompiledChunks: true)` keeps it instead, bounded by
+`Limits::$maxCachedChunks` (default 64).
+
+**Apple M2 Max, arm64** · PHP 8.5.10 NTS · measured 2026-09-02 against `a3355a5`. Same
+sandbox, same source, repeated; the cache is warm after the first call.
+
+| Chunk | Cache off | Cache on | |
+|---|---:|---:|---:|
+| `return 1` (8 B) | 4.5 µs | 3.6 µs | 1.2× |
+| small loop (42 B) | 5.8 µs | 4.0 µs | 1.4× |
+| 60 functions (3.5 KB) | 84.3 µs | 15.0 µs | **5.6×** |
+
+> **5.6× on a chunk of real size — but only for a sandbox that outlives several
+> evaluations of the same source.**
+
+**The second half of that sentence matters as much as the first.** A sandbox built per
+request, evaluated once, and closed compiles into an empty cache every time and gains
+**nothing**. Measured on this machine, that shape costs ~128 µs end to end: ~33 µs to
+construct the interpreter and ~79 µs to parse. The cache cannot touch either. If that is
+your pattern, this setting is pure overhead and should stay off.
+
+It is also why the gain is 5.6× rather than the ~10× that comparing `eval()` against
+`compile()` + `call()` suggests: the cache key is the chunk name and the source, so every
+call still copies and hashes the whole source to look it up. That cost scales with the
+script, and it is the price of a lookup that cannot collide.
+
+The cached chunks are ordinary Lua objects allocated through the sandbox's own allocator,
+so they count against `memoryBytes` and appear in `stats()->cachedChunks`. That is the
+reason the feature is off by default: switching it on moves a sandbox closer to its own
+ceiling, which is not a thing to do to a caller who never asked for it.
+
 ## Memory across many sandboxes
 
 A long-lived worker creates and closes sandboxes indefinitely, so "does a create/close

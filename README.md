@@ -145,6 +145,7 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `maxStringLength` | 64 MiB |
 | `maxSourceBytes` | 1 MiB |
 | `maxConversionDepth` | 64 |
+| `maxCachedChunks` | 64 |
 
 Filesystem access has its own `VfsQuota` (open handles, file/total byte caps, operation counts, path length/depth) — see [docs/cookbook.md](docs/cookbook.md) for how it applies to a `FileSystem` backend. Every field is enforced: reads and writes are billed against the byte caps, each host call counts against the operation cap, and paths are rejected on length or depth before the backend sees them.
 
@@ -182,6 +183,7 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | *(none)* | `->setWallClockLimit($seconds)` | New: an independent wall-clock ceiling, also the Windows CPU-limit backstop. |
 | *(none)* | `->getWallClockUsage()`, or `->stats()->wallClockSeconds` | New: pairs with `setWallClockLimit()`. |
 | `->pauseUsageTimer()` / `->unpauseUsageTimer()` | `->pauseTimers()` / `->resumeTimers()` | Renamed; same segment-accumulator semantics (only the outermost Lua entry arms/disarms). |
+| *(none)* | `SandboxConfig(cacheCompiledChunks: true)` | New: `eval()` keeps the chunks it compiles instead of reparsing them, bounded by `maxCachedChunks`. Measured 5.6× on a 3.5 KB script — but only for a sandbox that outlives several evaluations; a per-request sandbox gains nothing. Off by default. See [docs/performance.md](docs/performance.md#what-the-eval-compile-cache-saves-and-when-it-saves-nothing). |
 | `->enableProfiler($period)` / `->disableProfiler()` | `->enableProfiler($period)` / `->disableProfiler()` | Unchanged names. Sampling is opt-in because arming the count hook costs ~2.6× on dispatch-bound code and up to 2.75× worst case — measured, see [docs/performance.md](docs/performance.md#what-the-profiler-costs). `getProfile()` reports each function's share of the samples, scaled by measured CPU time. |
 | `->getProfilerFunctionReport($units)` with `LuaSandbox::SAMPLES/SECONDS/PERCENT` | `->getProfile(ProfilerUnit $unit = ProfilerUnit::Seconds): array` | Unit constants become the `ProfilerUnit` enum (`Samples`, `Seconds`, `Percent`); default unit is `Seconds`. |
 | `->callFunction($name, ...$args)` | `->call($path, ...$args): array` | Both `call()` and `eval()` return `list<mixed>` and are `#[\NoDiscard]` — cast to `(void)` if you intentionally ignore the result. |
