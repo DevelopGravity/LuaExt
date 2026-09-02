@@ -777,6 +777,145 @@ static void luaext_error_attach(zend_object *exception, luaext_sandbox *sandbox,
 	}
 }
 
+/*
+ * The name Lua would DISPLAY for a chunk, which is what its messages are
+ * prefixed with and what a traceback frame's `source` holds.
+ *
+ * Lua's own luaO_chunkid: '=' means "use the rest verbatim", '@' means "a file
+ * name", and anything else is source text it wraps as [string "..."]. Only the
+ * first two produce a prefix we can match against a message, so the third
+ * reports no name rather than a guessed one.
+ */
+static const char *luaext_error_display_chunk_name(const char *chunk_name)
+{
+	if (chunk_name == NULL) {
+		return NULL;
+	}
+
+	if (chunk_name[0] == '=' || chunk_name[0] == '@') {
+		return chunk_name + 1;
+	}
+
+	return NULL;
+}
+
+/*
+ * The line a compile error names, from the message Lua produced.
+ *
+ * Its format is "<display name>:<line>: <what went wrong>", so the known name
+ * is stripped rather than searching for the first ':' -- a chunk name may
+ * contain one, and splitting on it would read the wrong number or none at all.
+ *
+ * Returns 0 when the message is not in that shape, which is the honest answer
+ * for the errors that have no line: the maxSourceBytes refusal is a SyntaxError
+ * about a limit, and inventing line 1 for it would be worse than saying nothing.
+ */
+static zend_long luaext_error_line_from_message(const char *message, const char *display_name)
+{
+	size_t name_len;
+	const char *cursor;
+	zend_long line = 0;
+
+	if (message == NULL || display_name == NULL) {
+		return 0;
+	}
+
+	name_len = strlen(display_name);
+
+	if (name_len == 0 || strncmp(message, display_name, name_len) != 0 ||
+		message[name_len] != ':') {
+		return 0;
+	}
+
+	cursor = message + name_len + 1;
+
+	if (*cursor < '0' || *cursor > '9') {
+		return 0;
+	}
+
+	while (*cursor >= '0' && *cursor <= '9') {
+		/* A line number past this is a malformed message, not a real line. */
+		if (line > (ZEND_LONG_MAX - 9) / 10) {
+			return 0;
+		}
+
+		line = line * 10 + (*cursor - '0');
+		cursor++;
+	}
+
+	/* The digits must actually be the line field, not the start of the text. */
+	return *cursor == ':' ? line : 0;
+}
+
+/*
+ * Give a compile failure the context a runtime failure already carries.
+ *
+ * A syntax error has no traceback, because the chunk never ran -- so the error
+ * value is a bare string, luaext_error_trace_to_zval finds nothing, and
+ * getLuaLine()/getChunkName() both answer null. That left the single most
+ * useful line number in the whole extension reachable only by parsing
+ * getMessage() in userland.
+ *
+ * The frame is synthesised on the PHP side rather than in Lua: there is no
+ * stack to walk, and the shape is the one the capture path emits, so
+ * getLuaTrace(), getLuaTraceAsString() and the serialization validator all read
+ * it without a special case. `what` is "main" and not "C" -- luaext_this_lua_frame
+ * skips C frames, and a frame it skips would report nothing.
+ */
+void luaext_error_attach_compile_context(const char *chunk_name)
+{
+	zend_object *exception = EG(exception);
+	const char *display_name;
+	const zval *message;
+	const zval *existing;
+	zval frame;
+	zval trace;
+
+	if (exception == NULL || !instanceof_function(exception->ce, luaext_ce_lua_throwable)) {
+		return;
+	}
+
+	/*
+	 * Never clobber a real traceback. Loading bytecode can fail inside a chunk
+	 * that did run, and that trace is the better one.
+	 *
+	 * Tested for an ARRAY rather than mere presence: the attach path stores the
+	 * result of luaext_error_trace_to_zval unconditionally, and that is a null
+	 * zval when there was no stack to walk -- so the key is always there by the
+	 * time this runs, and a presence check would decline every single time.
+	 */
+	existing = luaext_error_fetch(exception, LUAEXT_KEY_TRACE, LUAEXT_KEY_TRACE_LEN);
+
+	if (existing != NULL && Z_TYPE_P(existing) == IS_ARRAY) {
+		return;
+	}
+
+	display_name = luaext_error_display_chunk_name(chunk_name);
+
+	if (display_name == NULL) {
+		return;
+	}
+
+	message =
+		zend_read_property_ex(exception->ce, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, NULL);
+
+	array_init_size(&frame, 6);
+	add_assoc_string(&frame, "source", display_name);
+	add_assoc_string(&frame, "what", "main");
+	add_assoc_long(&frame, "currentLine",
+				   (message != NULL && Z_TYPE_P(message) == IS_STRING)
+					   ? luaext_error_line_from_message(Z_STRVAL_P(message), display_name)
+					   : 0);
+	add_assoc_null(&frame, "name");
+	add_assoc_string(&frame, "nameWhat", "");
+	add_assoc_long(&frame, "lineDefined", 0);
+
+	array_init_size(&trace, 1);
+	add_next_index_zval(&trace, &frame);
+
+	luaext_error_store(exception, LUAEXT_KEY_TRACE, LUAEXT_KEY_TRACE_LEN, &trace);
+}
+
 static zend_class_entry *luaext_error_class_for(const luaext_error_ud *error, int status)
 {
 	zend_class_entry *ce;

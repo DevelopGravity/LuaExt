@@ -125,6 +125,18 @@ bool luaext_error_is_fatal(lua_State *L, int index);
 void luaext_error_throw_from_lua(luaext_sandbox *sandbox, lua_State *L, int status);
 
 /*
+ * Give the exception currently in flight the chunk name and line a compile
+ * failure knows but cannot carry: the chunk never ran, so there is no stack to
+ * capture and getLuaLine()/getChunkName() would both answer null.
+ *
+ * Called immediately after luaext_error_throw_from_lua() on the load path,
+ * which is the only caller that knows the chunk name. A no-op when nothing is
+ * in flight, when the exception is not ours, or when a real traceback is
+ * already attached.
+ */
+void luaext_error_attach_compile_context(const char *chunk_name);
+
+/*
  * The message handler to pass as lua_pcall's `msgh`. Attaches a structured
  * traceback to the error value while the erroring stack still exists.
  *

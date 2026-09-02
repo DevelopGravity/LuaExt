@@ -150,6 +150,10 @@ bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len
 	if (status != LUA_OK) {
 		/* Pops the message the loader pushed, so the stack is as we found it. */
 		luaext_error_throw_from_lua(sandbox, L, status);
+
+		/* The chunk never ran, so there is no stack behind that error. This is
+		 * the only place that knows the name it was compiled under. */
+		luaext_error_attach_compile_context(chunk_name);
 		return false;
 	}
 
