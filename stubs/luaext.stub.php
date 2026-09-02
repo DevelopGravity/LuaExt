@@ -255,6 +255,15 @@ final readonly class Limits
     /** Nesting depth when converting values between PHP and Lua. */
     public int $maxConversionDepth;
 
+    /**
+     * Chunks eval()'s compile cache may hold, when SandboxConfig enables it.
+     *
+     * Bounds retention, not behaviour: past this many distinct chunks, eval()
+     * keeps working and simply stops caching. A full cache must never be able to
+     * turn a working call into a failing one.
+     */
+    public int $maxCachedChunks;
+
     public function __construct(
         ?int $memoryBytes = 33554432,
         ?float $cpuSeconds = 1.0,
@@ -269,6 +278,7 @@ final readonly class Limits
         int $maxStringLength = 67108864,
         int $maxSourceBytes = 1048576,
         int $maxConversionDepth = 64,
+        int $maxCachedChunks = 64,
     ) {}
 
     /**
@@ -377,6 +387,20 @@ final readonly class SandboxConfig
     /** Fix the seed and freeze the clock, for tests and golden-file runs. */
     public bool $deterministic;
 
+    /**
+     * Keep the chunks eval() compiles, so repeating the same source skips the
+     * parser. Bounded by Limits::$maxCachedChunks.
+     *
+     * Only helps a sandbox that OUTLIVES several eval() calls of the same
+     * source. A sandbox built per request, used once and closed, compiles into
+     * an empty cache every time and gains nothing.
+     *
+     * Off by default because a cached chunk is an ordinary Lua object charged
+     * against memoryBytes: enabling it moves a sandbox closer to its own
+     * ceiling, which is not something to do to a caller who did not ask.
+     */
+    public bool $cacheCompiledChunks;
+
     public function __construct(
         ?Capabilities $capabilities = null,
         ?Limits $limits = null,
@@ -389,6 +413,7 @@ final readonly class SandboxConfig
         int $outputChunkBytes = 8192,
         ?int $seed = null,
         bool $deterministic = false,
+        bool $cacheCompiledChunks = false,
     ) {}
 
     /**
@@ -431,6 +456,14 @@ final readonly class SandboxStats implements \JsonSerializable
     public int $peakCoroutineDepth;
 
     public int $modulesLoaded;
+
+    /**
+     * Chunks currently held by eval()'s compile cache.
+     *
+     * Always 0 unless SandboxConfig::$cacheCompiledChunks is set, and the only
+     * way to see whether the cache is doing anything.
+     */
+    public int $cachedChunks;
 
     public int $vfsOperations;
 

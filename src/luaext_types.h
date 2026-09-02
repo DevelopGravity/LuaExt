@@ -50,6 +50,7 @@ extern const char luaext_key_loaded;  /* package.loaded */
 extern const char luaext_key_preload; /* package.preload */
 extern const char luaext_key_loading; /* in-flight requires, for cycle detection */
 extern const char luaext_key_zvalmt;  /* metatable of zval-holding userdata */
+extern const char luaext_key_chunks;  /* eval() compile cache: key -> main chunk */
 
 /* -------------------------------------------------------------------------
  * Interrupt reasons
@@ -271,6 +272,13 @@ typedef struct {
 	size_t max_source_bytes;
 
 	uint32_t max_conversion_depth;
+
+	/*
+	 * Entries eval()'s compile cache may hold, when SandboxConfig enables it.
+	 * Bounds retention only: past it, chunks compile normally and are simply not
+	 * kept, because a full cache must never turn into a failed eval().
+	 */
+	uint32_t max_cached_chunks;
 } luaext_limits;
 
 typedef struct {
@@ -305,6 +313,17 @@ typedef struct {
 	 */
 	uint64_t seed;
 	bool seed_is_fixed;
+
+	/*
+	 * Whether eval() keeps the chunks it compiles, bounded by
+	 * limits.max_cached_chunks.
+	 *
+	 * Off unless the host asks, because a cached chunk is an ordinary Lua object
+	 * charged against memoryBytes: switching it on moves a sandbox closer to its
+	 * own ceiling, and doing that to an existing caller silently is the failure
+	 * this project keeps finding rather than shipping.
+	 */
+	bool cache_compiled_chunks;
 } luaext_policy;
 
 #define luaext_has_cap(policy, cap) (((policy)->caps & (uint32_t)(cap)) != 0)
@@ -491,6 +510,7 @@ struct luaext_sandbox {
 	uint64_t php_calls_out;
 	uint64_t gc_collections;
 	uint64_t modules_loaded;
+	uint64_t cached_chunks;
 	uint64_t vfs_operations;
 	uint64_t vfs_bytes;
 

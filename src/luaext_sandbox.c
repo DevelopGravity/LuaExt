@@ -62,6 +62,7 @@ const char luaext_key_loaded = 0;
 const char luaext_key_preload = 0;
 const char luaext_key_loading = 0;
 const char luaext_key_zvalmt = 0;
+const char luaext_key_chunks = 0;
 
 /* -------------------------------------------------------------------------
  * Helpers
@@ -933,11 +934,61 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
 	}
 }
 
+/* -------------------------------------------------------------------------
+ * The eval() compile cache
+ *
+ * eval() parses its source on every call and throws the chunk away, which costs
+ * an order of magnitude on a chunk of any size (10.2x on 3.8 KB; see
+ * docs/performance.md). When the host opts in, the compiled main chunk is kept
+ * in a registry table and reused.
+ *
+ * WHAT THIS DOES NOT HELP: a sandbox built per request, evaluated once, and
+ * closed. Its cache is empty every time. Only a sandbox that outlives several
+ * evaluations of the same source gains anything, which is why the feature is
+ * off unless asked for rather than simply switched on for everyone.
+ * ---------------------------------------------------------------------- */
+
+/* The cache table, created on first use. Same shape as require's tables. */
+static void luaext_sandbox_push_chunk_cache(lua_State *L)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_chunks) == LUA_TTABLE) {
+		return;
+	}
+
+	lua_pop(L, 1);
+	lua_createtable(L, 0, 8);
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_chunks);
+}
+
+/*
+ * The cache key: the chunk name, a NUL, then the source.
+ *
+ * A Lua string used directly as a table key, so lookup is exact and no
+ * collision reasoning is needed. The chunk name has to be part of it because it
+ * decides what every traceback out of that chunk will say -- two identical
+ * sources under different names are genuinely different chunks.
+ */
+static void luaext_sandbox_push_chunk_key(lua_State *L, const char *chunk_name,
+										  const zend_string *code)
+{
+	luaL_Buffer buffer;
+
+	luaL_buffinit(L, &buffer);
+	luaL_addstring(&buffer, chunk_name);
+	luaL_addchar(&buffer, '\0');
+	luaL_addlstring(&buffer, ZSTR_VAL(code), ZSTR_LEN(code));
+	luaL_pushresult(&buffer);
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 {
 	luaext_sandbox *sandbox;
 	zend_string *code;
 	zend_string *chunk_name = NULL;
+	const char *resolved_name;
+	lua_State *L;
+	bool cached = false;
 
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 	Z_PARAM_STR(code)
@@ -951,12 +1002,69 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 		RETURN_THROWS();
 	}
 
-	if (!luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code),
-						  luaext_sandbox_chunk_name(chunk_name, "=(eval)"), false)) {
-		RETURN_THROWS();
+	resolved_name = luaext_sandbox_chunk_name(chunk_name, "=(eval)");
+	L = luaext_exec_state(sandbox);
+
+	if (sandbox->policy.cache_compiled_chunks) {
+		if (!lua_checkstack(L, 4)) {
+			zend_throw_exception(luaext_ce_memory_limit_error,
+								 "Cannot evaluate a chunk: the interpreter stack cannot grow", 0);
+			RETURN_THROWS();
+		}
+
+		luaext_sandbox_push_chunk_cache(L);
+		luaext_sandbox_push_chunk_key(L, resolved_name, code);
+		lua_pushvalue(L, -1); /* keep the key; a miss needs it to store under */
+
+		if (lua_rawget(L, -3) == LUA_TFUNCTION) {
+			/* Hit: [cache][key][chunk] -> leave only the chunk. */
+			lua_remove(L, -2);
+			lua_remove(L, -2);
+			cached = true;
+		} else {
+			lua_pop(L, 1); /* the nil */
+		}
 	}
 
-	/* Takes the chunk with it, so a failed call leaves nothing behind. */
+	if (!cached) {
+		if (!luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code), resolved_name, false)) {
+			if (sandbox->policy.cache_compiled_chunks) {
+				lua_pop(L, 2); /* the cache table and the key */
+			}
+
+			RETURN_THROWS();
+		}
+
+		if (sandbox->policy.cache_compiled_chunks) {
+			uint32_t cap = sandbox->policy.limits.max_cached_chunks;
+
+			/*
+			 * Stack here is [cache][key][chunk]. Past the ceiling the entry is
+			 * simply not stored: a full cache slows the next call down, it does
+			 * not fail it, because "your script stopped working once we had
+			 * seen enough other scripts" is not a defensible behaviour.
+			 */
+			if (cap == 0 || sandbox->cached_chunks < (uint64_t)cap) {
+				/* rawset pops VALUE then KEY off the top, so both are copied
+				 * above the chunk rather than stored from where they sit. */
+				lua_pushvalue(L, -2); /* [cache][key][chunk][key] */
+				lua_pushvalue(L, -2); /* [cache][key][chunk][key][chunk] */
+				lua_rawset(L, -5);	  /* cache[key] = chunk -> [cache][key][chunk] */
+				sandbox->cached_chunks++;
+				lua_remove(L, -2); /* -> [cache][chunk] */
+				lua_remove(L, -2); /* -> [chunk] */
+			} else {
+				lua_remove(L, -2); /* drop the key  -> [cache][chunk] */
+				lua_remove(L, -2); /* drop the cache -> [chunk] */
+			}
+		}
+	}
+
+	/*
+	 * Takes the chunk with it, so a failed call leaves nothing behind. A cached
+	 * chunk is a value the registry also holds, so consuming the stack copy
+	 * costs the cache nothing.
+	 */
 	if (!luaext_exec_pcall(sandbox, -1, NULL, 0, return_value)) {
 		RETURN_THROWS();
 	}

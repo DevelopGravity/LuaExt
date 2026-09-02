@@ -42,6 +42,7 @@
 #define LUAEXT_DEFAULT_MAX_COROUTINE_DEPTH 16
 #define LUAEXT_DEFAULT_MAX_CALL_DEPTH 200
 #define LUAEXT_DEFAULT_MAX_MODULES 64
+#define LUAEXT_DEFAULT_MAX_CACHED_CHUNKS 64
 #define LUAEXT_DEFAULT_MAX_REQUIRE_DEPTH 16
 #define LUAEXT_DEFAULT_MAX_STRING_LENGTH ((size_t)67108864)
 #define LUAEXT_DEFAULT_MAX_SOURCE_BYTES ((size_t)1048576)
@@ -454,6 +455,7 @@ static void luaext_config_default_limits(luaext_limits *out)
 	out->max_string_length = LUAEXT_DEFAULT_MAX_STRING_LENGTH;
 	out->max_source_bytes = LUAEXT_DEFAULT_MAX_SOURCE_BYTES;
 	out->max_conversion_depth = LUAEXT_DEFAULT_MAX_CONVERSION_DEPTH;
+	out->max_cached_chunks = LUAEXT_DEFAULT_MAX_CACHED_CHUNKS;
 }
 
 static bool luaext_config_limits(zend_object *limits, luaext_limits *out)
@@ -488,7 +490,9 @@ static bool luaext_config_limits(zend_object *limits, luaext_limits *out)
 		   luaext_config_size(LUAEXT_GET(limits, "maxSourceBytes"), "Limits::$maxSourceBytes",
 							  &out->max_source_bytes) &&
 		   luaext_config_count(LUAEXT_GET(limits, "maxConversionDepth"),
-							   "Limits::$maxConversionDepth", &out->max_conversion_depth);
+							   "Limits::$maxConversionDepth", &out->max_conversion_depth) &&
+		   luaext_config_count(LUAEXT_GET(limits, "maxCachedChunks"), "Limits::$maxCachedChunks",
+							   &out->max_cached_chunks);
 }
 
 static void luaext_config_default_vfs_quota(luaext_vfs_quota *out)
@@ -654,7 +658,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *limits,
 										zend_object *vfs_quota, zend_object *filesystem,
 										bool seed_is_fixed, zend_long seed, bool deterministic,
-										luaext_policy *policy)
+										bool cache_compiled_chunks, luaext_policy *policy)
 {
 	memset(policy, 0, sizeof(*policy));
 
@@ -673,6 +677,7 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	 */
 	policy->seed_is_fixed = seed_is_fixed;
 	policy->seed = seed_is_fixed ? (uint64_t)seed : 0;
+	policy->cache_compiled_chunks = cache_compiled_chunks;
 
 	return luaext_config_limits(limits, &policy->limits) &&
 		   luaext_config_vfs_quota(vfs_quota, &policy->vfs_quota);
@@ -686,7 +691,7 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 
 	if (config == NULL || Z_TYPE_P(config) != IS_OBJECT) {
 		/* No configuration at all is the untrusted baseline with default limits. */
-		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, policy);
+		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, false, policy);
 	}
 
 	object = Z_OBJ_P(config);
@@ -698,7 +703,8 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 		LUAEXT_GET_OBJECT(object, "capabilities"), LUAEXT_GET_OBJECT(object, "limits"),
 		LUAEXT_GET_OBJECT(object, "vfsQuota"), LUAEXT_GET_OBJECT(object, "filesystem"),
 		Z_TYPE_P(seed) == IS_LONG, Z_TYPE_P(seed) == IS_LONG ? Z_LVAL_P(seed) : 0,
-		LUAEXT_GET_BOOL(object, "deterministic"), policy);
+		LUAEXT_GET_BOOL(object, "deterministic"), LUAEXT_GET_BOOL(object, "cacheCompiledChunks"),
+		policy);
 }
 
 /* -------------------------------------------------------------------------
@@ -982,10 +988,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	zend_long max_string_length = (zend_long)LUAEXT_DEFAULT_MAX_STRING_LENGTH;
 	zend_long max_source_bytes = (zend_long)LUAEXT_DEFAULT_MAX_SOURCE_BYTES;
 	zend_long max_conversion_depth = LUAEXT_DEFAULT_MAX_CONVERSION_DEPTH;
+	zend_long max_cached_chunks = LUAEXT_DEFAULT_MAX_CACHED_CHUNKS;
 	zend_object *object;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 13)
+	ZEND_PARSE_PARAMETERS_START(0, 14)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_LONG_OR_NULL(memory_bytes, memory_bytes_is_null)
 	Z_PARAM_DOUBLE_OR_NULL(cpu_seconds, cpu_seconds_is_null)
@@ -1000,6 +1007,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	Z_PARAM_LONG(max_string_length)
 	Z_PARAM_LONG(max_source_bytes)
 	Z_PARAM_LONG(max_conversion_depth)
+	Z_PARAM_LONG(max_cached_chunks)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object = Z_OBJ_P(ZEND_THIS);
@@ -1059,6 +1067,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	LUAEXT_SET(object, "maxSourceBytes", &value);
 	ZVAL_LONG(&value, max_conversion_depth);
 	LUAEXT_SET(object, "maxConversionDepth", &value);
+	ZVAL_LONG(&value, max_cached_chunks);
+	LUAEXT_SET(object, "maxCachedChunks", &value);
 }
 
 LUAEXT_CONFIG_WITH_METHOD(DevelopGravity_LuaExt_Limits, luaext_ce_limits)
@@ -1151,11 +1161,12 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	zend_long seed = 0;
 	bool seed_is_null = true;
 	bool deterministic = false;
+	bool cache_compiled_chunks = false;
 	zend_object *object;
 	luaext_policy policy;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 11)
+	ZEND_PARSE_PARAMETERS_START(0, 12)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(capabilities, luaext_ce_capabilities)
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(limits, luaext_ce_limits)
@@ -1168,6 +1179,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	Z_PARAM_LONG(output_chunk_bytes)
 	Z_PARAM_LONG_OR_NULL(seed, seed_is_null)
 	Z_PARAM_BOOL(deterministic)
+	Z_PARAM_BOOL(cache_compiled_chunks)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object = Z_OBJ_P(ZEND_THIS);
@@ -1185,7 +1197,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	 * because resolution is pure.
 	 */
 	if (!luaext_config_resolve_parts(capabilities, limits, vfs_quota, filesystem, !seed_is_null,
-									 seed, deterministic, &policy)) {
+									 seed, deterministic, cache_compiled_chunks, &policy)) {
 		RETURN_THROWS();
 	}
 
@@ -1257,6 +1269,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 
 	ZVAL_BOOL(&value, deterministic);
 	LUAEXT_SET(object, "deterministic", &value);
+	ZVAL_BOOL(&value, cache_compiled_chunks);
+	LUAEXT_SET(object, "cacheCompiledChunks", &value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with)
@@ -1359,6 +1373,8 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "peakCoroutineDepth", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->modules_loaded);
 	LUAEXT_SET(object, "modulesLoaded", &value);
+	ZVAL_LONG(&value, (zend_long)sandbox->cached_chunks);
+	LUAEXT_SET(object, "cachedChunks", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->vfs_operations);
 	LUAEXT_SET(object, "vfsOperations", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->vfs_bytes);

@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: afc0e8f84e6682d00b0baedee934e73b19e12e96 */
+ * Stub hash: 2929a730fe7e0d351f0c1c7bf41621a973a668b4 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -48,6 +48,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Limits___construct, 0
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxStringLength, IS_LONG, 0, "67108864")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxSourceBytes, IS_LONG, 0, "1048576")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxConversionDepth, IS_LONG, 0, "64")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxCachedChunks, IS_LONG, 0, "64")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Limits_with, 0, 0, DevelopGravity\\LuaExt\\Limits, 0)
@@ -81,6 +82,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig___const
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, outputChunkBytes, IS_LONG, 0, "8192")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, deterministic, _IS_BOOL, 0, "false")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cacheCompiledChunks, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig_with, 0, 0, DevelopGravity\\LuaExt\\SandboxConfig, 0)
@@ -746,6 +748,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Limits(void)
 	zend_declare_typed_property(class_entry, property_maxConversionDepth_name, &property_maxConversionDepth_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_maxConversionDepth_name);
 
+	zval property_maxCachedChunks_default_value;
+	ZVAL_UNDEF(&property_maxCachedChunks_default_value);
+	zend_string *property_maxCachedChunks_name = zend_string_init("maxCachedChunks", sizeof("maxCachedChunks") - 1, 1);
+	zend_declare_typed_property(class_entry, property_maxCachedChunks_name, &property_maxCachedChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
+	zend_string_release(property_maxCachedChunks_name);
+
 	return class_entry;
 }
 
@@ -887,6 +895,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxConfig(void
 	zend_declare_typed_property(class_entry, property_deterministic_name, &property_deterministic_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
 	zend_string_release(property_deterministic_name);
 
+	zval property_cacheCompiledChunks_default_value;
+	ZVAL_UNDEF(&property_cacheCompiledChunks_default_value);
+	zend_string *property_cacheCompiledChunks_name = zend_string_init("cacheCompiledChunks", sizeof("cacheCompiledChunks") - 1, 1);
+	zend_declare_typed_property(class_entry, property_cacheCompiledChunks_name, &property_cacheCompiledChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
+	zend_string_release(property_cacheCompiledChunks_name);
+
 	return class_entry;
 }
 
@@ -957,6 +971,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxStats(zend_
 	zend_string *property_modulesLoaded_name = zend_string_init("modulesLoaded", sizeof("modulesLoaded") - 1, 1);
 	zend_declare_typed_property(class_entry, property_modulesLoaded_name, &property_modulesLoaded_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_modulesLoaded_name);
+
+	zval property_cachedChunks_default_value;
+	ZVAL_UNDEF(&property_cachedChunks_default_value);
+	zend_string *property_cachedChunks_name = zend_string_init("cachedChunks", sizeof("cachedChunks") - 1, 1);
+	zend_declare_typed_property(class_entry, property_cachedChunks_name, &property_cachedChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
+	zend_string_release(property_cachedChunks_name);
 
 	zval property_vfsOperations_default_value;
 	ZVAL_UNDEF(&property_vfsOperations_default_value);

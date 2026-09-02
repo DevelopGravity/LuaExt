@@ -60,6 +60,7 @@ DevelopGravity\LuaExt\Limits
   maxStringLength      67108864
   maxSourceBytes       1048576
   maxConversionDepth   64
+  maxCachedChunks      64
 DevelopGravity\LuaExt\VfsQuota
   maxOpenHandles       16
   maxFileBytes         1048576
@@ -81,6 +82,7 @@ DevelopGravity\LuaExt\SandboxConfig
   outputChunkBytes     8192
   seed                 NULL
   deterministic        false
+  cacheCompiledChunks  false
 NULL
 NULL
 bool(true)

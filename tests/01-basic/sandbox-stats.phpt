@@ -56,10 +56,11 @@ outputTruncated      bool
 liveCoroutines       int
 peakCoroutineDepth   int
 modulesLoaded        int
+cachedChunks         int
 vfsOperations        int
 vfsBytes             int
 gcCollections        int
 luaCallsIn           int
 phpCallsOut          int
 bool(true)
-{"memoryBytes":0,"peakMemoryBytes":0,"memoryLimitBytes":0,"cpuSeconds":0,"wallClockSeconds":0,"outputBytes":0,"outputTruncated":false,"liveCoroutines":0,"peakCoroutineDepth":0,"modulesLoaded":0,"vfsOperations":0,"vfsBytes":0,"gcCollections":0,"luaCallsIn":0,"phpCallsOut":0}
+{"memoryBytes":0,"peakMemoryBytes":0,"memoryLimitBytes":0,"cpuSeconds":0,"wallClockSeconds":0,"outputBytes":0,"outputTruncated":false,"liveCoroutines":0,"peakCoroutineDepth":0,"modulesLoaded":0,"cachedChunks":0,"vfsOperations":0,"vfsBytes":0,"gcCollections":0,"luaCallsIn":0,"phpCallsOut":0}
