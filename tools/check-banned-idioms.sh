@@ -35,6 +35,7 @@ header_printed=0
 # patterns themselves): extended-regex ~ short name ~ why it is banned.
 readonly RULES=(
 	'ZVAL_ARR[[:space:]]*[(]~ZVAL_ARR~stamps refcounted onto a possibly-immutable HashTable; receive with Z_PARAM_ARRAY_HT and keep with ZVAL_COPY'
+	'not implemented yet~unimplemented method~a declared method that throws is invisible to every documentation check, because the name resolves; either implement it or remove it from the stubs'
 )
 
 for rule in "${RULES[@]}"; do
