@@ -138,7 +138,7 @@ if (PHP_LUAEXT != "no") {
 		"src\\luaext_profiler.c src\\luaext_require.c " +
 		"src\\luaext_mathlib.c " +
 		"src\\luaext_openlibs.c src\\luaext_oslib.c src\\luaext_output.c " +
-		"src\\luaext_pending.c src\\luaext_phpcall.c src\\luaext_thread.c " +
+		"src\\luaext_phpcall.c src\\luaext_thread.c " +
 		"src\\luaext_timers.c src\\luaext_vfs.c src\\luaext_vfs_path.c " +
 		"src\\luaext_watchdog.c",
 		true,

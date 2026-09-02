@@ -8,13 +8,14 @@
  * the handle -- a handle onto a closed sandbox names a registry that no longer
  * exists.
  *
- * Dumping to bytecode is the one operation still missing; it is the other half
- * of the loadBytecode/dumpBytecode pair and lands with them.
+ * Dumping to bytecode lives here too: it is the producing half of the
+ * dumpBytecode/loadBytecode pair, whose consuming half is Sandbox::compileBinary().
  */
 
 #include "luaext_function.h"
 
 #include "luaext_convert.h"
+#include "luaext_error.h"
 #include "luaext_exec.h"
 #include "luaext_sandbox.h"
 
@@ -160,6 +161,49 @@ static void luaext_function_invoke(zval *this_zv, zval *return_value, zval *args
 	}
 }
 
+/* -------------------------------------------------------------------------
+ * Dumping to bytecode
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Where lua_dump's writer accumulates.
+ *
+ * `failed` exists because the writer runs INSIDE the interpreter: throwing from
+ * there would longjmp straight through lua_dump's own bookkeeping, so a problem
+ * is recorded and reported once control is back on our side.
+ *
+ * The buffer is NOT charged against the memory limit, and that is the rule
+ * rather than an oversight: the callback bridge bills and discharges because it
+ * owns its zvals and frees them when the call returns, but a dump is handed to
+ * PHP, whose lifetime the extension neither knows nor controls -- so billing it
+ * would spend a budget nothing ever gives back. This is why the hand-grown
+ * allocation in luaext_output.c is not copied here; that exists to consult
+ * luaext_alloc_charge() before taking memory, which this path deliberately
+ * does not do.
+ */
+typedef struct {
+	smart_str buf;
+	bool failed;
+} luaext_function_dump_ctx;
+
+static int luaext_function_dump_writer(lua_State *L, const void *chunk, size_t size, void *ud)
+{
+	luaext_function_dump_ctx *ctx = (luaext_function_dump_ctx *)ud;
+
+	(void)L;
+
+	/* Non-zero stops lua_dump. Once given up, stay given up. */
+	if (ctx->failed) {
+		return 1;
+	}
+
+	if (size > 0) {
+		smart_str_appendl(&ctx->buf, (const char *)chunk, size);
+	}
+
+	return 0;
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, __construct)
 {
 	/*
@@ -233,4 +277,102 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, isValid)
 	}
 
 	RETURN_BOOL(!Z_LUAEXT_SANDBOX_P(&function->sandbox_zv)->closed);
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
+{
+	luaext_function_obj *function;
+	luaext_sandbox *sandbox;
+	luaext_function_dump_ctx ctx = {0};
+	lua_State *L;
+	bool strip = true;
+	int status;
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_BOOL(strip)
+	ZEND_PARSE_PARAMETERS_END();
+
+	function = Z_LUAEXT_FUNCTION_P(ZEND_THIS);
+	sandbox = luaext_function_sandbox(function);
+
+	if (sandbox == NULL) {
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Producing bytecode is the safe half of the pair; loading it is the half
+	 * that is arbitrary native execution, which is why compileBinary() gates on
+	 * loadBytecode and that flag stays off even under trusted().
+	 */
+	if (!luaext_has_cap(&sandbox->policy, LUAEXT_CAP_DUMP_BYTECODE)) {
+		zend_throw_exception(luaext_ce_capability_error,
+							 "Dumping a function to bytecode requires the dumpBytecode "
+							 "capability, which this sandbox was not granted",
+							 0);
+		RETURN_THROWS();
+	}
+
+	L = sandbox->L;
+
+	if (!lua_checkstack(L, 2)) {
+		zend_throw_exception(luaext_ce_runtime_error,
+							 "Cannot dump a LuaFunction: the interpreter stack cannot grow", 0);
+		RETURN_THROWS();
+	}
+
+	luaext_convert_ref_push(sandbox, L, function->ref);
+
+	/* The slot is checked rather than trusted, exactly as calling does: it is
+	 * cleared when a handle is released and handed out again, so a stale index
+	 * would otherwise dump whatever value took its place. */
+	if (!lua_isfunction(L, -1)) {
+		lua_pop(L, 1);
+		zend_throw_exception(luaext_ce_closed_sandbox_error,
+							 "This LuaFunction no longer references a Lua function", 0);
+		RETURN_THROWS();
+	}
+
+	/*
+	 * MANDATORY, not politeness. Lua 5.5's lua_dump guards the "is this a Lua
+	 * function" precondition with api_check(), which compiles to NOTHING unless
+	 * LUA_USE_APICHECK is defined -- and it then reads clLvalue(f)->p
+	 * unconditionally. Handing it the C closure that wrapCallable() produces
+	 * would read a Proto pointer out of a CClosure. Because this build defines
+	 * LUA_USE_APICHECK only under --enable-luaext-debug, the unguarded version
+	 * asserts cleanly in a debug build and corrupts memory in a release one.
+	 */
+	if (lua_iscfunction(L, -1)) {
+		lua_pop(L, 1);
+		zend_throw_exception(luaext_ce_runtime_error,
+							 "This LuaFunction wraps a PHP callable, which has no bytecode to "
+							 "dump. Only a function compiled from Lua source can be dumped",
+							 0);
+		RETURN_THROWS();
+	}
+
+	/* The writer must not raise; it reports through ctx.failed instead. */
+	LUAEXT_NO_RAISE_BEGIN(L);
+	status = lua_dump(L, luaext_function_dump_writer, &ctx, strip ? 1 : 0);
+	LUAEXT_NO_RAISE_END(L);
+
+	lua_pop(L, 1);
+
+	if (status != 0 || ctx.failed) {
+		smart_str_free(&ctx.buf);
+		zend_throw_exception_ex(luaext_ce_runtime_error, 0,
+								"The interpreter could not serialise this function to bytecode "
+								"(writer status %d)",
+								status);
+		RETURN_THROWS();
+	}
+
+	/* Binary, with embedded NULs: a zend_string carries its own length, so the
+	 * result is handed over whole rather than through anything NUL-terminated. */
+	if (ctx.buf.s == NULL) {
+		RETURN_EMPTY_STRING();
+	}
+
+	smart_str_0(&ctx.buf);
+	RETURN_STR(ctx.buf.s);
 }

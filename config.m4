@@ -173,7 +173,6 @@ if test "$PHP_LUAEXT" != "no"; then
      src/luaext_openlibs.c \
      src/luaext_oslib.c \
      src/luaext_output.c \
-     src/luaext_pending.c \
      src/luaext_phpcall.c \
      src/luaext_thread.c \
      src/luaext_timers.c \
