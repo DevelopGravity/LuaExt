@@ -457,12 +457,16 @@ as a mode flag, and that choice decides whether you get a line number back:
 |---|---|---|
 | `'@rule-42.lua'` | `rule-42.lua` | reported |
 | `'=(load)'` | `(load)` | reported |
-| `'rule-42.lua'` | `[string "rule-42.lua"]` | both `null` |
+| `'rule-42.lua'` | `rule-42.lua` | reported — **normalised to `@rule-42.lua`** |
 
-An unprefixed name is treated by Lua as *source text*, not a name, so there is no prefix to
-match against its message and no position is claimed rather than guessed — a wrong line in a
-log is worse than none. Every default in the extension already carries a prefix; pass one
-too, especially when the name comes from user input.
+An unprefixed name would be *source text* to Lua, quoted as `[string "..."]`, leaving no
+name to match against its message and therefore no line to report. **`validate()` normalises
+it**, because reporting a position is the method's whole purpose.
+
+That normalisation is `validate()`-only, and deliberately so: `compile()` and `eval()` are
+thin wrappers over Lua's loader and keep its convention, so `compile($src, 'rule.lua')` still
+reports `[string "rule.lua"]` and a null chunk name. Passing a prefix explicitly keeps every
+method in agreement.
 
 Three things make it fit that job rather than `compile()` in a `try`/`catch`:
 
