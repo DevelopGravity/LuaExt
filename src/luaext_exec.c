@@ -123,7 +123,11 @@ bool luaext_exec_load(luaext_sandbox *sandbox, const char *code, size_t code_len
 	 * refusing.
 	 */
 	if (max_source != 0 && code_len > max_source) {
-		zend_throw_exception_ex(luaext_ce_syntax_error, 0,
+		/* SourceLimitError, not SyntaxError: the parser never saw this chunk, so
+		 * there is nothing wrong with it and no line to point at. It used to be
+		 * a SyntaxError, which sent whoever read the log hunting for a mistake
+		 * that was not there. */
+		zend_throw_exception_ex(luaext_ce_source_limit_error, 0,
 								"The chunk is %zu bytes, which exceeds the %zu byte source limit "
 								"this sandbox was configured with",
 								code_len, max_source);

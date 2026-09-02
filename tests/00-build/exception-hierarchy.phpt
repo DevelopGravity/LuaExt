@@ -19,6 +19,9 @@ $parents = [
 	'ModuleNotFoundError' => NS . 'RuntimeError',
 	'FatalError' => NS . 'LuaException',
 	'SyntaxError' => NS . 'FatalError',
+	// A sibling of SyntaxError, not a subclass: an oversized chunk never
+	// reached the parser, so nothing is wrong with it.
+	'SourceLimitError' => NS . 'FatalError',
 	'MemoryLimitError' => NS . 'FatalError',
 	'CpuLimitError' => NS . 'FatalError',
 	'WallClockLimitError' => NS . 'FatalError',
@@ -58,6 +61,7 @@ VfsError             parent=true throwable=true abstract=false
 ModuleNotFoundError  parent=true throwable=true abstract=false
 FatalError           parent=true throwable=true abstract=true
 SyntaxError          parent=true throwable=true abstract=false
+SourceLimitError     parent=true throwable=true abstract=false
 MemoryLimitError     parent=true throwable=true abstract=false
 CpuLimitError        parent=true throwable=true abstract=false
 WallClockLimitError  parent=true throwable=true abstract=false

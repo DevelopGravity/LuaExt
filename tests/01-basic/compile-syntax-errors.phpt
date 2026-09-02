@@ -7,6 +7,7 @@ luaext
 
 declare(strict_types=1);
 
+use DevelopGravity\LuaExt\Exception\SourceLimitError;
 use DevelopGravity\LuaExt\Exception\SyntaxError;
 use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\Sandbox;
@@ -87,15 +88,16 @@ try {
 }
 
 // A refusal that never reached the parser has no line, and must not be given
-// one. maxSourceBytes throws a SyntaxError -- nothing is wrong with the chunk,
-// it is simply too big -- and its message is not in the "name:line:" shape, so
-// the parse finds nothing and nothing is claimed.
+// one. It is also not a SyntaxError at all any more -- nothing is wrong with
+// the chunk, it is simply larger than this sandbox accepts -- so it arrives as
+// a SourceLimitError, and this file's subject is chunks that DO reach the
+// parser. Caught here only to prove the two no longer overlap.
 $bounded = new Sandbox(new SandboxConfig(limits: new Limits(maxSourceBytes: 8)));
 
 try {
 	$bounded->compile(str_repeat('x', 64), '@oversize.lua');
-} catch (SyntaxError $error) {
-	var_dump($error->getLuaLine());
+} catch (SourceLimitError $error) {
+	var_dump($error instanceof SyntaxError, $error->getLuaLine());
 }
 
 $bounded->close();
@@ -168,6 +170,7 @@ string(17) "weird:name:v2.lua"
 int(1)
 NULL
 NULL
+bool(false)
 NULL
 string(9) "roundtrip"
 int(2)

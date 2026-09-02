@@ -180,6 +180,23 @@ class SyntaxError extends FatalError
 }
 
 /**
+ * A chunk was refused for exceeding Limits::$maxSourceBytes.
+ *
+ * Deliberately NOT a SyntaxError, which is what it used to be: nothing is wrong
+ * with the chunk, it is simply larger than this sandbox accepts, and the parser
+ * never saw it. That distinction is the reason this class exists — it is the one
+ * refusal on the compile path with no line to report, and calling it a syntax
+ * error sent whoever read the log looking for a mistake that was not there.
+ *
+ * Only the host-side path throws this. Lua's own load() keeps returning
+ * `fail, message` for an oversized chunk, and require() keeps raising a module
+ * error, because those are their own established contracts.
+ */
+class SourceLimitError extends FatalError
+{
+}
+
+/**
  * The script reached its memory ceiling.
  */
 class MemoryLimitError extends FatalError

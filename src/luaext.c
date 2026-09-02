@@ -62,6 +62,7 @@ zend_class_entry *luaext_ce_vfs_error;
 zend_class_entry *luaext_ce_module_not_found_error;
 zend_class_entry *luaext_ce_fatal_error;
 zend_class_entry *luaext_ce_syntax_error;
+zend_class_entry *luaext_ce_source_limit_error;
 zend_class_entry *luaext_ce_memory_limit_error;
 zend_class_entry *luaext_ce_cpu_limit_error;
 zend_class_entry *luaext_ce_wall_clock_limit_error;
@@ -199,6 +200,8 @@ static void luaext_register_exceptions(void)
 		register_class_DevelopGravity_LuaExt_Exception_FatalError(luaext_ce_lua_exception);
 	luaext_ce_syntax_error =
 		register_class_DevelopGravity_LuaExt_Exception_SyntaxError(luaext_ce_fatal_error);
+	luaext_ce_source_limit_error =
+		register_class_DevelopGravity_LuaExt_Exception_SourceLimitError(luaext_ce_fatal_error);
 	luaext_ce_memory_limit_error =
 		register_class_DevelopGravity_LuaExt_Exception_MemoryLimitError(luaext_ce_fatal_error);
 	luaext_ce_cpu_limit_error =

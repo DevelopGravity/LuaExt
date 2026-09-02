@@ -69,6 +69,7 @@ extern zend_class_entry *luaext_ce_vfs_error;
 extern zend_class_entry *luaext_ce_module_not_found_error;
 extern zend_class_entry *luaext_ce_fatal_error;
 extern zend_class_entry *luaext_ce_syntax_error;
+extern zend_class_entry *luaext_ce_source_limit_error;
 extern zend_class_entry *luaext_ce_memory_limit_error;
 extern zend_class_entry *luaext_ce_cpu_limit_error;
 extern zend_class_entry *luaext_ce_wall_clock_limit_error;

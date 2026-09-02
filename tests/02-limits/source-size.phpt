@@ -7,7 +7,7 @@ luaext
 
 declare(strict_types=1);
 
-use DevelopGravity\LuaExt\Exception\SyntaxError;
+use DevelopGravity\LuaExt\Exception\SourceLimitError;
 use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
@@ -30,7 +30,7 @@ foreach ([65, 300] as $length) {
 	try {
 		$sandbox->compile(str_repeat('-', $length));
 		printf("%d: NOT REFUSED\n", $length);
-	} catch (SyntaxError $error) {
+	} catch (SourceLimitError $error) {
 		printf("%d: %s: %s\n", $length, $error::class, $error->getMessage());
 	}
 }
@@ -39,8 +39,22 @@ foreach ([65, 300] as $length) {
 try {
 	(void) $sandbox->eval(str_repeat('--x', 100));
 	echo "eval: NOT REFUSED\n";
-} catch (SyntaxError $error) {
+} catch (SourceLimitError $error) {
 	printf("eval: %s\n", $error->getMessage());
+}
+
+// The taxonomy, pinned deliberately rather than left incidental. This used to
+// be a SyntaxError, and it is not one: the parser never saw the chunk, so there
+// is nothing wrong with it and no line to point at. Calling it a syntax error
+// sent whoever read the log hunting a mistake that was not there.
+try {
+	$sandbox->compile(str_repeat('-', 100));
+} catch (SourceLimitError $error) {
+	var_dump(
+		$error instanceof DevelopGravity\LuaExt\Exception\FatalError,
+		$error instanceof DevelopGravity\LuaExt\Exception\SyntaxError,
+		$error->getLuaLine(),
+	);
 }
 
 // Refusing is not truncating. A chunk cut to fit would compile something the
@@ -63,9 +77,12 @@ $unbounded->close();
 --EXPECT--
 array(0) {
 }
-65: DevelopGravity\LuaExt\Exception\SyntaxError: The chunk is 65 bytes, which exceeds the 64 byte source limit this sandbox was configured with
-300: DevelopGravity\LuaExt\Exception\SyntaxError: The chunk is 300 bytes, which exceeds the 64 byte source limit this sandbox was configured with
+65: DevelopGravity\LuaExt\Exception\SourceLimitError: The chunk is 65 bytes, which exceeds the 64 byte source limit this sandbox was configured with
+300: DevelopGravity\LuaExt\Exception\SourceLimitError: The chunk is 300 bytes, which exceeds the 64 byte source limit this sandbox was configured with
 eval: The chunk is 300 bytes, which exceeds the 64 byte source limit this sandbox was configured with
+bool(true)
+bool(false)
+NULL
 array(1) {
   [0]=>
   string(10) "still here"
