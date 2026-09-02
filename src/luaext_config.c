@@ -1434,6 +1434,138 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxStats, jsonSerialize)
 }
 
 /* -------------------------------------------------------------------------
+ * Validation results
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Fill a ValidationResult. `message` and `chunk_name` are borrowed.
+ *
+ * A refusal with no line to report passes 0, which becomes null rather than
+ * line zero: a chunk rejected for exceeding maxSourceBytes never reached the
+ * parser, and claiming a position in it would be an invention.
+ */
+void luaext_config_validation_create(zval *out, bool valid, zend_string *message, zend_long line,
+									 const char *chunk_name)
+{
+	zend_object *object;
+	zval value;
+
+	object_init_ex(out, luaext_ce_validation_result);
+	object = Z_OBJ_P(out);
+
+	ZVAL_BOOL(&value, valid);
+	LUAEXT_SET(object, "valid", &value);
+
+	if (message != NULL) {
+		ZVAL_STR_COPY(&value, message);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "message", &value);
+
+	if (line > 0) {
+		ZVAL_LONG(&value, line);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "line", &value);
+
+	if (chunk_name != NULL) {
+		ZVAL_STRING(&value, chunk_name);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "chunkName", &value);
+}
+
+/*
+ * Public, unlike SandboxStats: this object asserts nothing beyond its own
+ * fields, so a host wrapping its own checks may reasonably build one. The
+ * defaults describe a chunk that parsed.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_ValidationResult, __construct)
+{
+	bool valid = true;
+	zend_string *message = NULL;
+	zend_long line = 0;
+	bool line_is_null = true;
+	zend_string *chunk_name = NULL;
+	zend_object *object;
+	zval value;
+
+	ZEND_PARSE_PARAMETERS_START(0, 4)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_BOOL(valid)
+	Z_PARAM_STR_OR_NULL(message)
+	Z_PARAM_LONG_OR_NULL(line, line_is_null)
+	Z_PARAM_STR_OR_NULL(chunk_name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	object = Z_OBJ_P(ZEND_THIS);
+
+	if (!luaext_config_reject_reconstruction(object)) {
+		RETURN_THROWS();
+	}
+
+	ZVAL_BOOL(&value, valid);
+	LUAEXT_SET(object, "valid", &value);
+
+	if (message != NULL) {
+		ZVAL_STR_COPY(&value, message);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "message", &value);
+
+	if (line_is_null) {
+		ZVAL_NULL(&value);
+	} else {
+		ZVAL_LONG(&value, line);
+	}
+
+	LUAEXT_SET(object, "line", &value);
+
+	if (chunk_name != NULL) {
+		ZVAL_STR_COPY(&value, chunk_name);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "chunkName", &value);
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_ValidationResult, jsonSerialize)
+{
+	zend_object *object;
+	zend_class_entry *ce;
+	uint32_t count;
+	uint32_t index;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	object = Z_OBJ_P(ZEND_THIS);
+	ce = object->ce;
+	count = (uint32_t)ce->default_properties_count;
+
+	array_init_size(return_value, count);
+
+	for (index = 0; index < count; index++) {
+		zval *value = OBJ_PROP_NUM(object, index);
+
+		if (UNEXPECTED(Z_TYPE_P(value) == IS_UNDEF)) {
+			continue;
+		}
+
+		Z_TRY_ADDREF_P(value);
+		zend_hash_add_new(Z_ARRVAL_P(return_value), ce->properties_info_table[index]->name, value);
+	}
+}
+
+/* -------------------------------------------------------------------------
  * Host integration value objects
  * ---------------------------------------------------------------------- */
 
@@ -1531,9 +1663,10 @@ static zend_object_handlers luaext_config_handlers;
 void luaext_config_startup(void)
 {
 	static zend_class_entry **classes[] = {
-		&luaext_ce_capabilities,   &luaext_ce_limits,		 &luaext_ce_vfs_quota,
-		&luaext_ce_sandbox_config, &luaext_ce_sandbox_stats, &luaext_ce_file_stat,
-		&luaext_ce_module_source,
+		&luaext_ce_capabilities,  &luaext_ce_limits,
+		&luaext_ce_vfs_quota,	  &luaext_ce_sandbox_config,
+		&luaext_ce_sandbox_stats, &luaext_ce_file_stat,
+		&luaext_ce_module_source, &luaext_ce_validation_result,
 	};
 	size_t index;
 

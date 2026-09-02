@@ -41,6 +41,7 @@ zend_class_entry *luaext_ce_capabilities;
 zend_class_entry *luaext_ce_limits;
 zend_class_entry *luaext_ce_vfs_quota;
 zend_class_entry *luaext_ce_sandbox_stats;
+zend_class_entry *luaext_ce_validation_result;
 
 zend_class_entry *luaext_ce_file_system;
 zend_class_entry *luaext_ce_ranged_file_system;
@@ -162,6 +163,8 @@ static void luaext_register_classes(void)
 	luaext_ce_sandbox_config = register_class_DevelopGravity_LuaExt_SandboxConfig();
 	luaext_ce_sandbox_stats =
 		register_class_DevelopGravity_LuaExt_SandboxStats(php_json_serializable_ce);
+	luaext_ce_validation_result =
+		register_class_DevelopGravity_LuaExt_ValidationResult(php_json_serializable_ce);
 
 	luaext_ce_sandbox = register_class_DevelopGravity_LuaExt_Sandbox();
 	luaext_ce_lua_function = register_class_DevelopGravity_LuaExt_LuaFunction();
@@ -317,9 +320,9 @@ static PHP_MINFO_FUNCTION(luaext)
 #endif
 	/*
 	 * The same values Sandbox::features() reports, from the same probes, so the
-	 * two cannot disagree. This row read "not implemented yet" long after CPU
-	 * limits were being enforced and asserted by the suite -- and phpinfo() is
-	 * the first place anyone deploying this looks.
+	 * two cannot disagree. This row claimed the limit was unimplemented long
+	 * after CPU limits were being enforced and asserted by the suite -- and
+	 * phpinfo() is the first place anyone deploying this looks.
 	 *
 	 * PLATFORM statements, like features(): whether a PARTICULAR limit degrades
 	 * because it was set near the clock's resolution is decided when it is set.

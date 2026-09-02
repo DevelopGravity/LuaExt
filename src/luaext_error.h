@@ -137,6 +137,16 @@ void luaext_error_throw_from_lua(luaext_sandbox *sandbox, lua_State *L, int stat
 void luaext_error_attach_compile_context(const char *chunk_name);
 
 /*
+ * Where a thrown exception says the failure was: the display chunk name and the
+ * line, taken from its innermost non-C frame. Both are cleared first, so a
+ * caller reads NULL / 0 when there is no Lua context to report.
+ *
+ * `chunk_name` points into the exception's own trace and is valid only while
+ * that exception is alive.
+ */
+void luaext_error_lua_position(zend_object *exception, const char **chunk_name, zend_long *line);
+
+/*
  * The message handler to pass as lua_pcall's `msgh`. Attaches a structured
  * traceback to the error value while the erroring stack still exists.
  *

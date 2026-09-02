@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 88779d68c4185d89467035b7bd23de08b11e6327 */
+ * Stub hash: daf9144e8e2c80cda76b4c3e4813a8996b35e0b1 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -93,6 +93,15 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxStats_jsonSerialize, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_ValidationResult___construct, 0, 0, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, valid, _IS_BOOL, 0, "true")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, message, IS_STRING, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, line, IS_LONG, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, chunkName, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_DevelopGravity_LuaExt_ValidationResult_jsonSerialize arginfo_class_DevelopGravity_LuaExt_SandboxStats_jsonSerialize
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox___construct, 0, 0, 0)
 	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, config, DevelopGravity\\LuaExt\\SandboxConfig, 1, "null")
 ZEND_END_ARG_INFO()
@@ -105,6 +114,11 @@ ZEND_END_ARG_INFO()
 #define arginfo_class_DevelopGravity_LuaExt_Sandbox_features arginfo_class_DevelopGravity_LuaExt_SandboxStats_jsonSerialize
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_compile, 0, 1, DevelopGravity\\LuaExt\\LuaFunction, 0)
+	ZEND_ARG_TYPE_INFO(0, code, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, chunkName, IS_STRING, 0, "\'=(load)\'")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_validate, 0, 1, DevelopGravity\\LuaExt\\ValidationResult, 0)
 	ZEND_ARG_TYPE_INFO(0, code, IS_STRING, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, chunkName, IS_STRING, 0, "\'=(load)\'")
 ZEND_END_ARG_INFO()
@@ -301,11 +315,14 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct);
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with);
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxStats, __construct);
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxStats, jsonSerialize);
+ZEND_METHOD(DevelopGravity_LuaExt_ValidationResult, __construct);
+ZEND_METHOD(DevelopGravity_LuaExt_ValidationResult, jsonSerialize);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, extensionVersion);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, luaVersion);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compile);
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, call);
@@ -381,12 +398,19 @@ static const zend_function_entry class_DevelopGravity_LuaExt_SandboxStats_method
 	ZEND_FE_END
 };
 
+static const zend_function_entry class_DevelopGravity_LuaExt_ValidationResult_methods[] = {
+	ZEND_ME(DevelopGravity_LuaExt_ValidationResult, __construct, arginfo_class_DevelopGravity_LuaExt_ValidationResult___construct, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_ValidationResult, jsonSerialize, arginfo_class_DevelopGravity_LuaExt_ValidationResult_jsonSerialize, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
 static const zend_function_entry class_DevelopGravity_LuaExt_Sandbox_methods[] = {
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, __construct, arginfo_class_DevelopGravity_LuaExt_Sandbox___construct, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, extensionVersion, arginfo_class_DevelopGravity_LuaExt_Sandbox_extensionVersion, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, luaVersion, arginfo_class_DevelopGravity_LuaExt_Sandbox_luaVersion, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, features, arginfo_class_DevelopGravity_LuaExt_Sandbox_features, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, compile, arginfo_class_DevelopGravity_LuaExt_Sandbox_compile, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Sandbox, validate, arginfo_class_DevelopGravity_LuaExt_Sandbox_validate, ZEND_ACC_PUBLIC|ZEND_ACC_NODISCARD)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, compileBinary, arginfo_class_DevelopGravity_LuaExt_Sandbox_compileBinary, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, eval, arginfo_class_DevelopGravity_LuaExt_Sandbox_eval, ZEND_ACC_PUBLIC|ZEND_ACC_NODISCARD)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, call, arginfo_class_DevelopGravity_LuaExt_Sandbox_call, ZEND_ACC_PUBLIC|ZEND_ACC_NODISCARD)
@@ -967,6 +991,37 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxStats(zend_
 	return class_entry;
 }
 
+static zend_class_entry *register_class_DevelopGravity_LuaExt_ValidationResult(zend_class_entry *class_entry_JsonSerializable)
+{
+	zend_class_entry ce, *class_entry;
+
+	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "ValidationResult", class_DevelopGravity_LuaExt_ValidationResult_methods);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL|ZEND_ACC_NO_DYNAMIC_PROPERTIES|ZEND_ACC_READONLY_CLASS);
+	zend_class_implements(class_entry, 1, class_entry_JsonSerializable);
+
+	zval property_valid_default_value;
+	ZVAL_UNDEF(&property_valid_default_value);
+	zend_string *property_valid_name = zend_string_init("valid", sizeof("valid") - 1, 1);
+	zend_declare_typed_property(class_entry, property_valid_name, &property_valid_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
+	zend_string_release(property_valid_name);
+
+	zval property_message_default_value;
+	ZVAL_UNDEF(&property_message_default_value);
+	zend_declare_typed_property(class_entry, ZSTR_KNOWN(ZEND_STR_MESSAGE), &property_message_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING|MAY_BE_NULL));
+
+	zval property_line_default_value;
+	ZVAL_UNDEF(&property_line_default_value);
+	zend_declare_typed_property(class_entry, ZSTR_KNOWN(ZEND_STR_LINE), &property_line_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG|MAY_BE_NULL));
+
+	zval property_chunkName_default_value;
+	ZVAL_UNDEF(&property_chunkName_default_value);
+	zend_string *property_chunkName_name = zend_string_init("chunkName", sizeof("chunkName") - 1, 1);
+	zend_declare_typed_property(class_entry, property_chunkName_name, &property_chunkName_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING|MAY_BE_NULL));
+	zend_string_release(property_chunkName_name);
+
+	return class_entry;
+}
+
 static zend_class_entry *register_class_DevelopGravity_LuaExt_Sandbox(void)
 {
 	zend_class_entry ce, *class_entry;
@@ -974,6 +1029,10 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Sandbox(void)
 	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "Sandbox", class_DevelopGravity_LuaExt_Sandbox_methods);
 	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL|ZEND_ACC_NO_DYNAMIC_PROPERTIES|ZEND_ACC_NOT_SERIALIZABLE);
 
+
+	zend_string *attribute_name_NoDiscard_func_validate_0 = zend_string_init_interned("NoDiscard", sizeof("NoDiscard") - 1, 1);
+	zend_add_function_attribute(zend_hash_str_find_ptr(&class_entry->function_table, "validate", sizeof("validate") - 1), attribute_name_NoDiscard_func_validate_0, 0);
+	zend_string_release(attribute_name_NoDiscard_func_validate_0);
 
 	zend_string *attribute_name_NoDiscard_func_eval_0 = zend_string_init_interned("NoDiscard", sizeof("NoDiscard") - 1, 1);
 	zend_add_function_attribute(zend_hash_str_find_ptr(&class_entry->function_table, "eval", sizeof("eval") - 1), attribute_name_NoDiscard_func_eval_0, 0);

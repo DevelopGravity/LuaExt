@@ -452,6 +452,51 @@ final readonly class SandboxStats implements \JsonSerializable
 }
 
 /**
+ * The outcome of Sandbox::validate(): whether a chunk parses, and if not, where.
+ *
+ * Deliberately not an exception. Validating user-submitted source is a routine
+ * operation whose "no" is data to show an author, not a control-flow event to
+ * catch -- a host saving a script wants the line to put a marker on, in the same
+ * request, without a try/catch around every save.
+ *
+ * Publicly constructible, unlike SandboxStats: that class refuses because a
+ * snapshot nothing measured would be indistinguishable from a real one, while
+ * this makes no claim beyond its own fields and a host wrapping its own checks
+ * has a fair reason to build one.
+ *
+ * @strict-properties
+ */
+final readonly class ValidationResult implements \JsonSerializable
+{
+    /** Whether the chunk compiles. Everything below is null when it does. */
+    public bool $valid;
+
+    /** The parser's message, verbatim, including its own "name:line:" prefix. */
+    public ?string $message;
+
+    /**
+     * The line the parser stopped on.
+     *
+     * Null when the refusal has no line to report -- a chunk rejected for
+     * exceeding maxSourceBytes never reached the parser at all.
+     */
+    public ?int $line;
+
+    /** The chunk name as Lua displays it, without the '=' or '@' prefix. */
+    public ?string $chunkName;
+
+    public function __construct(
+        bool $valid = true,
+        ?string $message = null,
+        ?int $line = null,
+        ?string $chunkName = null,
+    ) {}
+
+    /** @return array{valid: bool, message: ?string, line: ?int, chunkName: ?string} */
+    public function jsonSerialize(): array {}
+}
+
+/**
  * An isolated Lua interpreter.
  *
  * A sandbox belongs to the thread that created it; only interrupt() may be
@@ -501,6 +546,27 @@ final class Sandbox
      * @throws Exception\ClosedSandboxError if the sandbox is closed.
      */
     public function compile(string $code, string $chunkName = '=(load)'): LuaFunction {}
+
+    /**
+     * Check whether source parses, without running it and without throwing.
+     *
+     * The same parse compile() performs, reported as data: a host storing
+     * user-authored Lua can reject a syntax error at save time and show the
+     * author the line, rather than discovering it on the next run.
+     *
+     * An instance method rather than a static one, so the caller's limits apply
+     * -- notably maxSourceBytes. No capability is required, matching compile():
+     * compileAtRuntime gates Lua's own load(), not host-side compilation.
+     *
+     * Only a refusal to PARSE comes back as a result. A closed sandbox, a
+     * cross-thread call, or an interpreter that cannot grow its stack are host
+     * problems rather than statements about the script, and still throw.
+     *
+     * @throws Exception\ClosedSandboxError if the sandbox is closed.
+     * @throws Exception\ThreadAffinityError if called from another thread.
+     */
+    #[\NoDiscard]
+    public function validate(string $code, string $chunkName = '=(load)'): ValidationResult {}
 
     /**
      * Compile precompiled bytecode.

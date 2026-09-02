@@ -65,4 +65,12 @@ bool luaext_config_with(zend_class_entry *ce, zend_object *source, HashTable *na
 /* Snapshot a sandbox's counters as a SandboxStats object. */
 void luaext_config_stats_create(const luaext_sandbox *sandbox, zval *out);
 
+/*
+ * Build a ValidationResult. `message` and `chunk_name` are borrowed, and either
+ * may be NULL. A `line` of 0 becomes null rather than zero, which is the honest
+ * answer for a refusal that never reached the parser.
+ */
+void luaext_config_validation_create(zval *out, bool valid, zend_string *message, zend_long line,
+									 const char *chunk_name);
+
 #endif /* LUAEXT_CONFIG_H */

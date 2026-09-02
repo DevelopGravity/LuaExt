@@ -428,6 +428,63 @@ $estimatedCostInUsd = $usageSnapshot->cpuSeconds * self::PRICE_PER_CPU_SECOND_IN
 
 Because `stats()` stays readable until `close()`, a long-running or multi-call sandbox can be sampled progressively (e.g. from an output callback) for near-real-time metering rather than only a single end-of-run total.
 
+## Validating a script before you store it
+
+A host that lets people author Lua wants to reject a broken script when it is **saved**,
+not when it next runs — and to show the author which line to fix. `validate()` answers
+that as data rather than by throwing, so it fits an ordinary form-validation path:
+
+```php
+use DevelopGravity\LuaExt\Limits;
+use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
+
+$sandbox = new Sandbox(new SandboxConfig(limits: new Limits(maxSourceBytes: 64 * 1024)));
+
+$result = $sandbox->validate($submittedSource, '@user-rule-' . $ruleId . '.lua');
+
+if (!$result->valid) {
+    return back()->withErrors([
+        'source' => sprintf('Line %d: %s', $result->line ?? 0, $result->message),
+    ]);
+}
+```
+
+**Give the chunk name a `@` or `=` prefix.** Lua reads the first character of a chunk name
+as a mode flag, and that choice decides whether you get a line number back:
+
+| Chunk name | Lua displays it as | `line` / `chunkName` |
+|---|---|---|
+| `'@rule-42.lua'` | `rule-42.lua` | reported |
+| `'=(load)'` | `(load)` | reported |
+| `'rule-42.lua'` | `[string "rule-42.lua"]` | both `null` |
+
+An unprefixed name is treated by Lua as *source text*, not a name, so there is no prefix to
+match against its message and no position is claimed rather than guessed — a wrong line in a
+log is worse than none. Every default in the extension already carries a prefix; pass one
+too, especially when the name comes from user input.
+
+Three things make it fit that job rather than `compile()` in a `try`/`catch`:
+
+- **Nothing runs.** The chunk is parsed and discarded. A script whose top level would
+  delete something cannot do so by being validated.
+- **The sandbox's limits apply**, because it is an instance method. `maxSourceBytes` above
+  refuses an oversized submission before the parser sees it — and reports `valid: false`
+  with a `line` of `null`, since a size refusal has no position in the file.
+- **Only a parse failure is data.** A closed sandbox or a cross-thread call still throws:
+  those say something went wrong on the *host*, and reporting them as "your Lua is
+  invalid" would send the author looking at code that is fine.
+
+`ValidationResult` is `JsonSerializable`, so it can go straight back to a form or an API:
+
+```php
+echo json_encode($sandbox->validate('return ((', '@draft.lua'));
+// {"valid":false,"message":"draft.lua:1: unexpected symbol near <eof>","line":1,"chunkName":"draft.lua"}
+```
+
+Validating does not guarantee the script will *succeed* — it only guarantees it parses.
+Runtime failures, and every resource limit, still apply when it actually runs.
+
 ## Running Lua from a queued job
 
 A `Sandbox` wraps a live `lua_State` — a C heap outside PHP's allocator, pinned to the

@@ -751,6 +751,89 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compile)
  * and not a flag. A sandbox that was not granted it cannot be talked into
  * loading bytecode by any argument.
  */
+/*
+ * Parse without running and without throwing, so a host can reject a bad script
+ * at save time and show its author the line.
+ *
+ * No capability check, matching compile(): compileAtRuntime gates Lua's own
+ * load(), not host-side compilation. The limits DO apply, which is why this is
+ * an instance method -- maxSourceBytes is the caller's, not a global.
+ *
+ * Only a parse refusal becomes a result. A closed sandbox, a cross-thread call
+ * or an interpreter that cannot grow its stack are statements about the HOST,
+ * not about the script, and reporting them as "your Lua is invalid" would send
+ * whoever reads it to the wrong place entirely.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
+{
+	luaext_sandbox *sandbox;
+	zend_string *code;
+	zend_string *chunk_name = NULL;
+	const char *resolved_name;
+	zend_object *error;
+	const zval *message;
+	const char *reported_name;
+	zend_long line;
+	zval message_rv;
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+	Z_PARAM_STR(code)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR(chunk_name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	resolved_name = luaext_sandbox_chunk_name(chunk_name, "=(load)");
+
+	if (luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code), resolved_name, false)) {
+		/* The compiled chunk is ours and nobody asked for it: leaving it behind
+		 * would grow the stack by one on every call. */
+		lua_pop(luaext_exec_state(sandbox), 1);
+
+		luaext_config_validation_create(return_value, true, NULL, 0, NULL);
+		return;
+	}
+
+	error = EG(exception);
+
+	if (error == NULL) {
+		/* Unreachable: a failed load always throws. Reported rather than
+		 * assumed, because returning "valid" here would be the worst answer. */
+		zend_throw_exception(luaext_ce_runtime_error,
+							 "The chunk failed to compile without reporting why", 0);
+		RETURN_THROWS();
+	}
+
+	if (!instanceof_function(error->ce, luaext_ce_syntax_error)) {
+		/* Not a parse failure. Leave it in flight. */
+		RETURN_THROWS();
+	}
+
+	/*
+	 * Taken, not cleared: the exception object carries the message and -- since
+	 * the compile path now attaches one -- the line and chunk name, so the
+	 * result is assembled from it rather than recomputed.
+	 */
+	GC_ADDREF(error);
+	zend_clear_exception();
+
+	message =
+		zend_read_property_ex(error->ce, error, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, &message_rv);
+	luaext_error_lua_position(error, &reported_name, &line);
+
+	luaext_config_validation_create(
+		return_value, false,
+		(message != NULL && Z_TYPE_P(message) == IS_STRING) ? Z_STR_P(message) : NULL, line,
+		reported_name);
+
+	OBJ_RELEASE(error);
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
 {
 	luaext_sandbox *sandbox;

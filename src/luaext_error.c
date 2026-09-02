@@ -1116,6 +1116,53 @@ static zval *luaext_this_trace(zval *this_zv)
 	return trace;
 }
 
+/* The innermost frame that is not a C function, for an exception object. */
+static const HashTable *luaext_lua_frame_of(zend_object *exception)
+{
+	zval *trace = luaext_error_fetch(exception, LUAEXT_KEY_TRACE, LUAEXT_KEY_TRACE_LEN);
+	zval *frame;
+
+	if (trace == NULL || Z_TYPE_P(trace) != IS_ARRAY) {
+		return NULL;
+	}
+
+	ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(trace), frame)
+	{
+		if (Z_TYPE_P(frame) != IS_ARRAY) {
+			continue;
+		}
+
+		if (strcmp(luaext_frame_string(Z_ARRVAL_P(frame), ZEND_STRL("what"), "C"), "C") != 0) {
+			return Z_ARRVAL_P(frame);
+		}
+	}
+	ZEND_HASH_FOREACH_END();
+
+	return NULL;
+}
+
+/*
+ * Where an exception says the failure was, for callers outside this file.
+ *
+ * Sandbox::validate() reports a parse failure as data rather than throwing it,
+ * and reads the position from the exception the load path already built instead
+ * of parsing the message a second time.
+ */
+void luaext_error_lua_position(zend_object *exception, const char **chunk_name, zend_long *line)
+{
+	const HashTable *frame = luaext_lua_frame_of(exception);
+
+	*chunk_name = NULL;
+	*line = 0;
+
+	if (frame == NULL) {
+		return;
+	}
+
+	*chunk_name = luaext_frame_string(frame, ZEND_STRL("source"), NULL);
+	*line = luaext_frame_long(frame, ZEND_STRL("currentLine"));
+}
+
 /* The innermost frame that is not a C function, which is where a Lua-level
  * failure is reported from. */
 static const HashTable *luaext_this_lua_frame(zval *this_zv)

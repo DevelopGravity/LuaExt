@@ -41,6 +41,7 @@ extern zend_class_entry *luaext_ce_capabilities;
 extern zend_class_entry *luaext_ce_limits;
 extern zend_class_entry *luaext_ce_vfs_quota;
 extern zend_class_entry *luaext_ce_sandbox_stats;
+extern zend_class_entry *luaext_ce_validation_result;
 
 /* Host integration contracts. */
 extern zend_class_entry *luaext_ce_file_system;

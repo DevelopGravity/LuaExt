@@ -188,6 +188,7 @@ There is no compatibility shim; call sites need a mechanical rename plus a coupl
 | `->wrapPhpFunction($callable)` | `->wrapCallable($callable, ?string $name = null): LuaFunction` | Renamed; optional `$name` labels the callable in tracebacks and `debug.getinfo()`. |
 | `->registerLibrary($name, $functions)` | `->registerLibrary($name, $functions)` | Unchanged shape. |
 | *(none)* | `->registerObject($name, $instance, ?array $methods = null)` | New: expose an existing object's methods via an allowlist or `#[LuaMethod]`. |
+| *(none)* | `->validate($code, $chunkName): ValidationResult` | New: does this parse? Answered as data rather than thrown, so a host storing user-authored Lua can reject a syntax error at save time and show the author the line. The sandbox's limits apply; nothing is executed. |
 | *(none)* | `->preloadModule($name, LuaFunction\|callable $loader)`, `->interrupt()`, `->close()` | New: `require()` preloading, thread-safe host-triggered abort, and explicit/idempotent teardown. The loader is a callable or `LuaFunction` returning the module value — not a source string — and `require()` finds it ahead of the VFS and the resolver. |
 | `LuaSandboxFunction::call(...)` | `LuaFunction::call(...)` / `LuaFunction::__invoke(...)` | Same "array of all return values" convention. |
 | `LuaSandboxFunction::dump()` | `LuaFunction::dump($strip)` | Now gated behind the `dumpBytecode` capability. |
