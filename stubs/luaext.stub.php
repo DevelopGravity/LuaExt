@@ -555,12 +555,20 @@ final class Sandbox
      * author the line, rather than discovering it on the next run.
      *
      * An instance method rather than a static one, so the caller's limits apply
-     * -- notably maxSourceBytes. No capability is required, matching compile():
-     * compileAtRuntime gates Lua's own load(), not host-side compilation.
+     * -- notably maxSourceBytes, whose refusal comes back as valid: false with a
+     * null line, since a size limit says nothing about a position. No capability
+     * is required, matching compile(): compileAtRuntime gates Lua's own load(),
+     * not host-side compilation.
      *
-     * Only a refusal to PARSE comes back as a result. A closed sandbox, a
+     * Only a refusal about the SCRIPT comes back as a result -- it does not
+     * parse, or it is bigger than this sandbox accepts. A closed sandbox, a
      * cross-thread call, or an interpreter that cannot grow its stack are host
      * problems rather than statements about the script, and still throw.
+     *
+     * Unlike compile() and eval(), a chunk name carrying neither '=' nor '@' is
+     * normalised to '@name'. Lua would otherwise treat it as source text and
+     * quote it as [string "..."], leaving no name to report a line against --
+     * and reporting a position is this method's whole purpose.
      *
      * @throws Exception\ClosedSandboxError if the sandbox is closed.
      * @throws Exception\ThreadAffinityError if called from another thread.

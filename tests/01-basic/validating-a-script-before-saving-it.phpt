@@ -8,6 +8,7 @@ luaext
 declare(strict_types=1);
 
 use DevelopGravity\LuaExt\Exception\ClosedSandboxError;
+use DevelopGravity\LuaExt\Exception\SyntaxError;
 use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
@@ -39,9 +40,20 @@ $report('bad name', $sandbox->validate('local 1 = 2', '@names.lua'));
 // print one line than build its own has it.
 printf("message: %s\n", $sandbox->validate('return ((', '@msg.lua')->message);
 
-// An unprefixed chunk name is source text Lua quotes as [string "..."]. There is
-// no name to report, so none is claimed rather than guessed.
+// An unprefixed chunk name would be source text to Lua, quoted as [string "..."],
+// leaving nothing to strip off its message and therefore no line to report.
+// validate() normalises it to "@plain" instead, because reporting a position is
+// this method's entire purpose -- see the note on the helper in luaext_sandbox.c.
 $report('unprefixed', $sandbox->validate('return ((', 'plain'));
+
+// compile() deliberately does NOT normalise: it is a thin wrapper over Lua's
+// loader and keeps Lua's convention. The divergence is intentional, and pinned
+// here so it is not "fixed" later by someone who finds it surprising.
+try {
+	$sandbox->compile('return ((', 'plain');
+} catch (SyntaxError $error) {
+	printf("compile keeps Lua's convention: %s\n", var_export($error->getChunkName(), true));
+}
 
 // A refusal that never reached the parser has no line, and must not be given
 // one: maxSourceBytes is a statement about size, not about a position.
@@ -94,7 +106,8 @@ valid            valid=true  line=NULL chunk=NULL
 unclosed paren   valid=false line=2    chunk='bad.lua'
 bad name         valid=false line=1    chunk='names.lua'
 message: msg.lua:1: unexpected symbol near <eof>
-unprefixed       valid=false line=NULL chunk=NULL
+unprefixed       valid=false line=1    chunk='plain'
+compile keeps Lua's convention: NULL
 over the limit   valid=false line=NULL chunk=NULL
 bool(true)
 200 rounds are flat: true

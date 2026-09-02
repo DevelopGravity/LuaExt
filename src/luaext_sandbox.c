@@ -708,6 +708,48 @@ static const char *luaext_sandbox_chunk_name(const zend_string *given, const cha
 }
 
 /*
+ * The same, but for validate() only, which normalises a bare name to "@name".
+ *
+ * WHY THIS DIFFERS FROM EVERY OTHER METHOD, deliberately, so nobody "fixes" it
+ * back: compile() and eval() are thin wrappers over Lua's loader and preserve
+ * its conventions, including the one where an unmarked chunk name means source
+ * text and gets quoted as [string "..."]. validate() exists *to report a
+ * position* -- a chunk name it cannot report against defeats its only purpose,
+ * because the line is recovered by stripping the known display name off the
+ * front of Lua's message and a quoted name leaves nothing to strip.
+ *
+ * So `validate($src, 'rule.lua')` answers with chunkName 'rule.lua' and a real
+ * line, where compile() with the same string would say [string "rule.lua"].
+ * That divergence is the point, and it costs nothing: validate() is newer than
+ * every caller, so no existing behaviour changes.
+ *
+ * The caller owns the returned zend_string when one is produced.
+ */
+static const char *luaext_sandbox_validate_chunk_name(const zend_string *given,
+													  const char *fallback, zend_string **owned)
+{
+	const char *name;
+
+	*owned = NULL;
+
+	if (given == NULL) {
+		return fallback;
+	}
+
+	name = ZSTR_VAL(given);
+
+	/* Already marked, or empty -- an empty name is left exactly as it is rather
+	 * than turned into a bare "@", which would name nothing either way. */
+	if (ZSTR_LEN(given) == 0 || name[0] == '=' || name[0] == '@') {
+		return name;
+	}
+
+	*owned = zend_strpprintf(0, "@%s", name);
+
+	return ZSTR_VAL(*owned);
+}
+
+/*
  * Compile without running, so a host can validate a chunk once and reuse it.
  *
  * Text mode always: `code` is a string an untrusted caller may have supplied,
@@ -769,7 +811,9 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
 	luaext_sandbox *sandbox;
 	zend_string *code;
 	zend_string *chunk_name = NULL;
+	zend_string *normalised = NULL;
 	const char *resolved_name;
+	bool parsed;
 	zend_object *error;
 	const zval *message;
 	const char *reported_name;
@@ -788,9 +832,17 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
 		RETURN_THROWS();
 	}
 
-	resolved_name = luaext_sandbox_chunk_name(chunk_name, "=(load)");
+	resolved_name = luaext_sandbox_validate_chunk_name(chunk_name, "=(load)", &normalised);
 
-	if (luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code), resolved_name, false)) {
+	parsed = luaext_exec_load(sandbox, ZSTR_VAL(code), ZSTR_LEN(code), resolved_name, false);
+
+	if (normalised != NULL) {
+		/* Released here rather than at each exit: the load has copied whatever
+		 * it needed out of it, and every path below is done with the name. */
+		zend_string_release(normalised);
+	}
+
+	if (parsed) {
 		/* The compiled chunk is ours and nobody asked for it: leaving it behind
 		 * would grow the stack by one on every call. */
 		lua_pop(luaext_exec_state(sandbox), 1);
@@ -809,8 +861,17 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
 		RETURN_THROWS();
 	}
 
-	if (!instanceof_function(error->ce, luaext_ce_syntax_error)) {
-		/* Not a parse failure. Leave it in flight. */
+	/*
+	 * Two refusals are answers about the SCRIPT, and both are what the caller
+	 * asked about: it does not parse, or it is larger than this sandbox accepts.
+	 * A host deciding whether to store a submission wants "no" either way.
+	 *
+	 * Anything else -- a closed sandbox, a cross-thread call, an interpreter
+	 * that cannot grow its stack -- is a statement about the HOST, and reporting
+	 * it as "your Lua is invalid" would send the author to code that is fine.
+	 */
+	if (!instanceof_function(error->ce, luaext_ce_syntax_error) &&
+		!instanceof_function(error->ce, luaext_ce_source_limit_error)) {
 		RETURN_THROWS();
 	}
 
