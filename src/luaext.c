@@ -315,7 +315,28 @@ static PHP_MINFO_FUNCTION(luaext)
 #else
 	php_info_print_table_row(2, "Debug assertions", "disabled");
 #endif
-	php_info_print_table_row(2, "CPU limit enforcement", "not implemented yet");
+	/*
+	 * The same values Sandbox::features() reports, from the same probes, so the
+	 * two cannot disagree. This row read "not implemented yet" long after CPU
+	 * limits were being enforced and asserted by the suite -- and phpinfo() is
+	 * the first place anyone deploying this looks.
+	 *
+	 * PLATFORM statements, like features(): whether a PARTICULAR limit degrades
+	 * because it was set near the clock's resolution is decided when it is set.
+	 */
+	php_info_print_table_row(2, "CPU limit enforcement",
+							 luaext_limit_support_name(luaext_timers_cpu_support()));
+	php_info_print_table_row(2, "Wall-clock limit enforcement",
+							 luaext_limit_support_name(luaext_timers_wall_support()));
+
+	{
+		char resolution[64];
+
+		snprintf(resolution, sizeof(resolution), "%.9g seconds",
+				 luaext_timers_cpu_resolution_seconds());
+		php_info_print_table_row(2, "CPU clock resolution", resolution);
+	}
+
 	php_info_print_table_end();
 
 	DISPLAY_INI_ENTRIES();

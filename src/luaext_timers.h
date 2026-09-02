@@ -63,6 +63,17 @@ luaext_limit_support luaext_timers_cpu_support(void);
 luaext_limit_support luaext_timers_wall_support(void);
 double luaext_timers_cpu_resolution_seconds(void);
 
+/*
+ * The name of a support level: "Enforced", "Degraded", "Unsupported".
+ *
+ * Shared rather than spelled out twice, because both readers are public claims
+ * about the same fact -- features() builds the LimitSupport enum case from it,
+ * and phpinfo() prints it -- and two tables would eventually disagree. An
+ * unrecognised value reads as "Unsupported": over-reporting enforcement is the
+ * one direction either caller must never fail in.
+ */
+const char *luaext_limit_support_name(luaext_limit_support support);
+
 /* -------------------------------------------------------------------------
  * Per-sandbox lifecycle. Owner thread only.
  * ---------------------------------------------------------------------- */

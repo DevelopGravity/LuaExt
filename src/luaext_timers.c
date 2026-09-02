@@ -99,6 +99,17 @@ static bool luaext_timers_can_enforce(void)
 	return !luaext_watchdog_thread_failed() || luaext_timers_hook_armed();
 }
 
+const char *luaext_limit_support_name(luaext_limit_support support)
+{
+	static const char *const names[] = {"Enforced", "Degraded", "Unsupported"};
+
+	if ((size_t)support >= sizeof(names) / sizeof(names[0])) {
+		return "Unsupported";
+	}
+
+	return names[support];
+}
+
 luaext_limit_support luaext_timers_cpu_support(void)
 {
 	if (!luaext_timers_can_enforce() || !luaext_timers_have_cpu) {

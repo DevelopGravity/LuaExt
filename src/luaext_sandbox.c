@@ -498,17 +498,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, luaVersion)
 
 static void luaext_add_limit_support(zval *array, const char *key, luaext_limit_support support)
 {
-	static const char *const names[] = {"Enforced", "Degraded", "Unsupported"};
 	zval value;
 
-	/* Indexing an array with a value from another translation unit. A support
-	 * level this does not recognise is reported as Unsupported: over-reporting
-	 * a limit is the one direction this method must never fail in. */
-	if ((size_t)support >= sizeof(names) / sizeof(names[0])) {
-		support = LUAEXT_LIMIT_UNSUPPORTED;
-	}
-
-	ZVAL_OBJ_COPY(&value, zend_enum_get_case_cstr(luaext_ce_limit_support, names[support]));
+	/* Named by luaext_limit_support_name(), which phpinfo() also reads: two
+	 * tables for one fact would eventually disagree, and both are public claims
+	 * about whether a limit is really enforced. */
+	ZVAL_OBJ_COPY(&value, zend_enum_get_case_cstr(luaext_ce_limit_support,
+												  luaext_limit_support_name(support)));
 	add_assoc_zval(array, key, &value);
 }
 
@@ -516,14 +512,14 @@ static void luaext_add_limit_support(zval *array, const char *key, luaext_limit_
  * Which capabilities this BUILD implements, as opposed to which ones a
  * Capabilities object will accept.
  *
- * The two are not the same thing today and the difference is invisible without
- * this map. A flag whose subsystem has not been written is still a perfectly
- * valid property: it is set, it reads back, and the feature it names is simply
- * absent -- `coroutine` is nil, there is no file API -- so a host granting it
- * has no way to notice short of testing for the behaviour itself. The two flags
- * that CAN be refused at construction are (vfs and vfsWrite, which have no
- * backing store); `coroutines` cannot, because it defaults to true, and
- * refusing it would break every default sandbox.
+ * Every entry is true today -- every capability the API accepts is implemented
+ * -- but the map stays, because the situation it exists for is not permanent.
+ * A flag whose subsystem has not been written is still a perfectly valid
+ * property: it is set, it reads back, and the feature it names is simply
+ * absent, so a host granting it has no way to notice short of testing for the
+ * behaviour itself. The two flags that CAN be refused at construction are vfs
+ * and vfsWrite, which have no backing store; `coroutines` cannot, because it
+ * defaults to true, and refusing it would break every default sandbox.
  *
  * So the honest mechanism is to publish the answer rather than to guess, in the
  * same spirit as reporting a limit's real enforcement level above. A host that
