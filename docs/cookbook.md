@@ -522,9 +522,12 @@ construct/eval/close cycle** (84 µs against 129 µs) — the case the in-sandbo
 cannot help with.
 
 Those are the *sealed* figures, and they are the ones that matter, because sealed is the
-supported path. Verification costs about 19 µs of the 30; an unsealed load is 11 µs and
-would be 2.1× end to end, which is the difference between the two lines in the table
-below and not a reason to prefer it.
+supported path. The ratio holds as scripts grow — 2.6× against parsing at 3.8 KB, 39 KB
+and 200 KB alike — but the composition changes: verification is 23 µs of the 34 µs load at
+3.8 KB and 1251 µs of 1720 µs at 200 KB, because ext/hash's SHA-256 runs at roughly
+240 MB/s here with no hardware acceleration. An unsealed load skips that and is 2.1× end
+to end rather than 1.5×, which is the gap the table below exists to justify, not a reason
+to prefer it.
 
 Bytecode is dangerous to load, so the extension does two things about it. Set a key and
 blobs are sealed with an HMAC and verified before Lua sees them; leave it unset and
@@ -582,14 +585,20 @@ Every request then builds a sandbox from `sandbox()`, calls
 and stops — not its opcodes, register indices or jump targets. Flipping one byte at each
 position of a 118-byte chunk and loading each:
 
-| Outcome | Unsealed | Sealed |
-|---|---:|---:|
-| Refused cleanly | 57% | **100%** |
-| Ran anyway, sometimes wrongly | 33% | 0% |
-| Killed the process (SIGBUS) | 10% | 0% |
+| Outcome | Unsealed, 150 B | Unsealed, 297 KB | Sealed, either |
+|---|---:|---:|---:|
+| Refused cleanly | 57% | 17% | **100%** |
+| Ran, right answer anyway | 23% | 82% | 0% |
+| **Ran, WRONG answer** | 8% | — | 0% |
+| Killed the process | 13% | 2% | 0% |
 
-A crafted chunk is worse than a corrupted one: it is arbitrary native code in your PHP
-workers.
+**It gets worse as scripts get bigger.** The loader validates the header and little else, so
+the checked fraction shrinks as the blob grows: on a 297 KB chunk only 17% of single-byte
+corruptions were refused and 82% loaded and ran. Silent wrong answers are the dominant
+outcome at scale, and they are worse than crashes because nothing tells you.
+
+A crafted chunk is worse again than a corrupted one: it is arbitrary native code in your
+PHP workers.
 
 **Where the key must and must not go.** Keep it in process memory — `random_bytes(32)` at
 startup, as above. A blob sealed under one key will not load under another, so a shared
