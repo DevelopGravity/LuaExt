@@ -83,6 +83,7 @@ DevelopGravity\LuaExt\SandboxConfig
   seed                 NULL
   deterministic        false
   cacheCompiledChunks  false
+  bytecodeKey          NULL
 NULL
 NULL
 bool(true)

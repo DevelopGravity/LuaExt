@@ -26,11 +26,13 @@ string(6) "luaext"
 bool(true)
 array(0) {
 }
-array(3) {
+array(4) {
   [0]=>
-  string(17) "luaext.hook_count"
+  string(25) "luaext.allow_raw_bytecode"
   [1]=>
-  string(18) "luaext.use_zend_mm"
+  string(17) "luaext.hook_count"
   [2]=>
+  string(18) "luaext.use_zend_mm"
+  [3]=>
   string(29) "luaext.watchdog_resolution_us"
 }

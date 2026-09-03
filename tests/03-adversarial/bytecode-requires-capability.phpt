@@ -2,6 +2,12 @@
 Only compileBinary() with the loadBytecode capability will load a binary chunk
 --EXTENSIONS--
 luaext
+--INI--
+; This file's subject is the loadBytecode CAPABILITY, so the deployment gate
+; is opened to get at it. The blob here comes from Lua's own string.dump and
+; therefore carries no seal -- a script never sees the key. Whether the gate
+; itself holds is tests/03-adversarial/sealed-bytecode-or-nothing.phpt.
+luaext.allow_raw_bytecode=1
 --FILE--
 <?php
 

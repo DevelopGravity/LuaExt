@@ -46,6 +46,10 @@ printf("wall row present:  %s\n", var_export($wall !== null, true));
 printf("cpu agrees:        %s\n", var_export($cpu === $features['cpuLimit']->name, true));
 printf("wall agrees:       %s\n", var_export($wall === $features['wallClockLimit']->name, true));
 
+// The bytecode gate is a deployment fact an operator must be able to read off
+// phpinfo() rather than by grepping php.ini.
+printf("bytecode row:      %s\n", var_export($row('Unsealed bytecode'), true));
+
 // The specific string this test was written to make unrepeatable.
 printf("no stale claim:    %s\n", var_export(!str_contains($info, 'not implemented yet'), true));
 
@@ -62,5 +66,6 @@ cpu row present:   true
 wall row present:  true
 cpu agrees:        true
 wall agrees:       true
+bytecode row:      'refused'
 no stale claim:    true
 cpu is a real case: true
