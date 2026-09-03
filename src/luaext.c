@@ -11,6 +11,7 @@
 #include "luaext_config.h"
 #include "luaext_function.h"
 #include "luaext_sandbox.h"
+#include "luaext_seal.h"
 #include "luaext_timers.h"
 #include "luaext_types.h"
 
@@ -63,6 +64,7 @@ zend_class_entry *luaext_ce_module_not_found_error;
 zend_class_entry *luaext_ce_fatal_error;
 zend_class_entry *luaext_ce_syntax_error;
 zend_class_entry *luaext_ce_source_limit_error;
+zend_class_entry *luaext_ce_bytecode_integrity_error;
 zend_class_entry *luaext_ce_memory_limit_error;
 zend_class_entry *luaext_ce_cpu_limit_error;
 zend_class_entry *luaext_ce_wall_clock_limit_error;
@@ -105,6 +107,20 @@ STD_PHP_INI_ENTRY("luaext.hook_count", "1000", PHP_INI_ALL, OnUpdateLong, hook_c
 	 */
 STD_PHP_INI_ENTRY("luaext.watchdog_resolution_us", "500", PHP_INI_SYSTEM, OnUpdateLong,
 				  watchdog_resolution_us, zend_luaext_globals, luaext_globals)
+
+/*
+	 * Whether an UNSEALED binary chunk may be loaded at all, by compileBinary()
+	 * or by a script's own load(..., "b").
+	 *
+	 * Off by default, and that is the security posture rather than a
+	 * preference: Lua's loader checks the header and stops, so a corrupted
+	 * instruction stream reaches the VM intact. Measured by flipping one byte at
+	 * each position of a small chunk -- 57% refused, 33% ran anyway, 10% killed
+	 * the process. Sealed blobs carry an HMAC and are always allowed; this
+	 * reopens the path for blobs nothing can vouch for.
+	 */
+STD_PHP_INI_BOOLEAN("luaext.allow_raw_bytecode", "0", PHP_INI_SYSTEM, OnUpdateBool,
+					allow_raw_bytecode, zend_luaext_globals, luaext_globals)
 
 /*
 	 * Benchmarking switch only. A sandbox may outlive the request that built it
@@ -202,6 +218,9 @@ static void luaext_register_exceptions(void)
 		register_class_DevelopGravity_LuaExt_Exception_SyntaxError(luaext_ce_fatal_error);
 	luaext_ce_source_limit_error =
 		register_class_DevelopGravity_LuaExt_Exception_SourceLimitError(luaext_ce_fatal_error);
+	luaext_ce_bytecode_integrity_error =
+		register_class_DevelopGravity_LuaExt_Exception_BytecodeIntegrityError(
+			luaext_ce_fatal_error);
 	luaext_ce_memory_limit_error =
 		register_class_DevelopGravity_LuaExt_Exception_MemoryLimitError(luaext_ce_fatal_error);
 	luaext_ce_cpu_limit_error =
@@ -242,6 +261,7 @@ static PHP_MINIT_FUNCTION(luaext)
 	luaext_register_exceptions();
 	luaext_sandbox_startup();
 	luaext_function_startup();
+	luaext_seal_startup();
 	luaext_config_startup();
 
 	/* Probes the platform clocks and prepares the slot pool. Deliberately does
@@ -330,6 +350,11 @@ static PHP_MINFO_FUNCTION(luaext)
 	 * PLATFORM statements, like features(): whether a PARTICULAR limit degrades
 	 * because it was set near the clock's resolution is decided when it is set.
 	 */
+	/* An operator needs to see whether this deployment will load bytecode
+	 * nothing can vouch for, without reading php.ini to find out. */
+	php_info_print_table_row(2, "Unsealed bytecode",
+							 LUAEXT_G(allow_raw_bytecode) ? "allowed" : "refused");
+
 	php_info_print_table_row(2, "CPU limit enforcement",
 							 luaext_limit_support_name(luaext_timers_cpu_support()));
 	php_info_print_table_row(2, "Wall-clock limit enforcement",
