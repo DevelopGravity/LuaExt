@@ -514,28 +514,54 @@ cache every time, so it pays the parse anyway and the retention is pure cost. Th
 is off by default for exactly this reason: it is a win for one usage shape and a waste in
 the other, and only you know which you have.
 
-### If the sandbox is per-request: cache bytecode yourself, carefully
+### If the sandbox is per-request: cache sealed bytecode
 
-`compile()` + `dump()` produces a binary chunk that `compileBinary()` loads about 6.9×
-faster than parsing, which is **2.1× on a whole construct/eval/close cycle** — the one
-thing the built-in cache cannot help with. Nothing in the extension does this for you,
-because of what follows.
+`compile()` + `dump()` produces a binary chunk that `compileBinary()` loads faster than
+parsing: 30 µs against 73 µs on a 3.5 KB script, or **1.5× on a whole
+construct/eval/close cycle** (84 µs against 129 µs) — the case the in-sandbox cache
+cannot help with.
+
+Those are the *sealed* figures, and they are the ones that matter, because sealed is the
+supported path. Verification costs about 19 µs of the 30; an unsealed load is 11 µs and
+would be 2.1× end to end, which is the difference between the two lines in the table
+below and not a reason to prefer it.
+
+Bytecode is dangerous to load, so the extension does two things about it. Set a key and
+blobs are sealed with an HMAC and verified before Lua sees them; leave it unset and
+unsealed blobs are refused entirely unless an operator sets `luaext.allow_raw_bytecode=1`.
 
 ```php
-// In-process ONLY. Read the warning below before adapting this.
-final class InProcessBytecodeCache
+use DevelopGravity\LuaExt\Capabilities;
+use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
+
+final class SealedBytecodeCache
 {
     /** @var array<string, string> */
     private array $compiled = [];
 
-    public function __construct(private readonly Capabilities $capabilities) {}
+    // One key per process, never written next to the bytecode it seals.
+    private readonly string $key;
+
+    public function __construct(private readonly Capabilities $capabilities)
+    {
+        $this->key = random_bytes(32);
+    }
+
+    public function sandbox(): Sandbox
+    {
+        return new Sandbox(new SandboxConfig(
+            capabilities: $this->capabilities,
+            bytecodeKey: $this->key,
+        ));
+    }
 
     public function bytecodeFor(string $source, string $chunkName): string
     {
         $cacheKey = hash('xxh128', $chunkName . "\0" . $source);
 
         if (!isset($this->compiled[$cacheKey])) {
-            $builder = new Sandbox(new SandboxConfig(capabilities: $this->capabilities));
+            $builder = $this->sandbox();
 
             try {
                 $this->compiled[$cacheKey] = $builder->compile($source, $chunkName)->dump(true);
@@ -549,26 +575,34 @@ final class InProcessBytecodeCache
 }
 ```
 
-> **Never put Lua bytecode in a store anything else can write.** Not Redis, not
-> memcached, not a file, not a shared cache — only memory private to the process.
+Every request then builds a sandbox from `sandbox()`, calls
+`compileBinary($cache->bytecodeFor(...))`, and pays a verification instead of a parse.
 
-This is not conservatism. Lua validates a binary chunk's *header* and nothing else, which
-is measurable:
->
-| Corruption | Result |
-|---|---|
-| Truncated | refused — `bad binary format (truncated chunk)` |
-| Wrong version header | refused — `bad binary format (version mismatch)` |
-| **One byte flipped in the body** | **SIGBUS — the PHP process dies** |
+**What the seal is protecting you from.** Lua's loader validates a binary chunk's header
+and stops — not its opcodes, register indices or jump targets. Flipping one byte at each
+position of a 118-byte chunk and loading each:
 
-A single corrupted byte killed the process; a *crafted* chunk is arbitrary native code
-running inside your workers. Anyone who can write a key in a shared cache owns the
-process, and no validation you add helps, because Lua does the validating and Lua does
-not validate. This is also why `loadBytecode` stays off even under
-`Capabilities::trusted()` and has to be enabled by hand — see
-[SECURITY.md](../SECURITY.md).
+| Outcome | Unsealed | Sealed |
+|---|---:|---:|
+| Refused cleanly | 57% | **100%** |
+| Ran anyway, sometimes wrongly | 33% | 0% |
+| Killed the process (SIGBUS) | 10% | 0% |
 
-If you cannot guarantee the store is process-private, use source and pay the parse.
+A crafted chunk is worse than a corrupted one: it is arbitrary native code in your PHP
+workers.
+
+**Where the key must and must not go.** Keep it in process memory — `random_bytes(32)` at
+startup, as above. A blob sealed under one key will not load under another, so a shared
+store stops being a way in: whatever an attacker writes there will not verify. That
+property is the reason to seal rather than to be careful.
+
+It does **not** survive host compromise. An attacker who can read your process memory has
+the key, and a host that caches the key beside the bytecode has authenticated nothing.
+
+**If you genuinely need raw, unsealed bytecode** — loading blobs from a build step, say —
+an operator must set `luaext.allow_raw_bytecode=1` in `php.ini`. It is `PHP_INI_SYSTEM`,
+so no application code can turn it on, and `phpinfo()` reports whether it is open. Prefer
+sealing: it is the same speed and none of the exposure.
 
 ## Running Lua from a queued job
 
