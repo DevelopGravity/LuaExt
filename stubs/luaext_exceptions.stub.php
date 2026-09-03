@@ -197,6 +197,21 @@ class SourceLimitError extends FatalError
 }
 
 /**
+ * A binary chunk could not be vouched for, so it was not loaded.
+ *
+ * Covers every way that can happen: a bad or missing HMAC, a malformed seal,
+ * a sealed blob with no key configured to check it against, and a raw blob
+ * when raw bytecode is not permitted. They are one condition from the caller's
+ * side -- this is not something the sandbox is willing to execute.
+ *
+ * Lua's loader validates a chunk's header and stops, so an unverified blob is
+ * a crash or worse rather than an error. Refusing is the only safe answer.
+ */
+class BytecodeIntegrityError extends FatalError
+{
+}
+
+/**
  * The script reached its memory ceiling.
  */
 class MemoryLimitError extends FatalError

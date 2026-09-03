@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 600a68e1bcc26b949de97c881c717e5dded30716 */
+ * Stub hash: 7b796c25e1c26fe99c010d57a89c761e90dc4d63 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaTrace, 0, 0, IS_ARRAY, 1)
 ZEND_END_ARG_INFO()
@@ -173,6 +173,16 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Exception_SourceLi
 	zend_class_entry ce, *class_entry;
 
 	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt\\Exception", "SourceLimitError", NULL);
+	class_entry = zend_register_internal_class_with_flags(&ce, class_entry_DevelopGravity_LuaExt_Exception_FatalError, 0);
+
+	return class_entry;
+}
+
+static zend_class_entry *register_class_DevelopGravity_LuaExt_Exception_BytecodeIntegrityError(zend_class_entry *class_entry_DevelopGravity_LuaExt_Exception_FatalError)
+{
+	zend_class_entry ce, *class_entry;
+
+	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt\\Exception", "BytecodeIntegrityError", NULL);
 	class_entry = zend_register_internal_class_with_flags(&ce, class_entry_DevelopGravity_LuaExt_Exception_FatalError, 0);
 
 	return class_entry;

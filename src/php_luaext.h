@@ -70,6 +70,7 @@ extern zend_class_entry *luaext_ce_module_not_found_error;
 extern zend_class_entry *luaext_ce_fatal_error;
 extern zend_class_entry *luaext_ce_syntax_error;
 extern zend_class_entry *luaext_ce_source_limit_error;
+extern zend_class_entry *luaext_ce_bytecode_integrity_error;
 extern zend_class_entry *luaext_ce_memory_limit_error;
 extern zend_class_entry *luaext_ce_cpu_limit_error;
 extern zend_class_entry *luaext_ce_wall_clock_limit_error;
@@ -100,6 +101,17 @@ zend_long hook_count;
 
 /* Floor on watchdog wake-ups, bounding worst-case limit overshoot. */
 zend_long watchdog_resolution_us;
+
+/*
+ * Whether UNSEALED binary chunks may be loaded at all -- by compileBinary()
+ * or by a script's own load(..., "b").
+ *
+ * Off by default. Lua's loader does not validate the instruction stream, so a
+ * blob nothing can vouch for is a crash or worse; sealed blobs carry an HMAC
+ * and are always allowed. PHP_INI_SYSTEM because a gate ini_set() could open
+ * from userland would not be a gate.
+ */
+bool allow_raw_bytecode;
 
 /*
 	 * Route Lua allocations through the Zend allocator instead of malloc.

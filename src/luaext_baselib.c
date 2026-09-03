@@ -559,8 +559,20 @@ static int luaext_baselib_load(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	size_t max_source = luaext_baselib_max_source(sandbox);
-	bool allow_binary =
-		sandbox != NULL && luaext_has_cap(&sandbox->policy, LUAEXT_CAP_LOAD_BYTECODE);
+	/*
+	 * The INI as well as the capability, because this is the SAME unvalidated
+	 * loader compileBinary() reaches and a script can feed it bytes it built
+	 * itself -- from string.char(), a VFS read, a callback's return value.
+	 * Gating only the host side would leave this door open while the
+	 * configuration read as though raw bytecode were off.
+	 *
+	 * A script cannot seal anything: it never sees the key. So with the INI
+	 * off there is no script-side path to the binary loader at all, which is
+	 * the intent rather than a side effect.
+	 */
+	bool allow_binary = sandbox != NULL &&
+						luaext_has_cap(&sandbox->policy, LUAEXT_CAP_LOAD_BYTECODE) &&
+						LUAEXT_G(allow_raw_bytecode);
 	int argc = lua_gettop(L);
 	const char *chunk;
 	size_t length = 0;

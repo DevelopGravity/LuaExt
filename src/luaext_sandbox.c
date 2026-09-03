@@ -27,6 +27,7 @@
 #include "luaext_timers.h"
 #include "luaext_profiler.h"
 #include "luaext_require.h"
+#include "luaext_seal.h"
 #include "luaext_vfs.h"
 
 #include <lauxlib.h>
@@ -901,6 +902,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
 	luaext_sandbox *sandbox;
 	zend_string *bytecode;
 	zend_string *chunk_name = NULL;
+	const char *payload = NULL;
+	size_t payload_len = 0;
 
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 	Z_PARAM_STR(bytecode)
@@ -922,7 +925,63 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
 		RETURN_THROWS();
 	}
 
-	if (!luaext_exec_load(sandbox, ZSTR_VAL(bytecode), ZSTR_LEN(bytecode),
+	/*
+	 * Everything below decides ONE question: can this blob be vouched for?
+	 *
+	 * Lua's loader checks a binary chunk's header and stops -- not its opcodes,
+	 * register indices, constant indices or jump targets -- so a blob that is
+	 * merely well-formed at the front reaches the VM intact. Corrupting one byte
+	 * of a small chunk at each position: 57% refused, 33% ran anyway, 10% killed
+	 * the process. There is no verifier to add, so the only safe answer for a
+	 * blob nothing can vouch for is to refuse it.
+	 */
+	if (luaext_seal_is_sealed(ZSTR_VAL(bytecode), ZSTR_LEN(bytecode))) {
+		if (sandbox->policy.bytecode_key == NULL) {
+			zend_throw_exception(
+				luaext_ce_bytecode_integrity_error,
+				"This bytecode is sealed, but the sandbox has no SandboxConfig::$bytecodeKey "
+				"to verify it with. Configure the key it was sealed with.",
+				0);
+			RETURN_THROWS();
+		}
+
+		if (!luaext_seal_open(ZSTR_VAL(bytecode), ZSTR_LEN(bytecode), sandbox->policy.bytecode_key,
+							  sandbox->policy.bytecode_key_len, &payload, &payload_len)) {
+			zend_throw_exception(
+				luaext_ce_bytecode_integrity_error,
+				"This bytecode does not verify against SandboxConfig::$bytecodeKey. It was "
+				"sealed with a different key, or it has been altered since -- either way it "
+				"is not something this sandbox will execute.",
+				0);
+			RETURN_THROWS();
+		}
+	} else if (sandbox->policy.bytecode_key != NULL) {
+		/*
+		 * No silent fallback. Configuring a key says this sandbox loads only what
+		 * it sealed; accepting a raw blob anyway would leave the path open while
+		 * the configuration reads as though it were closed, and an attacker who
+		 * can write the store would simply strip the seal.
+		 */
+		zend_throw_exception(
+			luaext_ce_bytecode_integrity_error,
+			"This sandbox has a SandboxConfig::$bytecodeKey, so it loads only sealed "
+			"bytecode. This blob carries no seal.",
+			0);
+		RETURN_THROWS();
+	} else if (!LUAEXT_G(allow_raw_bytecode)) {
+		zend_throw_exception(
+			luaext_ce_bytecode_integrity_error,
+			"Loading unsealed bytecode is disabled. Set SandboxConfig::$bytecodeKey and seal "
+			"it with dump(), or set luaext.allow_raw_bytecode=1 in php.ini to accept blobs "
+			"nothing can vouch for.",
+			0);
+		RETURN_THROWS();
+	} else {
+		payload = ZSTR_VAL(bytecode);
+		payload_len = ZSTR_LEN(bytecode);
+	}
+
+	if (!luaext_exec_load(sandbox, payload, payload_len,
 						  luaext_sandbox_chunk_name(chunk_name, "=(binary)"), true)) {
 		RETURN_THROWS();
 	}

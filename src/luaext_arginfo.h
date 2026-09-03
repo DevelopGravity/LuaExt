@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 2929a730fe7e0d351f0c1c7bf41621a973a668b4 */
+ * Stub hash: ec266cdd272b488fc87963d308dcb8a663835a02 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -83,6 +83,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig___const
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, deterministic, _IS_BOOL, 0, "false")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cacheCompiledChunks, _IS_BOOL, 0, "false")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bytecodeKey, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig_with, 0, 0, DevelopGravity\\LuaExt\\SandboxConfig, 0)
@@ -900,6 +901,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxConfig(void
 	zend_string *property_cacheCompiledChunks_name = zend_string_init("cacheCompiledChunks", sizeof("cacheCompiledChunks") - 1, 1);
 	zend_declare_typed_property(class_entry, property_cacheCompiledChunks_name, &property_cacheCompiledChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
 	zend_string_release(property_cacheCompiledChunks_name);
+
+	zval property_bytecodeKey_default_value;
+	ZVAL_UNDEF(&property_bytecodeKey_default_value);
+	zend_string *property_bytecodeKey_name = zend_string_init("bytecodeKey", sizeof("bytecodeKey") - 1, 1);
+	zend_declare_typed_property(class_entry, property_bytecodeKey_name, &property_bytecodeKey_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING|MAY_BE_NULL));
+	zend_string_release(property_bytecodeKey_name);
 
 	return class_entry;
 }

@@ -15,6 +15,8 @@
 
 #include "luaext_config.h"
 
+#include "luaext_seal.h"
+
 #include "luaext_timers.h"
 
 #include <Zend/zend_closures.h>
@@ -542,7 +544,8 @@ static bool luaext_config_vfs_quota(zend_object *quota, luaext_vfs_quota *out)
  * ---------------------------------------------------------------------- */
 
 static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
-								zend_object *filesystem, bool seed_is_fixed, bool deterministic)
+								zend_object *filesystem, bool seed_is_fixed, bool deterministic,
+								const zend_string *bytecode_key)
 {
 	bool debug_hooks = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "debugHooks");
 	bool vfs = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "vfs");
@@ -592,6 +595,22 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	 * and simultaneously makes hash flooding reproducible, so it is only
 	 * accepted from a host that has said out loud it wants determinism.
 	 */
+	/*
+	 * A key too short to be a key authenticates nothing while looking as though
+	 * it does, which is worse than no key at all -- the host would believe the
+	 * bytecode was vouched for. Refused here rather than at first use, in the
+	 * same spirit as every other unsatisfiable combination on this path.
+	 */
+	if (bytecode_key != NULL && ZSTR_LEN(bytecode_key) < LUAEXT_SEAL_MIN_KEY_LEN) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"SandboxConfig::$bytecodeKey is %zu byte(s); it seals bytecode with an HMAC and "
+			"needs at least %d. Generate one with random_bytes(32) and keep it out of "
+			"whatever store the bytecode lives in.",
+			ZSTR_LEN(bytecode_key), LUAEXT_SEAL_MIN_KEY_LEN);
+		return false;
+	}
+
 	if (seed_is_fixed && !deterministic) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
@@ -658,11 +677,13 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *limits,
 										zend_object *vfs_quota, zend_object *filesystem,
 										bool seed_is_fixed, zend_long seed, bool deterministic,
-										bool cache_compiled_chunks, luaext_policy *policy)
+										bool cache_compiled_chunks, zend_string *bytecode_key,
+										luaext_policy *policy)
 {
 	memset(policy, 0, sizeof(*policy));
 
-	if (!luaext_config_check(capabilities, limits, filesystem, seed_is_fixed, deterministic)) {
+	if (!luaext_config_check(capabilities, limits, filesystem, seed_is_fixed, deterministic,
+							 bytecode_key)) {
 		return false;
 	}
 
@@ -678,6 +699,8 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	policy->seed_is_fixed = seed_is_fixed;
 	policy->seed = seed_is_fixed ? (uint64_t)seed : 0;
 	policy->cache_compiled_chunks = cache_compiled_chunks;
+	policy->bytecode_key = bytecode_key != NULL ? ZSTR_VAL(bytecode_key) : NULL;
+	policy->bytecode_key_len = bytecode_key != NULL ? ZSTR_LEN(bytecode_key) : 0;
 
 	return luaext_config_limits(limits, &policy->limits) &&
 		   luaext_config_vfs_quota(vfs_quota, &policy->vfs_quota);
@@ -691,7 +714,8 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 
 	if (config == NULL || Z_TYPE_P(config) != IS_OBJECT) {
 		/* No configuration at all is the untrusted baseline with default limits. */
-		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, false, policy);
+		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, false, NULL,
+										   policy);
 	}
 
 	object = Z_OBJ_P(config);
@@ -704,6 +728,9 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 		LUAEXT_GET_OBJECT(object, "vfsQuota"), LUAEXT_GET_OBJECT(object, "filesystem"),
 		Z_TYPE_P(seed) == IS_LONG, Z_TYPE_P(seed) == IS_LONG ? Z_LVAL_P(seed) : 0,
 		LUAEXT_GET_BOOL(object, "deterministic"), LUAEXT_GET_BOOL(object, "cacheCompiledChunks"),
+		Z_TYPE_P(LUAEXT_GET(object, "bytecodeKey")) == IS_STRING
+			? Z_STR_P(LUAEXT_GET(object, "bytecodeKey"))
+			: NULL,
 		policy);
 }
 
@@ -1162,11 +1189,12 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	bool seed_is_null = true;
 	bool deterministic = false;
 	bool cache_compiled_chunks = false;
+	zend_string *bytecode_key = NULL;
 	zend_object *object;
 	luaext_policy policy;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 12)
+	ZEND_PARSE_PARAMETERS_START(0, 13)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(capabilities, luaext_ce_capabilities)
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(limits, luaext_ce_limits)
@@ -1180,6 +1208,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	Z_PARAM_LONG_OR_NULL(seed, seed_is_null)
 	Z_PARAM_BOOL(deterministic)
 	Z_PARAM_BOOL(cache_compiled_chunks)
+	Z_PARAM_STR_OR_NULL(bytecode_key)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object = Z_OBJ_P(ZEND_THIS);
@@ -1197,7 +1226,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	 * because resolution is pure.
 	 */
 	if (!luaext_config_resolve_parts(capabilities, limits, vfs_quota, filesystem, !seed_is_null,
-									 seed, deterministic, cache_compiled_chunks, &policy)) {
+									 seed, deterministic, cache_compiled_chunks, bytecode_key,
+									 &policy)) {
 		RETURN_THROWS();
 	}
 
@@ -1271,6 +1301,14 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	LUAEXT_SET(object, "deterministic", &value);
 	ZVAL_BOOL(&value, cache_compiled_chunks);
 	LUAEXT_SET(object, "cacheCompiledChunks", &value);
+
+	if (bytecode_key != NULL) {
+		ZVAL_STR_COPY(&value, bytecode_key);
+	} else {
+		ZVAL_NULL(&value);
+	}
+
+	LUAEXT_SET(object, "bytecodeKey", &value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with)

@@ -324,6 +324,13 @@ typedef struct {
 	 * this project keeps finding rather than shipping.
 	 */
 	bool cache_compiled_chunks;
+
+	/*
+	 * Key that seals and verifies bytecode, or NULL. Borrowed from the
+	 * SandboxConfig object, which the sandbox holds for its lifetime.
+	 */
+	const char *bytecode_key;
+	size_t bytecode_key_len;
 } luaext_policy;
 
 #define luaext_has_cap(policy, cap) (((policy)->caps & (uint32_t)(cap)) != 0)

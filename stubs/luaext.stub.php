@@ -401,6 +401,21 @@ final readonly class SandboxConfig
      */
     public bool $cacheCompiledChunks;
 
+    /**
+     * Key that seals and verifies bytecode, at least 16 bytes.
+     *
+     * With a key set, dump() returns a sealed blob and compileBinary() accepts
+     * only sealed blobs it can verify -- an unsealed one is refused rather than
+     * loaded, because a silent fallback would leave the hole open while the
+     * configuration says otherwise.
+     *
+     * Generate one per process with random_bytes(32) and keep it out of the
+     * store the bytecode lives in. Sealing authenticates ORIGIN, not safety: it
+     * closes corruption and tampering by anyone without the key, and does not
+     * survive an attacker who can read this process's memory.
+     */
+    public ?string $bytecodeKey;
+
     public function __construct(
         ?Capabilities $capabilities = null,
         ?Limits $limits = null,
@@ -414,6 +429,7 @@ final readonly class SandboxConfig
         ?int $seed = null,
         bool $deterministic = false,
         bool $cacheCompiledChunks = false,
+        ?string $bytecodeKey = null,
     ) {}
 
     /**
