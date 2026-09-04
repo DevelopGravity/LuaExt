@@ -305,6 +305,27 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	sandbox->lua_calls_in++;
 
 	/*
+	 * VfsQuota::$maxOperations is a budget PER SANDBOX CALL, so it resets here.
+	 *
+	 * It never did. luaext_vfs_begin_call() was written, declared, documented --
+	 * "a host that runs many calls should not find the hundredth refused because
+	 * the first ninety-nine spent the budget" -- and then called from nowhere, so
+	 * the counter only ever climbed. The quota was a per-sandbox-LIFETIME bound
+	 * wearing a per-call name, and the error message a script saw ("this call has
+	 * already made N operations") was describing something that had not happened.
+	 * A long-lived sandbox eventually refused every filesystem call it was asked
+	 * for, and nothing in the suite noticed because no test made 10000 of them.
+	 *
+	 * Guarded on the OUTERMOST entry for the same reason the timers are: a nested
+	 * call reached through a host callback is part of the call already running,
+	 * and handing it a fresh budget would let a script reset its own quota by
+	 * bouncing through the host.
+	 */
+	if (sandbox->in_lua == 0) {
+		luaext_vfs_begin_call(sandbox);
+	}
+
+	/*
 	 * The one bracket that arms the timing limits. It also owns in_lua, because
 	 * only the OUTERMOST entry may arm and the depth is how that is known: a
 	 * nested call made from inside a host callback must not restart the clock.
