@@ -768,13 +768,15 @@ static int luaext_iolib_open(lua_State *L)
 		return lua_error(L);
 	}
 
+	/*
+	 * `path` is borrowed from a box on the stack, so this frame owns nothing
+	 * across the open. It has to be that way: luaext_vfs_open() raises rather
+	 * than returns for every quota it enforces, and a raise longjmps past
+	 * whatever this frame is holding.
+	 */
 	if (!luaext_vfs_open(L, sandbox, path, mode, &refusal)) {
-		zend_string_release(path);
-
 		return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
 	}
-
-	zend_string_release(path);
 
 	return 1;
 }
@@ -838,12 +840,16 @@ static int luaext_iolib_lines(lua_State *L)
 	}
 
 	if (!luaext_vfs_open(L, sandbox, path, "r", &refusal)) {
-		zend_string_release(path);
-
 		/*
 		 * Fatal, unlike io.open's nil. io.lines is used directly in a for
 		 * clause, where a nil is not a value the loop can act on -- upstream
 		 * raises here for the same reason.
+		 *
+		 * The message reads `path` AFTER the release that used to sit above it,
+		 * which was a use-after-free on every refusal this branch exists to
+		 * report. It is safe now for the same reason nothing is released here at
+		 * all: the string belongs to a box on the stack, and the box outlives
+		 * both this message and the unwind that carries it.
 		 */
 		if (refusal != NULL) {
 			zend_string_release(refusal);
@@ -853,8 +859,6 @@ static int luaext_iolib_lines(lua_State *L)
 						   ZSTR_VAL(path));
 		return lua_error(L);
 	}
-
-	zend_string_release(path);
 
 	lua_pushboolean(L, 1); /* io.lines owns it, so the end of the file closes it */
 	lua_pushcclosure(L, luaext_iolib_lines_iter, 2);

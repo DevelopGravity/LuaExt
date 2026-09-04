@@ -64,6 +64,7 @@ const char luaext_key_preload = 0;
 const char luaext_key_loading = 0;
 const char luaext_key_zvalmt = 0;
 const char luaext_key_chunks = 0;
+const char luaext_key_pathmt = 0;
 
 /* -------------------------------------------------------------------------
  * Helpers

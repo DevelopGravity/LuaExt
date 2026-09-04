@@ -186,8 +186,16 @@ bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_h
  * Canonicalise the Lua string at `index` into a path the backend may see.
  *
  * Shared by io and os so there is exactly one place a script's string becomes a
- * name the host is handed. Returns NULL with a Lua error raised; the caller owns
- * the result and must release it.
+ * name the host is handed. Returns NULL with a Lua error raised.
+ *
+ * THE RESULT IS BORROWED. It belongs to a userdata this pushes onto the Lua
+ * stack, so Lua's collector releases it however the caller leaves -- normally,
+ * or through the longjmp any backend call can perform. The caller must not
+ * release it, must not keep it past its own return, and must leave that stack
+ * slot in place for as long as it uses the string.
+ *
+ * Callers used to own it, and every one of them leaked it whenever the call it
+ * held the string across raised instead of returning. See luaext_vfs.c.
  */
 zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int index);
 

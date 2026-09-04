@@ -598,11 +598,12 @@ static int luaext_oslib_remove(lua_State *L)
 		return lua_error(L);
 	}
 
+	/* Borrowed from a box on the stack, so this frame owns nothing across a call
+	 * that raises for a spent operations quota, a torn-down FileSystem, or a
+	 * method the interface promises and the class does not have. */
 	ZVAL_STR(&args[0], path);
 
 	if (luaext_vfs_call(L, sandbox, "delete", 1, args, &result, &refusal) != LUAEXT_VFS_OK) {
-		zend_string_release(path);
-
 		if (refusal == NULL) {
 			return lua_error(L);
 		}
@@ -614,7 +615,6 @@ static int luaext_oslib_remove(lua_State *L)
 		return 2;
 	}
 
-	zend_string_release(path);
 	zval_ptr_dtor(&result);
 
 	luaext_vfs_note_file_removed(sandbox);
@@ -637,10 +637,11 @@ static int luaext_oslib_rename(lua_State *L)
 		return lua_error(L);
 	}
 
+	/* Two boxes, and the second one's canonicalisation can raise -- which is
+	 * exactly why the first is not this frame's to release. */
 	to = luaext_vfs_path_from_lua(L, sandbox, 2);
 
 	if (to == NULL) {
-		zend_string_release(from);
 		return lua_error(L);
 	}
 
@@ -648,9 +649,6 @@ static int luaext_oslib_rename(lua_State *L)
 	ZVAL_STR(&args[1], to);
 
 	if (luaext_vfs_call(L, sandbox, "rename", 2, args, &result, &refusal) != LUAEXT_VFS_OK) {
-		zend_string_release(from);
-		zend_string_release(to);
-
 		if (refusal == NULL) {
 			return lua_error(L);
 		}
@@ -662,8 +660,6 @@ static int luaext_oslib_rename(lua_State *L)
 		return 2;
 	}
 
-	zend_string_release(from);
-	zend_string_release(to);
 	zval_ptr_dtor(&result);
 
 	lua_pushboolean(L, 1);

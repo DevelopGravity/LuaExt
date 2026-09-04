@@ -340,7 +340,81 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
 }
 
 /*
+ * A canonical path, owned by Lua's collector rather than by the C frame that
+ * asked for it.
+ *
+ * WHY IT IS NOT JUST A zend_string. Everything a script does with a path --
+ * open, remove, rename -- goes on to call the backend, and every one of those
+ * calls can raise: a quota refusal, a FileSystem that is gone, a method the
+ * interface promises and the class does not have. luaext_error_raise() ends in
+ * lua_error(), which longjmps, and a longjmp runs no cleanup whatsoever. A
+ * caller holding the string across such a call leaks it, on precisely the paths
+ * that only execute when something has already gone wrong.
+ *
+ * That is not a hazard someone might one day hit. io.open() leaked its path on
+ * every maxOpenHandles, maxFiles and maxOperations refusal -- three leaks in one
+ * test under PHP's debug allocator, and silence in a release build and under
+ * macOS `leaks`, which sees the request arena freed wholesale and calls it
+ * clean.
+ *
+ * Handing the string to Lua ends the whole class instead of one instance of it.
+ * The box lives in the calling C function's own stack frame, so an unwind of any
+ * depth makes it garbage; no exit has to remember to release, and no exit added
+ * later can forget to. It also costs the callers nothing to hold onto -- the box
+ * is anonymous, and Lua discards the frame's leftovers when the function
+ * returns.
+ */
+typedef struct {
+	zend_string *path;
+} luaext_vfs_path_ud;
+
+static int luaext_vfs_path_release(lua_State *L)
+{
+	luaext_vfs_path_ud *box = (luaext_vfs_path_ud *)lua_touserdata(L, 1);
+
+	if (box != NULL && box->path != NULL) {
+		zend_string_release(box->path);
+		box->path = NULL;
+	}
+
+	return 0;
+}
+
+/*
+ * Push the metatable every path box in this state shares.
+ *
+ * Its own registry key, not luaext_key_zvalmt: a metatable *is* its __gc, so
+ * giving a box the closure storage's finaliser would have that __gc read a
+ * zend_fcall_info_cache out of a zend_string. __metatable is false for the same
+ * reason it is on the others -- a script that could read this table back could
+ * replace __gc, or stamp it onto a value of its own and hand the collector a
+ * pointer we never allocated.
+ */
+static void luaext_vfs_path_metatable(lua_State *L)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_pathmt) == LUA_TTABLE) {
+		return;
+	}
+
+	lua_pop(L, 1);
+	lua_createtable(L, 0, 2);
+
+	lua_pushcfunction(L, luaext_vfs_path_release);
+	lua_setfield(L, -2, "__gc");
+
+	lua_pushboolean(L, 0);
+	lua_setfield(L, -2, "__metatable");
+
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_pathmt);
+}
+
+/*
  * Canonicalise a script-supplied path into a zend_string the backend may see.
+ *
+ * The result is BORROWED: it belongs to a box on the Lua stack, and the caller
+ * must neither release it nor keep it past its own return. See the box above for
+ * why ownership sits there.
  *
  * The buffer is the caller's, sized from the input, because the canonical form
  * is never longer than the input plus a leading slash -- canonicalisation only
@@ -353,7 +427,7 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 	char *buffer;
 	size_t out_len = 0;
 	luaext_vfs_path_status status;
-	zend_string *path;
+	luaext_vfs_path_ud *box;
 
 	raw = luaL_checklstring(L, index, &raw_len);
 
@@ -368,6 +442,39 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 						   raw_len);
 		return NULL;
 	}
+
+	/*
+	 * Refused rather than boxed once the state is closing, because a box built
+	 * here would never be collected and the string it holds would never be
+	 * released.
+	 *
+	 * lua_close() sets GCSTPCLS for its whole run and luaC_checkfinalizer()
+	 * returns early while that bit is set, so an object created inside a
+	 * finaliser is never added to the finobj list and its __gc NEVER RUNS -- the
+	 * same trap the error subsystem documents. Reaching here during close means a
+	 * script __gc calling io.open or os.remove, and the VFS is already torn down
+	 * by then, so the call had no future anyway: this only moves the refusal one
+	 * step earlier, to before there is anything to lose.
+	 */
+	if (sandbox == NULL || sandbox->closed) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+						   "This sandbox is closing: its filesystem is no longer reachable");
+		return NULL;
+	}
+
+	/*
+	 * The box goes up empty, with its metatable, BEFORE the string exists.
+	 * Setting a metatable that carries __gc is what marks a userdata for
+	 * finalisation, so doing it in the other order leaves a window in which the
+	 * string is owned by nothing -- which is the bug this exists to prevent.
+	 */
+	luaL_checkstack(L, 3, "luaext: no stack to canonicalise a path");
+
+	box = (luaext_vfs_path_ud *)lua_newuserdatauv(L, sizeof(*box), 0);
+	box->path = NULL;
+
+	luaext_vfs_path_metatable(L);
+	lua_setmetatable(L, -2);
 
 	buffer = emalloc(raw_len + 2);
 
@@ -389,10 +496,10 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 		return NULL;
 	}
 
-	path = zend_string_init(buffer, out_len, 0);
+	box->path = zend_string_init(buffer, out_len, 0);
 	efree(buffer);
 
-	return path;
+	return box->path;
 }
 
 void luaext_vfs_note_bytes(luaext_sandbox *sandbox, size_t bytes)

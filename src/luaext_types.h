@@ -51,6 +51,7 @@ extern const char luaext_key_preload; /* package.preload */
 extern const char luaext_key_loading; /* in-flight requires, for cycle detection */
 extern const char luaext_key_zvalmt;  /* metatable of zval-holding userdata */
 extern const char luaext_key_chunks;  /* eval() compile cache: key -> main chunk */
+extern const char luaext_key_pathmt;  /* metatable of canonical-path userdata */
 
 /* -------------------------------------------------------------------------
  * Interrupt reasons
