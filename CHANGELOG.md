@@ -25,12 +25,16 @@ Nothing is released yet, so this section is a running record of what exists rath
 - **Sampling profiler**, off by default: `enableProfiler()`/`disableProfiler()`/`getProfile()`. Arming the count hook costs ~2.6x on dispatch-bound code, which is why the shipped hot path stays hook-free and this is opt-in. `enableProfiler()` returns `false` rather than displacing the count hook on a build where it is carrying the CPU limit.
 - **`SandboxStats` reports measured figures**, including CPU and wall-clock time read off the watchdog and bytes moved through the filesystem. Those were hardcoded zeros behind a TODO.
 - **Output sink** with buffer, callback and discard modes, billed against the memory limit.
-- Project documentation: `README.md`, `SECURITY.md`, `docs/cookbook.md`, `docs/lua-api.md`.
+- Project documentation: `README.md`, `SECURITY.md`, and `docs/` — configuration,
+  cookbook, exceptions, the Lua-side API, migration, performance and platform support.
 - CI across Linux and macOS (x64 and arm64, NTS and ZTS, debug and release), plus valgrind, sanitizer and lint jobs.
 
 ### Known gaps
 
 Every capability the extension defines is implemented, and `Sandbox::features()['capabilities']` reports so. What remains:
 
-- The **Windows build does not compile yet**, and its CI job is non-gating.
+- The **Windows build compiles and gates**, but runs only `tests/10-lua/` — the
+  platform-neutral conformance suite. `tests/02-limits/` asserts far below Windows'
+  ~15.6 ms scheduler tick and needs guards written against observed failures rather
+  than guessed at.
 - The **multi-threaded SAPI paths have no test coverage** — `.phpt` cannot spawn PHP threads.

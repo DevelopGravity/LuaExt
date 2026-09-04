@@ -106,13 +106,37 @@ Limits (`Limits`, `VfsQuota`) are configured independently of trust — a truste
 
 ## Reporting a vulnerability
 
-<!-- TODO: replace with a real, monitored security contact before this project accepts external users. -->
-**TODO:** Security contact has not been established yet. Once it is, this section should specify a private reporting channel (e.g. a security@ address or GitHub private vulnerability reporting) and be linked from `SECURITY.md`'s standard location so GitHub surfaces it automatically.
+**Email <security@developgravity.com>. Please do not open a public issue.**
 
-<!-- TODO: define and commit to a real response-time SLA once there is a maintainer team able to honor one. -->
-**TODO:** Expected response time has not been established yet.
+Encrypted reports are welcome. The key for that address is committed to this repository as [`security-disclosure.asc`](security-disclosure.asc), so you can encrypt without trusting a keyserver lookup:
 
-Please do not open a public issue for a suspected vulnerability. Until the contact above is filled in, treat any of the "what this is designed to defend against" mechanisms above as in scope for private disclosure the moment a maintainer contact exists.
+```
+Develop Gravity LLC - Security Disclosure <security@developgravity.com>
+ed25519, created 2026-01-28
+D3AE BBF0 BA59 370F 4CE7  BFB3 C916 7C4A 7A3A 671A
+```
+
+Verify it against the fingerprint above before use — a key file in a repository is only as trustworthy as the repository, and the fingerprint is what a second channel can confirm.
+
+**What to include.** The version or commit, the platform, and something that reproduces it — a `.phpt`, a script, or a description precise enough to write one. A reproduction is worth more than a severity rating; the classification is our job and the reproduction is the part only you have.
+
+### There is no bounty
+
+This is an MIT-licensed open-source project with no funding attached to it. **No reward, bounty, or payment is offered for any report**, and none will be. Saying so plainly is fairer than leaving it to be inferred: if you are looking for paid work, this is not that. Credit in the changelog and in the fix's commit is offered gladly to anyone who wants it.
+
+### Scope
+
+**In scope:** everything under [what this sandbox is designed to defend against](#what-this-sandbox-is-designed-to-defend-against) — a script escaping its CPU, wall-clock, memory or output budget; reaching the host filesystem; leaking a process address; loading bytecode past both gates; swallowing a fatal through `pcall`, a coroutine, a finaliser or a `<close>` handler. Anything under `src/`, including the patches this project applies to the vendored interpreter, is ours.
+
+**Not in scope, and please report it upstream instead:** a bug in the Lua language or its interpreter that reproduces against **stock Lua 5.5.1**. Those belong to [the Lua maintainers](https://www.lua.org/bugs.html), who fix them for everyone rather than for this one embedding; a fix landing there reaches us through `tools/check-lua-upstream.sh` and the vendoring script. The distinction is a practical one, and `tools/bench-vm.sh` builds a stock tree if you need to check which side of it you are on — if stock Lua does it too, it is Lua's; if only this build does, it is ours and we want to hear.
+
+Also out of scope: the failure modes documented under [what this does not defend against](#what-this-does-not-defend-against). Those are known, deliberate and written down — most of all handing a sandbox to its own script, which is a host mistake the extension states plainly that it does not guard.
+
+### What to expect
+
+This is a **single-maintainer project, pre-1.0, with no external audit**. Rather than promise a response time nobody is staffed to honour: reports are read as soon as they are seen, and you will get an acknowledgement telling you whether it is being worked on. If a report goes unanswered for two weeks, assume it was missed and send it again — that is a likelier explanation than it being ignored.
+
+Disclosure timing is yours to set; say what you want in the report. Absent anything else, the intent is to fix first and publish the fix with the reproduction, because the adversarial suite below is append-only and a finding that lands there stays covered forever.
 
 ## Security regression policy
 

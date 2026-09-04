@@ -19,11 +19,25 @@ const STUB_FILES = [
     __DIR__ . '/../stubs/luaext.stub.php',
 ];
 
+/*
+ * Every prose file that may name the API.
+ *
+ * ADD A NEW DOC HERE THE MOMENT YOU WRITE ONE. A file missing from this list is
+ * not checked, and nothing goes red to say so -- which is exactly what happened
+ * when README's four reference tables were split into docs/: the rules below
+ * still existed, matched nothing, and the tool reported success until it was
+ * taught to say "a rule that matches no table is itself a failure".
+ */
 const DEFAULT_DOCS = [
     __DIR__ . '/../README.md',
     __DIR__ . '/../SECURITY.md',
+    __DIR__ . '/../docs/configuration.md',
     __DIR__ . '/../docs/cookbook.md',
+    __DIR__ . '/../docs/exceptions.md',
     __DIR__ . '/../docs/lua-api.md',
+    __DIR__ . '/../docs/migrating-from-luasandbox.md',
+    __DIR__ . '/../docs/performance.md',
+    __DIR__ . '/../docs/platform-support.md',
 ];
 
 /**
@@ -176,22 +190,29 @@ function resolveApiClass(string $written, array $apiNames): ?string
  * how its cells should be read.
  */
 const TABLE_RULES = [
-    // README: the capability matrix. Column 0 names a Capabilities property.
+    // docs/configuration.md: the capability matrix. Column 0 names a Capabilities property.
     'Capability|Untrusted default|`trusted()`|Notes' => [
         0 => ['kind' => 'property', 'class' => 'Capabilities'],
     ],
-    // README: the limits table. Column 0 names a Limits property.
+    // docs/configuration.md: the limits table. Column 0 names a Limits property.
     'Limit|Default' => [
         0 => ['kind' => 'property', 'class' => 'Limits'],
     ],
-    // README: platform support. The last column is a LimitSupport case.
+    // docs/platform-support.md. The last column is a LimitSupport case.
     "Platform|Arch|Install|CPU clock source|Typical resolution|`features()['cpuLimit']`" => [
         5 => ['kind' => 'enumCase', 'class' => 'LimitSupport'],
     ],
-    // README: the migration table, whose preamble promises it "match[es] the
+    // docs/migrating-from-luasandbox.md, whose preamble promises it "match[es] the
     // stubs exactly". Column 0 is the OLD extension's API and is deliberately
     // not checked; column 2 is prose dense enough that policing it would cost
     // more in false positives than it catches.
+    // docs/configuration.md: the VfsQuota table. Column 0 names a VfsQuota
+    // property. Added after two of its DEFAULTS were written from memory and
+    // both were wrong -- this cannot check a default, but it can check that the
+    // field being described still exists under that name.
+    'Field|Default|Bounds' => [
+        0 => ['kind' => 'property', 'class' => 'VfsQuota'],
+    ],
     'LuaSandbox|LuaExt|Notes' => [
         1 => ['kind' => 'apiSymbols'],
     ],

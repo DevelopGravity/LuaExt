@@ -111,23 +111,113 @@ it, so a rarely-firing profiler costs nearly what a busy one does. And this is e
 why sampling is opt-in rather than always-armed — paying 2.6× on every call to collect a
 profile nobody reads is the trade the shipped design refuses.
 
+## The configuration matrix
+
+Everything above answers one question very well: what the patched interpreter costs against
+stock Lua. It says nothing about the rest of the configuration space, and that space has
+grown — a compile cache, two shapes of filesystem backend, three output modes, an opt-in
+profiler. A single headline per feature describes the default and nothing else.
+
+`tools/bench-matrix.php` varies one axis at a time and prints the table below. It is
+deliberately not a `.phpt` and does not run in CI, for the same reason the memory figures
+below are not: a shared runner measures its neighbours as much as it measures this
+extension.
+
+```bash
+php -d extension=modules/luaext.so tools/bench-matrix.php 7
+```
+
+**Apple M2 Max, arm64** · PHP 8.5.10 NTS · best of 7 · measured 2026-09-05.
+
+### eval() compile cache
+
+| Chunk | Cache off | Cache on | |
+|---|---:|---:|---:|
+| `return 1` (8 B) | 5.3 µs | 4.1 µs | 1.29× |
+| small loop (42 B) | 6.6 µs | 4.4 µs | 1.51× |
+| compute (~250 B) | 34.9 µs | 29.9 µs | 1.16× |
+| 60 functions (3.5 KB) | 51.4 µs | 12.9 µs | **3.99×** |
+
+**The gain tracks how much of the call is parsing.** A chunk that does real work amortises
+its own parse — `compute` is 1.16× because most of its 30 µs is execution the cache cannot
+touch. A large chunk that returns quickly is almost entirely parse, and gains most.
+
+### Profiler
+
+| Workload | Off | On | |
+|---|---:|---:|---:|
+| tight `while` loop | 28.8 µs | 66.6 µs | **2.31×** |
+| function calls | 27.9 µs | 64.2 µs | **2.30×** |
+| mixed compute | 27.5 µs | 36.9 µs | 1.34× |
+
+Consistent with the `hooked` column above, and for the same mechanism: the cost is per
+instruction *dispatched*, so dispatch-bound code pays most.
+
+### Output mode
+
+500 `io.write` calls per iteration.
+
+| Mode | Per call | |
+|---|---:|---:|
+| `Buffer` | 56.7 µs | 1.00× |
+| `Discard` | 50.8 µs | 0.90× |
+| `Callback` | 159.1 µs | **2.81×** |
+
+**`Callback` costs roughly 3×**, and that is the boundary rather than the sink: every chunk
+crosses into PHP and back. It buys streaming — output leaves the sandbox as it is produced
+instead of accumulating against `Limits::$outputBytes` — so the trade is latency and memory
+against throughput. `Discard` is the floor, and the gap between it and `Buffer` is what
+retaining the bytes costs.
+
+### Filesystem backend shape
+
+40 writes plus a full read-back per iteration.
+
+| Backend | Per call | |
+|---|---:|---:|
+| `FileSystem` (buffered) | 26.7 µs | 1.00× |
+| `RangedFileSystem` (streamed) | 626.0 µs | **23.40×** |
+
+**This is the largest single choice in the matrix, and the direction surprises people.**
+A buffered `FileSystem` is read whole at open and written whole at close: 40 writes cost
+*one* call into PHP. A `RangedFileSystem` streams, so each write is its own `writeRange()`
+— 40 boundary crossings instead of one, and each one is a full `zend_call_known_instance_method`.
+
+So `RangedFileSystem` is not the faster interface; it is the **scalable** one. It exists so
+a script can work with a file larger than `Limits::$memoryBytes`, which the buffered path
+cannot do at all, and so a write is durable when it happens rather than at close. If your
+files are small and your scripts write in many small pieces, the buffered backend is both
+simpler and far quicker. Implement `RangedFileSystem` when the file size demands it, not by
+default.
+
+### Sandbox lifecycle
+
+| Step | Cost |
+|---|---:|
+| construct + close, no script | 32.9 µs |
+| construct + close, `vfs` granted | 36.0 µs |
+| construct + eval + close | 82.9 µs |
+
+**A per-request sandbox pays ~33 µs before it runs anything**, and no setting reduces it —
+it is a fresh `lua_State`, its standard library, and the capability filtering. Granting the
+VFS adds ~3 µs. This is the figure that decides whether the compile cache can help you at
+all: a sandbox built, evaluated once and closed never sees a warm cache.
+
 ## What the eval() compile cache saves, and when it saves nothing
 
 `eval()` parses its source on every call and discards the chunk.
 `SandboxConfig(cacheCompiledChunks: true)` keeps it instead, bounded by
 `Limits::$maxCachedChunks` (default 64).
 
-**Apple M2 Max, arm64** · PHP 8.5.10 NTS · measured 2026-09-02 against `a3355a5`. Same
-sandbox, same source, repeated; the cache is warm after the first call.
+The measured figures are in [the matrix above](#evalcompile-cache); this section is the
+part a table cannot say.
 
-| Chunk | Cache off | Cache on | |
-|---|---:|---:|---:|
-| `return 1` (8 B) | 4.5 µs | 3.6 µs | 1.2× |
-| small loop (42 B) | 5.8 µs | 4.0 µs | 1.4× |
-| 60 functions (3.5 KB) | 84.3 µs | 15.0 µs | **5.6×** |
-
-> **5.6× on a chunk of real size — but only for a sandbox that outlives several
+> **~4× on a chunk of real size — but only for a sandbox that outlives several
 > evaluations of the same source.**
+
+An earlier measurement of this quoted 5.6×, against a differently-shaped 3.5 KB chunk on
+an older build. Both are true of what they measured, which is the reason the matrix names
+its workloads: the ratio is a property of the chunk, not of the cache.
 
 **The second half of that sentence matters as much as the first.** A sandbox built per
 request, evaluated once, and closed compiles into an empty cache every time and gains
@@ -135,8 +225,8 @@ request, evaluated once, and closed compiles into an empty cache every time and 
 construct the interpreter and ~79 µs to parse. The cache cannot touch either. If that is
 your pattern, this setting is pure overhead and should stay off.
 
-It is also why the gain is 5.6× rather than the ~10× that comparing `eval()` against
-`compile()` + `call()` suggests: the cache key is the chunk name and the source, so every
+It is also why the gain is single-digit rather than the ~10× that comparing `eval()`
+against `compile()` + `call()` suggests: the cache key is the chunk name and the source, so every
 call still copies and hashes the whole source to look it up. That cost scales with the
 script, and it is the price of a lookup that cannot collide.
 
