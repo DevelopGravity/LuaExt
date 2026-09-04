@@ -134,7 +134,6 @@ static luaext_vfs_result luaext_vfs_call_maybe_charged(lua_State *L, luaext_sand
 													   zval *args, zval *result,
 													   zend_string **refusal, bool charge)
 {
-	zend_string *name;
 	zend_function *fn;
 	uint8_t paused = 0;
 	bool billed_wall;
@@ -186,10 +185,17 @@ static luaext_vfs_result luaext_vfs_call_maybe_charged(lua_State *L, luaext_sand
 	 * it every single-word method resolves and every camelCase one does not --
 	 * exists() and read() would work while readRange() reported a FileSystem
 	 * that "does not implement" a method it plainly does.
+	 *
+	 * _lc() rather than lowering a zend_string ourselves: it hashes the name
+	 * case-insensitively straight off the C string, so this allocates nothing at
+	 * all. The version that did allocate leaked one zend_string PER VFS CALL --
+	 * zend_string_tolower_ex() does not take ownership of its argument, so
+	 * releasing only its result freed the copy and never the original. Invisible
+	 * to a release build and to macOS `leaks`; PHP's debug allocator reported 48
+	 * of them in a single test.
 	 */
-	name = zend_string_tolower_ex(zend_string_init(method, strlen(method), 0), false);
-	fn = zend_hash_find_ptr(&Z_OBJCE(sandbox->filesystem_zv)->function_table, name);
-	zend_string_release(name);
+	fn = zend_hash_str_find_ptr_lc(&Z_OBJCE(sandbox->filesystem_zv)->function_table, method,
+								   strlen(method));
 
 	if (fn == NULL) {
 		if (paused != 0) {
