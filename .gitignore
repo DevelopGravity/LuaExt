@@ -95,3 +95,6 @@ fuzz/fuzz_*
 *~
 .idea/
 .vscode/
+
+# Local maintenance scripts (history sweeps, signing shims). Not shipped.
+.tools/
