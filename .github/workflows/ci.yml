@@ -379,6 +379,12 @@ jobs:
         run: make test TESTS="-m --show-diff"
         env:
           VALGRIND_OPTS: '--suppressions=tools/valgrind.supp'
+          # Read by tests/02-limits/pause-resume-matrix.phpt's --SKIPIF--, which
+          # explains itself there. Short version: memcheck's instrumented
+          # execution decouples wall time from the thread CPU clock, so every row
+          # that has to accumulate CPU reported "no/short" -- the one failure this
+          # leg has ever produced, against 0 leaks found.
+          LUAEXT_SKIP_TIMING_TESTS: '1'
 
       - name: Upload logs
         if: failure()

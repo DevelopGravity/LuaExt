@@ -16,6 +16,21 @@ use DevelopGravity\LuaExt\Sandbox;
 if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
 	echo "skip this build reports LimitSupport::Unsupported for the CPU limit";
 }
+
+// Set by CI's valgrind leg, and by nothing else. Under memcheck every row that
+// has to ACCUMULATE CPU reports "no/short": the instrumented execution spends
+// wall time at a rate that has no useful relationship to the thread CPU clock
+// this file measures against, so eight of the fifteen rows fail for a reason
+// that says nothing about pausing. The rest of tests/02-limits/ passes there and
+// is left alone -- this is one test opting out of one runner, not a directory
+// being written off.
+//
+// Deliberately an opt-OUT the test declares rather than a directory the workflow
+// excludes: a workflow that lists what to run stops covering whatever is added
+// later, and does it silently.
+if (getenv('LUAEXT_SKIP_TIMING_TESTS') === '1') {
+	echo "skip LUAEXT_SKIP_TIMING_TESTS=1: this runner cannot measure thread CPU meaningfully";
+}
 ?>
 --FILE--
 <?php
@@ -53,7 +68,7 @@ use DevelopGravity\LuaExt\SandboxConfig;
  */
 
 const CPU_SECONDS = 0.10;
-const WALL_BACKSTOP_SECONDS = 6.0;
+const WALL_BACKSTOP_SECONDS = 9.0;
 const BURN_SECONDS = 0.20;
 
 /*
@@ -164,10 +179,23 @@ function measureCpuEfficiency(): float
  *
  * A measurement taken while idle cannot be allowed to produce a ceiling with no
  * headroom in it, so the floor stands independently of what was measured: at
- * 2.0s a burn needing 0.20s of CPU survives down to 10% sustained efficiency.
- * The cap keeps one wedged row failing inside the harness timeout, and both stay
- * under WALL_BACKSTOP_SECONDS so a slow burn is an ordinary outcome rather than
- * a backstop trip reported as the wrong exception class.
+ * 3.0s a burn needing 0.20s of CPU survives down to 6.7% sustained efficiency,
+ * and the row only has to reach CPU_SECONDS rather than the full target for the
+ * limit to fire, which is 3.3%. The cap keeps one wedged row failing inside the
+ * harness timeout, and both stay under WALL_BACKSTOP_SECONDS so a slow burn is
+ * an ordinary outcome rather than a backstop trip reported as the wrong
+ * exception class.
+ *
+ * THE NUMBERS CAME UP FROM 2.0/4.0 BECAUSE CI SAID SO, not because a local run
+ * failed -- this file passes here in both release and debug. On the shared
+ * macOS runners it did not, and the artifacts name the shape exactly: ONE or TWO
+ * rows per leg, always the deepest billed chains, always `no/short` (billed, but
+ * the budget never ran out). Marginal starvation, not a broken assertion. So the
+ * fix is headroom, taken from the gap that already existed under the backstop
+ * rather than invented.
+ *
+ * If a leg still prints "no/short" after this, the answer is more headroom or a
+ * shorter burn -- never a smaller assertion. The rows are the specification.
  *
  * The paused rows do not pay for this: they give up on BURN_PROBE_SECONDS, not
  * on the ceiling. Only a genuinely starved row waits this long, and that row is
@@ -175,7 +203,7 @@ function measureCpuEfficiency(): float
  */
 define(
 	'BURN_CEILING_SECONDS',
-	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 2.0), 4.0),
+	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 3.0), 5.0),
 );
 
 function burn(float $seconds): void
@@ -194,14 +222,25 @@ function burn(float $seconds): void
 	 *
 	 * Three ways out, and the order matters:
 	 *   1. the CPU target is reached -- the only one that means the burn worked;
-	 *   2. the counter has not moved at all by the end of the probe, so this
-	 *      frame is paused and never will move;
+	 *   2. the counter has not moved for a whole probe window, so this frame is
+	 *      paused and never will move;
 	 *   3. the ceiling, which is starvation and is reported by the caller.
+	 *
+	 * The probe is a SLIDING window rather than a one-shot deadline, and the
+	 * difference matters on a contended runner. The one-shot form asked "has the
+	 * counter moved at all since the burn began" at a fixed instant: a paused
+	 * frame whose counter twitched once -- a rounding artefact on a coarse clock
+	 * is enough -- then failed that test forever and paid the full ceiling
+	 * instead of giving up in a tenth of a second. Asking instead whether the
+	 * counter has moved RECENTLY answers the question that was meant: is this
+	 * frame being billed right now.
 	 */
 	$start = $sandbox->stats()->cpuSeconds;
 	$target = $start + $seconds;
-	$probeUntil = microtime(true) + BURN_PROBE_SECONDS;
 	$ceiling = microtime(true) + BURN_CEILING_SECONDS;
+
+	$lastSpent = $start;
+	$movedAt = microtime(true);
 
 	while (true) {
 		burnWork();
@@ -214,11 +253,14 @@ function burn(float $seconds): void
 
 		$now = microtime(true);
 
-		if ($now >= $ceiling) {
+		if ($spent > $lastSpent) {
+			$lastSpent = $spent;
+			$movedAt = $now;
+		} elseif ($now - $movedAt >= BURN_PROBE_SECONDS) {
 			return;
 		}
 
-		if ($now >= $probeUntil && $spent <= $start) {
+		if ($now >= $ceiling) {
 			return;
 		}
 	}
@@ -341,11 +383,14 @@ $script = <<<'LUA'
 		return sink
 	end
 
+	-- The sliding probe window, for the reason the PHP burn() spells out.
 	local function burn(seconds)
 		local start = clock()
 		local target = start + seconds
-		local probe_until = php.now() + PROBE
 		local ceiling = php.now() + CEILING
+
+		local last_spent = start
+		local moved_at = php.now()
 
 		while true do
 			work()
@@ -356,8 +401,14 @@ $script = <<<'LUA'
 
 			local now = php.now()
 
+			if spent > last_spent then
+				last_spent = spent
+				moved_at = now
+			elseif now - moved_at >= PROBE then
+				return
+			end
+
 			if now >= ceiling then return end
-			if now >= probe_until and spent <= start then return end
 		end
 	end
 
