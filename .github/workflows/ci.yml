@@ -28,97 +28,26 @@ jobs:
   # ---------------------------------------------------------------------
   # Main build/test matrix: phpize && ./configure && make && make test
   # ---------------------------------------------------------------------
+  # Linux and macOS are SEPARATE first-layer jobs, calling the same reusable
+  # workflow. They used to be one matrix, and that made every dependent hostage
+  # to the flakiest platform: GitHub cannot depend on part of a matrix, so a
+  # single macOS leg failing failed the whole job and SKIPPED Windows, the
+  # sanitizers and the PIE install. Windows had never once compiled as a result.
+  #
+  # Split, a macOS failure costs macOS.
   build:
-    name: "${{ matrix.os }} / ${{ matrix.ts }} / ${{ matrix.build_type }}"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
-        ts: [nts, zts]
-        build_type: [release, debug]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    name: Linux
+    uses: ./.github/workflows/build-matrix.yml
+    with:
+      runners: '["ubuntu-latest", "ubuntu-24.04-arm"]'
+      php-version: '8.5'
 
-      - name: Setup PHP ${{ env.LUAEXT_PHP_VERSION }} (${{ matrix.ts }}, ${{ matrix.build_type }})
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
-        with:
-          php-version: ${{ env.LUAEXT_PHP_VERSION }}
-          tools: none
-          extensions: none
-        env:
-          phpts: ${{ matrix.ts == 'zts' && 'ts' || 'nts' }}
-          debug: ${{ matrix.build_type == 'debug' && 'true' || 'false' }}
-
-      - name: PHP info
-        run: |
-          php -v
-          php -i | grep -i "thread safety"
-
-          # Informational only. Whether the extension's own view of thread
-          # safety matches the PHP loading it is asserted properly by
-          # tests/00-build/features.phpt, which compares the two directly;
-          # grepping php_config.h from here guesses at a layout that differs
-          # between distributions.
-          php -r 'printf("runtime PHP_ZTS=%s\n", var_export(PHP_ZTS, true));'
-          php-config --include-dir
-
-      - name: phpize
-        run: phpize
-
-      - name: configure
-        run: |
-          ./configure \
-            ${{ matrix.build_type == 'debug' && '--enable-luaext-debug' || '' }}
-
-      - name: make
-        run: |
-          JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
-          make -j"$JOBS"
-
-      # Before the tests, because the failure it catches makes every test crash
-      # for a reason none of them can explain: a source file left out of the
-      # build links to a null stub on macOS rather than failing.
-      - name: Linkage
-        run: tools/check-linkage.sh
-
-      - name: make test
-        run: make test
-        env:
-          REPORT_EXIT_STATUS: '1'
-          NO_INTERACTION: '1'
-          # run-tests.php defaults to 60s per test. tests/03-adversarial/ is full
-          # of scripts that loop forever deliberately -- proving a limit stops an
-          # unbounded loop is the point -- so a regression in the limit does not
-          # fail the run, it pins a core for a minute per affected test. Nothing
-          # here legitimately takes more than a couple of seconds.
-          TEST_TIMEOUT: '20'
-
-      # Runs HERE rather than in lint.yml's drift-checks job, which sets PHP up
-      # with tokenizer only and never builds the extension. Two of the three
-      # golden files describe the surface a real sandbox exposes, so without a
-      # built extension the tool can only check the source-derived one and
-      # reports the other two as "not audited" -- green, and proving nothing.
-      #
-      # One leg is enough: the surface is a property of the policy, not of the
-      # thread-safety flavour or the optimisation level.
-      - name: Audit the stdlib surface against the golden files
-        if: matrix.os == 'ubuntu-latest' && matrix.ts == 'nts' && matrix.build_type == 'release'
-        run: php tools/audit-stdlib.php --check
-
-      - name: Upload failing test artifacts
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: phpt-logs-${{ matrix.os }}-${{ matrix.ts }}-${{ matrix.build_type }}
-          path: |
-            tests/**/*.log
-            tests/**/*.diff
-            tests/**/*.out
-            tests/**/*.exp
-          if-no-files-found: ignore
-          retention-days: 7
+  build-macos:
+    name: macOS
+    uses: ./.github/workflows/build-matrix.yml
+    with:
+      runners: '["macos-latest", "macos-15-intel"]'
+      php-version: '8.5'
 
   # ---------------------------------------------------------------------
   # PIE is how this extension is actually delivered, so it gets its own gate.
@@ -471,7 +400,9 @@ jobs:
   # ---------------------------------------------------------------------
   windows:
     name: Windows (PR validation)
-    needs: build
+    # NO needs:. This is the whole point of the split above -- the DLL has never
+    # compiled once, and it was skipped every time because an unrelated platform
+    # failed first. It builds from a checkout, so it depends on nothing here.
     uses: ./.github/workflows/windows-build.yml
     with:
       php-version-list: '8.5'
@@ -494,7 +425,7 @@ jobs:
   ci-required:
     name: CI required checks
     if: always()
-    needs: [build, pie-install, sanitize-linux, windows]
+    needs: [build, build-macos, pie-install, sanitize-linux, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs
