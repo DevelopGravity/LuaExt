@@ -44,7 +44,7 @@ $streaming = new Sandbox(new SandboxConfig(
 	outputCallback: static function (string $chunk, bool $isStderr): void {},
 	outputChunkBytes: 0,
 ));
-var_dump($streaming->getOutputLength());
+var_dump($streaming->stats()->outputBytes);
 $streaming->close();
 
 ?>

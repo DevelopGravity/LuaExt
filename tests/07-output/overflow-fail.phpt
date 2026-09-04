@@ -21,7 +21,7 @@ $sandbox = new Sandbox(new SandboxConfig(limits: new Limits(outputBytes: 10)));
 
 // Exactly at the cap is not a breach.
 (void) $sandbox->eval('print("012345678")');
-var_dump($sandbox->getOutput(), $sandbox->isOutputTruncated());
+var_dump($sandbox->getOutput(), $sandbox->stats()->outputTruncated);
 
 try {
 	(void) $sandbox->eval('print("one byte too many") print("never reached")');
@@ -37,7 +37,7 @@ var_dump($sandbox->getOutput());
 
 // The breach is recorded as well as raised, so a host that caught the error can
 // still tell that output was lost.
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputTruncated);
 var_dump($sandbox->stats()->outputTruncated);
 
 $sandbox->close();

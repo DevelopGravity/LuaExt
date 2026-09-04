@@ -923,7 +923,7 @@ static void luaext_watchdog_republish(luaext_watch_slot *slot)
 	 *
 	 * luaext_watch_stamp() takes a fresh epoch, which makes whatever entry the
 	 * watchdog is currently sleeping on a duplicate to be discarded. A host
-	 * callback that calls setCpuLimit() in a loop therefore replaces the pending
+	 * callback that calls setLimits() in a loop therefore replaces the pending
 	 * entry faster than the thread can act on it, and -- because the deadline
 	 * published here is the MINIMUM across the CPU and wall limits -- it takes
 	 * the wall backstop down with it. Both limits then go unenforced for as long

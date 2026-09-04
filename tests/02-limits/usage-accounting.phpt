@@ -1,5 +1,5 @@
 --TEST--
-getCpuUsage() and getWallClockUsage() report the budgets the limits enforce
+stats() reports the CPU and wall budgets the limits enforce
 --EXTENSIONS--
 luaext
 --FILE--
@@ -27,16 +27,16 @@ $sandbox = new Sandbox(new SandboxConfig(
 
 // A fresh sandbox has consumed nothing: construction happens before the first
 // entry into the interpreter, and only entries are billed.
-var_dump($sandbox->getCpuUsage() === 0.0);
-var_dump($sandbox->getWallClockUsage() === 0.0);
+var_dump($sandbox->stats()->cpuSeconds === 0.0);
+var_dump($sandbox->stats()->wallClockSeconds === 0.0);
 
 // Reading a counter is not itself billable work.
-$idle = $sandbox->getCpuUsage();
-var_dump($sandbox->getCpuUsage() === $idle);
+$idle = $sandbox->stats()->cpuSeconds;
+var_dump($sandbox->stats()->cpuSeconds === $idle);
 
 (void) $sandbox->eval('local x = 0 for i = 1, 2000000 do x = x + i end return x', '=work');
 
-$afterWork = $sandbox->getCpuUsage();
+$afterWork = $sandbox->stats()->cpuSeconds;
 
 var_dump($afterWork > 0.0);
 
@@ -44,7 +44,7 @@ var_dump($afterWork > 0.0);
 // make the limit a per-call one, and a host could run unbounded work by
 // splitting it up.
 (void) $sandbox->eval('local x = 0 for i = 1, 2000000 do x = x + i end return x', '=more');
-var_dump($sandbox->getCpuUsage() > $afterWork);
+var_dump($sandbox->stats()->cpuSeconds > $afterWork);
 
 // Both counters moved, and they are separate counters. Deliberately NOT
 // asserted here: that wall time is at least CPU time. It reads like an
@@ -52,7 +52,7 @@ var_dump($sandbox->getCpuUsage() > $afterWork);
 // time from scheduler accounting at microsecond granularity, so over a short
 // busy loop it can land a hair above the monotonic elapsed time. The two are
 // compared below instead, where a sleep puts a real gap between them.
-var_dump($sandbox->getWallClockUsage() > 0.0);
+var_dump($sandbox->stats()->wallClockSeconds > 0.0);
 
 $sandbox->close();
 
@@ -70,15 +70,15 @@ $paused->registerLibrary('host', [
 	'sleepPaused' => static function () use ($paused, &$observed): void {
 		$paused->pauseTimers();
 
-		$before = $paused->getWallClockUsage();
+		$before = $paused->stats()->wallClockSeconds;
 		usleep(200_000);
-		$observed['while paused'] = $paused->getWallClockUsage() - $before;
+		$observed['while paused'] = $paused->stats()->wallClockSeconds - $before;
 
 		$paused->resumeTimers();
 
-		$before = $paused->getWallClockUsage();
+		$before = $paused->stats()->wallClockSeconds;
 		usleep(200_000);
-		$observed['while running'] = $paused->getWallClockUsage() - $before;
+		$observed['while running'] = $paused->stats()->wallClockSeconds - $before;
 	},
 ]);
 
@@ -100,7 +100,7 @@ var_dump($observed['while running'] >= 0.1);
 // mistake, or if one forgets to close its segment, and unlike a busy loop a
 // sleep leaves no room for the two to sit within measurement noise of each
 // other.
-var_dump($paused->getWallClockUsage() > $paused->getCpuUsage() + 0.1);
+var_dump($paused->stats()->wallClockSeconds > $paused->stats()->cpuSeconds + 0.1);
 
 $paused->close();
 

@@ -15,8 +15,8 @@ $sandbox = new Sandbox();
 
 // Buffer is the default, so this needed no configuration at all.
 var_dump($sandbox->getOutput());
-var_dump($sandbox->getOutputLength());
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputBytes);
+var_dump($sandbox->stats()->outputTruncated);
 
 // getOutput() leaves the buffer alone: reading twice reads the same thing.
 var_dump($sandbox->getOutput() === $sandbox->getOutput());
@@ -28,14 +28,14 @@ var_dump($sandbox->getOutput());
 // takeOutput() hands the buffer over and resets the byte count with it.
 var_dump($sandbox->takeOutput());
 var_dump($sandbox->getOutput());
-var_dump($sandbox->getOutputLength());
+var_dump($sandbox->stats()->outputBytes);
 
 // Nothing was dropped, so nothing claims it was.
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputTruncated);
 
 // The sandbox goes on working after a take.
 (void) $sandbox->eval('print("fresh")');
-var_dump($sandbox->getOutput(), $sandbox->getOutputLength());
+var_dump($sandbox->getOutput(), $sandbox->stats()->outputBytes);
 
 $sandbox->close();
 

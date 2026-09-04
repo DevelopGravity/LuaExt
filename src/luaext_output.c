@@ -623,19 +623,13 @@ zend_string *luaext_output_get(luaext_sandbox *sandbox, bool take)
 	return result;
 }
 
-size_t luaext_output_length(const luaext_sandbox *sandbox)
+void luaext_output_set_limit(luaext_sandbox *sandbox, size_t bytes)
 {
 	/*
-	 * Bytes emitted since the last take, which is the same number
-	 * stats()->outputBytes reports and the same one the budget is spent from.
-	 * It equals the length of getOutput() in every case but one: after a
-	 * truncation, what the script emitted is deliberately larger than what
-	 * survived, and isOutputTruncated() is how a host learns to expect that.
+	 * The written count is deliberately left alone. A host lowering the budget
+	 * is narrowing what a script may still emit, not declaring that the bytes
+	 * already emitted did not happen -- and refunding them would let a script
+	 * with reach into its own sandbox spend the budget over and over.
 	 */
-	return sandbox->out.written;
-}
-
-bool luaext_output_truncated(const luaext_sandbox *sandbox)
-{
-	return sandbox->out.truncated;
+	sandbox->out.limit = bytes;
 }

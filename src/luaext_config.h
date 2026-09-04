@@ -66,6 +66,20 @@ bool luaext_config_with(zend_class_entry *ce, zend_object *source, HashTable *na
 void luaext_config_stats_create(const luaext_sandbox *sandbox, zval *out);
 
 /*
+ * Read a Limits object into the enforceable form, throwing on a value the
+ * conversion refuses.
+ *
+ * The same function SandboxConfig resolution uses, exposed so that
+ * Sandbox::setLimits() applies exactly the rules the constructor applied. A
+ * second implementation would be a second set of rules, and the divergence would
+ * show up as a limit that means one thing at construction and another later.
+ */
+bool luaext_config_limits_read(zend_object *limits, luaext_limits *out);
+
+/* Build a Limits object from the enforceable form. The inverse of the above. */
+void luaext_config_limits_create(const luaext_limits *limits, zval *out);
+
+/*
  * Build a ValidationResult. `message` and `chunk_name` are borrowed, and either
  * may be NULL. A `line` of 0 becomes null rather than zero, which is the honest
  * answer for a refusal that never reached the parser.

@@ -46,7 +46,7 @@ size_t luaext_alloc_usage(const luaext_sandbox *sandbox);
 size_t luaext_alloc_peak(const luaext_sandbox *sandbox);
 
 /*
- * Change the ceiling at runtime (Sandbox::setMemoryLimit). Zero lifts it.
+ * Change the ceiling at runtime (Sandbox::setLimits). Zero lifts it.
  *
  * Lowering below current usage is allowed and does not retroactively fail:
  * the next allocation that would grow the heap is refused instead, which is

@@ -20,7 +20,7 @@ $stable = true;
 
 for ($round = 0; $round < 64; $round++) {
 	$sandbox = new Sandbox();
-	$usage = $sandbox->getMemoryUsage();
+	$usage = $sandbox->stats()->memoryBytes;
 
 	if ($first === null) {
 		$first = $usage;
@@ -45,7 +45,7 @@ for ($index = 0; $index < 32; $index++) {
 $allMatch = true;
 
 foreach ($sandboxes as $sandbox) {
-	if ($sandbox->getMemoryUsage() !== $first) {
+	if ($sandbox->stats()->memoryBytes !== $first) {
 		$allMatch = false;
 	}
 }

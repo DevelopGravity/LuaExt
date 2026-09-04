@@ -26,7 +26,7 @@ $sandbox = new Sandbox();
 $warmup = $sandbox->compile('return 1');
 unset($warmup);
 
-$baseline = $sandbox->getMemoryUsage();
+$baseline = $sandbox->stats()->memoryBytes;
 $live = null;
 
 for ($index = 0; $index < HANDLES; $index++) {
@@ -37,7 +37,7 @@ for ($index = 0; $index < HANDLES; $index++) {
 
 unset($live);
 
-$growth = $sandbox->getMemoryUsage() - $baseline;
+$growth = $sandbox->stats()->memoryBytes - $baseline;
 
 // Without reuse the refs table alone would carry 200000 entries, which is over
 // a megabyte before anything the handles point at is counted.

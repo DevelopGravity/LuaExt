@@ -61,7 +61,7 @@ var_dump($seen === 32);
 var_dump($total[0] === 32 * 256 * 1024);
 
 // The budget is where it started, not 8 MiB poorer.
-var_dump($sandbox->getMemoryUsage() < 2 * 1024 * 1024);
+var_dump($sandbox->stats()->memoryBytes < 2 * 1024 * 1024);
 
 $sandbox->close();
 

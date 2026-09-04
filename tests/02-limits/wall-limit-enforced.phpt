@@ -62,8 +62,8 @@ try {
 // the callback slept, so the CPU number must stay near zero while the wall
 // number passes the limit. This is the one assertion that would still pass if
 // the two counters were accidentally the same variable, so both halves matter.
-var_dump($sandbox->getWallClockUsage() >= WALL_SECONDS);
-var_dump($sandbox->getCpuUsage() < WALL_SECONDS);
+var_dump($sandbox->stats()->wallClockSeconds >= WALL_SECONDS);
+var_dump($sandbox->stats()->cpuSeconds < WALL_SECONDS);
 
 $sandbox->close();
 

@@ -36,7 +36,7 @@ use DevelopGravity\LuaExt\SandboxConfig;
  * nothing, and setting a smaller one than has already been spent stops the
  * script at the next opportunity rather than at some point in the future.
  *
- * It also keeps getCpuUsage() and the limit describing the same quantity, which
+ * It also keeps stats()->cpuSeconds and the limit describing the same quantity, which
  * is what makes them comparable at all.
  */
 
@@ -71,7 +71,7 @@ $sandbox->registerLibrary('host', [
 	// keep going. Under the reference's semantics this never returns.
 	'extend' => static function () use ($sandbox, &$attempts): void {
 		$attempts++;
-		$sandbox->setCpuLimit(CPU_SECONDS);
+		$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: CPU_SECONDS));
 	},
 ]);
 
@@ -99,11 +99,11 @@ var_dump($attempts > 0);
 
 // Usage is cumulative across calls too, for the same reason. A sandbox that
 // reset on every entry would let a host run unbounded work one call at a time.
-var_dump($sandbox->getCpuUsage() >= CPU_SECONDS);
+var_dump($sandbox->stats()->cpuSeconds >= CPU_SECONDS);
 
 // And it stopped anywhere near the budget rather than eventually. See
 // OVERSHOOT_ALLOWED: "it does stop, given long enough" is not enforcement.
-var_dump($sandbox->getCpuUsage() < CPU_SECONDS * OVERSHOOT_ALLOWED);
+var_dump($sandbox->stats()->cpuSeconds < CPU_SECONDS * OVERSHOOT_ALLOWED);
 
 $sandbox->close();
 
@@ -120,11 +120,11 @@ try {
 	echo "small budget spent\n";
 }
 
-$spent = $second->getCpuUsage();
+$spent = $second->stats()->cpuSeconds;
 
 // Below what has already been used, so there is no budget left at all and the
 // next call stops without doing any work.
-$second->setCpuLimit($spent / 2);
+$second->setLimits($second->limits()->with(cpuSeconds: $spent / 2));
 
 try {
 	(void) $second->eval('return 1', '=nothing');

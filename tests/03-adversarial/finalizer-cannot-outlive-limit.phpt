@@ -161,7 +161,7 @@ try {
 	echo "stopped with finalisers still pending\n";
 }
 
-var_dump($survivor->getMemoryUsage() > 0);
+var_dump($survivor->stats()->memoryBytes > 0);
 
 // Closes cleanly, and in bounded time. Teardown deliberately runs with the
 // interrupt RAISED: lua_close() runs every pending finaliser with nothing left

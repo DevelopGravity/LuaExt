@@ -59,12 +59,25 @@ bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t lengt
 bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size_t length,
 								 bool is_stderr);
 
-/* What Sandbox::getOutput() / takeOutput() / getOutputLength() /
- * isOutputTruncated() report. `take` empties the buffer and resets the byte
- * count; the truncation flag survives, because a host that took the output
- * still needs to know it was incomplete. */
+/*
+ * What Sandbox::getOutput() / takeOutput() report. `take` empties the buffer and
+ * resets the byte count; the truncation flag survives, because a host that took
+ * the output still needs to know it was incomplete.
+ *
+ * The length of what this returns is not always stats()->outputBytes, which
+ * counts bytes EMITTED: after a truncation the script wrote more than survived,
+ * and stats()->outputTruncated is how a host learns to expect the gap.
+ */
 zend_string *luaext_output_get(luaext_sandbox *sandbox, bool take);
-size_t luaext_output_length(const luaext_sandbox *sandbox);
-bool luaext_output_truncated(const luaext_sandbox *sandbox);
+
+/*
+ * Move the byte budget, for Sandbox::setLimits().
+ *
+ * The sink snapshots its budget at construction rather than reading the policy
+ * on every write, so changing the policy alone would leave it enforcing the old
+ * number. Bytes already written are not refunded: a budget lowered below what a
+ * script has emitted refuses the next write rather than rewriting history.
+ */
+void luaext_output_set_limit(luaext_sandbox *sandbox, size_t bytes);
 
 #endif /* LUAEXT_OUTPUT_H */

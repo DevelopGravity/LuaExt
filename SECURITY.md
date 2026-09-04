@@ -84,11 +84,11 @@ Every limit in this extension is enforced in C, below anything a script can reac
 ```php
 $sandbox->registerObject('box', $sandbox);              // direct
 $sandbox->registerLibrary('u', [                        // indirect, via capture
-    'go' => fn () => $sandbox->setCpuLimit(3600.0),
+    'go' => fn () => $sandbox->setLimits($sandbox->limits()->with(cpuSeconds: 3600.0)),
 ]);
 ```
 
-A script holding either can call `setCpuLimit()` and `setMemoryLimit()` to raise its own ceilings, `takeOutput()` in a loop to keep resetting the output budget (see [docs/cookbook.md](docs/cookbook.md) on what that limit bounds), `interrupt()` to abort a sibling call, or `close()` to destroy the interpreter mid-flight. None of that is an escape from the sandbox in the memory-safety sense; it is the host having granted authority it did not mean to grant.
+A script holding either can call `setLimits()` to raise every one of its own ceilings at once, `takeOutput()` in a loop to keep resetting the output budget (see [docs/cookbook.md](docs/cookbook.md) on what that limit bounds), `interrupt()` to abort a sibling call, or `close()` to destroy the interpreter mid-flight. None of that is an escape from the sandbox in the memory-safety sense; it is the host having granted authority it did not mean to grant.
 
 **There is deliberately no check for this, and the reason is that a partial one would be worse than none.** An `instanceof Sandbox` guard in `registerObject()` is bypassed in one line by wrapping the call in a closure, which `registerLibrary()` accepts and must accept — closures over host state are the entire point of the callback bridge. Shipping that guard would let a host believe the case was handled while leaving the one-line bypass wide open. A guarantee that looks real and is not is a worse security property than a documented gap.
 

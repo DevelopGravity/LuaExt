@@ -20,16 +20,16 @@ use DevelopGravity\LuaExt\SandboxConfig;
 // outputBytes lifted, so the only thing bounding this is memoryBytes.
 $sandbox = new Sandbox(new SandboxConfig(limits: new Limits(outputBytes: 0)));
 
-$before = $sandbox->getMemoryUsage();
+$before = $sandbox->stats()->memoryBytes;
 (void) $sandbox->eval('print(string.rep("x", 200000))');
-$after = $sandbox->getMemoryUsage();
+$after = $sandbox->stats()->memoryBytes;
 
 var_dump($after - $before >= 200000);
-var_dump($sandbox->getOutputLength());
+var_dump($sandbox->stats()->outputBytes);
 
 // Handing the buffer over gives the memory back.
 (void) $sandbox->takeOutput();
-var_dump($sandbox->getMemoryUsage() < $after - 100000);
+var_dump($sandbox->stats()->memoryBytes < $after - 100000);
 
 $sandbox->close();
 
@@ -56,7 +56,7 @@ try {
 	printf("%s\n", $error::class);
 }
 
-var_dump($tight->getMemoryUsage() <= 700000);
+var_dump($tight->stats()->memoryBytes <= 700000);
 
 $tight->close();
 

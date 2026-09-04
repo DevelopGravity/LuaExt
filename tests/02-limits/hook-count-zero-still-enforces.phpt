@@ -47,8 +47,8 @@ $sandbox->close();
 $sandbox = new Sandbox(new SandboxConfig(
 	limits: (new Limits())->with(cpuSeconds: null, wallClockSeconds: null),
 ));
-$sandbox->setCpuLimit(1.0);
-$sandbox->setWallClockLimit(2.0);
+$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: 1.0));
+$sandbox->setLimits($sandbox->limits()->with(wallClockSeconds: 2.0));
 echo "both setters accepted\n";
 $sandbox->close();
 

@@ -1,5 +1,5 @@
 --TEST--
-Sandbox::getPeakMemoryUsage() is a high-water mark, not the current usage
+stats()->peakMemoryBytes is a high-water mark, not the current usage
 --EXTENSIONS--
 luaext
 --FILE--
@@ -11,8 +11,8 @@ use DevelopGravity\LuaExt\Sandbox;
 
 $sandbox = new Sandbox();
 
-$usage = $sandbox->getMemoryUsage();
-$peak = $sandbox->getPeakMemoryUsage();
+$usage = $sandbox->stats()->memoryBytes;
+$peak = $sandbox->stats()->peakMemoryBytes;
 
 var_dump($peak > 0);
 
@@ -26,15 +26,15 @@ var_dump($peak > $usage);
 
 // The mark is kept, not recomputed: reading it does not drag it back down to
 // the current usage.
-var_dump($sandbox->getPeakMemoryUsage() === $peak);
-var_dump($sandbox->getMemoryUsage() === $usage);
+var_dump($sandbox->stats()->peakMemoryBytes === $peak);
+var_dump($sandbox->stats()->memoryBytes === $usage);
 
 // Nor does re-ceiling the sandbox disturb the history.
-$sandbox->setMemoryLimit(64 * 1024 * 1024);
-var_dump($sandbox->getPeakMemoryUsage() === $peak);
+$sandbox->setLimits($sandbox->limits()->with(memoryBytes: 64 * 1024 * 1024));
+var_dump($sandbox->stats()->peakMemoryBytes === $peak);
 
-$sandbox->setMemoryLimit(null);
-var_dump($sandbox->getPeakMemoryUsage() === $peak);
+$sandbox->setLimits($sandbox->limits()->with(memoryBytes: null));
+var_dump($sandbox->stats()->peakMemoryBytes === $peak);
 
 $sandbox->close();
 

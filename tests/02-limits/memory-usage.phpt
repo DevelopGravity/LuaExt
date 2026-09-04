@@ -1,5 +1,5 @@
 --TEST--
-Sandbox::getMemoryUsage() reports the bytes the interpreter really holds
+stats()->memoryBytes reports the bytes the interpreter really holds
 --EXTENSIONS--
 luaext
 --FILE--
@@ -14,7 +14,7 @@ use DevelopGravity\LuaExt\Sandbox;
 // far from trivial, heap behind it. A placeholder allocator that only forwarded
 // to realloc would report zero here.
 $sandbox = new Sandbox();
-$usage = $sandbox->getMemoryUsage();
+$usage = $sandbox->stats()->memoryBytes;
 
 var_dump($usage > 0);
 
@@ -24,18 +24,18 @@ var_dump($usage > 0);
 var_dump($usage > 4096 && $usage < 1024 * 1024);
 
 // Reading the counters is not itself an allocation.
-var_dump($sandbox->getMemoryUsage() === $usage);
-var_dump($sandbox->getMemoryUsage() === $usage);
+var_dump($sandbox->stats()->memoryBytes === $usage);
+var_dump($sandbox->stats()->memoryBytes === $usage);
 
 // Each sandbox owns its own heap and its own counters; the accounting is
 // per-state, not per-process.
 $other = new Sandbox();
-var_dump($other->getMemoryUsage() > 0);
-var_dump($sandbox->getMemoryUsage() === $usage);
+var_dump($other->stats()->memoryBytes > 0);
+var_dump($sandbox->stats()->memoryBytes === $usage);
 
 // Closing one leaves the other's accounting untouched.
 $other->close();
-var_dump($sandbox->getMemoryUsage() === $usage);
+var_dump($sandbox->stats()->memoryBytes === $usage);
 
 $sandbox->close();
 

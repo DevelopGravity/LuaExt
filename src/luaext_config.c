@@ -467,7 +467,7 @@ static void luaext_config_default_limits(luaext_limits *out)
 	out->max_cached_chunks = LUAEXT_DEFAULT_MAX_CACHED_CHUNKS;
 }
 
-static bool luaext_config_limits(zend_object *limits, luaext_limits *out)
+bool luaext_config_limits_read(zend_object *limits, luaext_limits *out)
 {
 	if (limits == NULL) {
 		luaext_config_default_limits(out);
@@ -739,7 +739,7 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	policy->bytecode_key = bytecode_key != NULL ? ZSTR_VAL(bytecode_key) : NULL;
 	policy->bytecode_key_len = bytecode_key != NULL ? ZSTR_LEN(bytecode_key) : 0;
 
-	return luaext_config_limits(limits, &policy->limits) &&
+	return luaext_config_limits_read(limits, &policy->limits) &&
 		   luaext_config_vfs_quota(vfs_quota, &policy->vfs_quota);
 }
 
@@ -1435,8 +1435,8 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 
 	/*
 	 * Read off the watchdog, which is the same quantity the CPU limit enforces
-	 * and the same one getCpuUsage() reports -- so a host billing from these
-	 * figures bills for exactly what would have stopped the script.
+	 * -- so a host billing from these figures bills for exactly what would have
+	 * stopped the script.
 	 *
 	 * These were hardcoded zero behind a TODO waiting for the watchdog to exist.
 	 * It landed two waves ago, and the zeros stayed, which is the failure the
@@ -1477,6 +1477,76 @@ void luaext_config_stats_create(const luaext_sandbox *sandbox, zval *out)
 	object_init_ex(out, luaext_ce_sandbox_stats);
 
 	luaext_config_stats_fill(Z_OBJ_P(out), sandbox);
+}
+
+/* Nanoseconds back to the ?float a Limits field holds. Zero is "no ceiling",
+ * which is null on that side -- the same collapse luaext_config_duration() makes
+ * in the other direction, where null and 0.0 both arrive as zero. */
+static void luaext_config_seconds(zval *out, uint64_t ns)
+{
+	if (ns == 0) {
+		ZVAL_NULL(out);
+		return;
+	}
+
+	ZVAL_DOUBLE(out, (double)ns / 1e9);
+}
+
+void luaext_config_limits_create(const luaext_limits *limits, zval *out)
+{
+	zend_object *object;
+	zval value;
+
+	object_init_ex(out, luaext_ce_limits);
+	object = Z_OBJ_P(out);
+
+	/*
+	 * Not an exact round trip in one corner, and deliberately not pretended
+	 * otherwise: a deadline past LUAEXT_LIMIT_MAX_SECONDS saturates to
+	 * UINT64_MAX on the way in, so it comes back as ~584 years rather than as
+	 * the infinity that produced it. Both mean "a ceiling nobody reaches", and
+	 * the saturation is what keeps that true -- see luaext_config_duration().
+	 */
+	if (limits->memory_bytes == 0) {
+		ZVAL_NULL(&value);
+	} else {
+		ZVAL_LONG(&value, (zend_long)limits->memory_bytes);
+	}
+	LUAEXT_SET(object, "memoryBytes", &value);
+
+	luaext_config_seconds(&value, limits->cpu_ns);
+	LUAEXT_SET(object, "cpuSeconds", &value);
+	luaext_config_seconds(&value, limits->wall_ns);
+	LUAEXT_SET(object, "wallClockSeconds", &value);
+
+	ZVAL_LONG(&value, (zend_long)limits->output_bytes);
+	LUAEXT_SET(object, "outputBytes", &value);
+
+	ZVAL_OBJ_COPY(
+		&value, zend_enum_get_case_cstr(luaext_ce_overflow_behavior,
+										limits->output_overflow == (uint8_t)LUAEXT_OVERFLOW_TRUNCATE
+											? "Truncate"
+											: "Fail"));
+	LUAEXT_SET(object, "outputOverflow", &value);
+
+	ZVAL_LONG(&value, (zend_long)limits->max_live_coroutines);
+	LUAEXT_SET(object, "maxLiveCoroutines", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_coroutine_depth);
+	LUAEXT_SET(object, "maxCoroutineDepth", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_call_depth);
+	LUAEXT_SET(object, "maxCallDepth", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_modules);
+	LUAEXT_SET(object, "maxModules", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_require_depth);
+	LUAEXT_SET(object, "maxRequireDepth", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_string_length);
+	LUAEXT_SET(object, "maxStringLength", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_source_bytes);
+	LUAEXT_SET(object, "maxSourceBytes", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_conversion_depth);
+	LUAEXT_SET(object, "maxConversionDepth", &value);
+	ZVAL_LONG(&value, (zend_long)limits->max_cached_chunks);
+	LUAEXT_SET(object, "maxCachedChunks", &value);
 }
 
 /*

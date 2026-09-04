@@ -33,7 +33,7 @@ foreach ($chunks as [$chunk, $isStderr]) {
 var_dump($sandbox->getOutput());
 
 // The budget still counts every byte that passed through.
-var_dump($sandbox->getOutputLength());
+var_dump($sandbox->stats()->outputBytes);
 var_dump($sandbox->stats()->outputBytes);
 
 // Concatenating the chunks back together reproduces exactly what was printed,

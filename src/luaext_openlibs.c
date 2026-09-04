@@ -515,7 +515,7 @@ static int luaext_openlibs_build(lua_State *L)
 	 * Every scratch table is unreachable by now, and one of them is a complete
 	 * copy of the base library. Collecting here rather than leaving it to the
 	 * first collection a script happens to trigger keeps a freshly constructed
-	 * sandbox's reported memory honest -- getMemoryUsage() should describe what
+	 * sandbox's reported memory honest -- stats()->memoryBytes should describe what
 	 * the sandbox holds, not what assembling it passed through.
 	 */
 	lua_gc(L, LUA_GCCOLLECT);

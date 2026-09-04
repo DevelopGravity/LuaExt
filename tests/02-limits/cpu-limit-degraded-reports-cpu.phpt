@@ -57,8 +57,8 @@ $sandbox = new Sandbox();
 // test, purely as a backstop against a wedge. If it is what fires, the class is
 // wrong and the assertion below fails -- so "whatever stopped the script was the
 // degraded companion" still holds, and a regression fails in a second.
-$sandbox->setWallClockLimit(1.0);
-$sandbox->setCpuLimit($unmeasurable);
+$sandbox->setLimits($sandbox->limits()->with(wallClockSeconds: 1.0));
+$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: $unmeasurable));
 
 try {
 	(void) $sandbox->eval('while true do end', '=runaway');
@@ -77,8 +77,10 @@ $sandbox->close();
 // the same class -- so the two paths are indistinguishable from outside, which
 // is the whole point of degrading rather than refusing.
 $measurable = new Sandbox();
-$measurable->setWallClockLimit(1.0);
-$measurable->setCpuLimit(min(0.05, max(0.001, $resolution * 1000)));
+$measurable->setLimits($measurable->limits()->with(wallClockSeconds: 1.0));
+$measurable->setLimits($measurable->limits()->with(
+	cpuSeconds: min(0.05, max(0.001, $resolution * 1000)),
+));
 
 try {
 	(void) $measurable->eval('while true do end', '=runaway');

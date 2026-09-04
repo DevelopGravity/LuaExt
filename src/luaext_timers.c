@@ -182,7 +182,7 @@ bool luaext_timers_attach(luaext_sandbox *sandbox)
 
 	/*
 	 * The limits the host configured take effect from construction, not from
-	 * the first setCpuLimit() call. A SandboxConfig carrying cpuSeconds that
+	 * the first setLimits() call. A SandboxConfig carrying cpuSeconds that
 	 * nothing ever armed would be the exact failure this extension exists to
 	 * eliminate -- a limit accepted and not enforced -- and it would be
 	 * invisible, because the sandbox would work perfectly right up until a
@@ -241,12 +241,20 @@ void luaext_timers_detach(luaext_sandbox *sandbox)
  * Limits
  * ---------------------------------------------------------------------- */
 
-static bool luaext_timers_refuse(const char *what, const char *why)
+/*
+ * Names the FIELD, not the method that carried it.
+ *
+ * Both doors lead here -- construction arms a SandboxConfig's Limits, and
+ * Sandbox::setLimits() arms a new one -- so a message naming a method would be
+ * wrong down one of them. The field is the thing that could not be honoured
+ * either way, and it is what the caller has to change.
+ */
+static bool luaext_timers_refuse(const char *field, const char *why)
 {
 	zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-							"DevelopGravity\\LuaExt\\Sandbox::%s() cannot be honoured: %s. "
+							"DevelopGravity\\LuaExt\\Limits::$%s cannot be honoured: %s. "
 							"Sandbox::features() reports the same thing before you get here.",
-							what, why);
+							field, why);
 
 	return false;
 }
@@ -256,17 +264,17 @@ bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns)
 	if (ns != 0) {
 		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
-				"setCpuLimit", "the watchdog thread could not be started and luaext.hook_count is "
-							   "0, so nothing is left that could notice the budget running out");
+				"cpuSeconds", "the watchdog thread could not be started and luaext.hook_count is "
+							  "0, so nothing is left that could notice the budget running out");
 		}
 
 		if (!luaext_timers_have_cpu) {
-			return luaext_timers_refuse("setCpuLimit",
+			return luaext_timers_refuse("cpuSeconds",
 										"this platform exposes no per-thread CPU clock");
 		}
 
 		if (sandbox->slot == NULL) {
-			return luaext_timers_refuse("setCpuLimit",
+			return luaext_timers_refuse("cpuSeconds",
 										"no watchdog slot could be allocated for this sandbox");
 		}
 	}
@@ -302,13 +310,13 @@ bool luaext_timers_set_wall_limit(luaext_sandbox *sandbox, uint64_t ns)
 	if (ns != 0) {
 		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
-				"setWallClockLimit",
+				"wallClockSeconds",
 				"the watchdog thread could not be started and luaext.hook_count is 0, so nothing "
 				"is left that could notice the deadline passing");
 		}
 
 		if (sandbox->slot == NULL) {
-			return luaext_timers_refuse("setWallClockLimit",
+			return luaext_timers_refuse("wallClockSeconds",
 										"no watchdog slot could be allocated for this sandbox");
 		}
 	}
@@ -316,7 +324,7 @@ bool luaext_timers_set_wall_limit(luaext_sandbox *sandbox, uint64_t ns)
 	if (sandbox->slot != NULL) {
 		luaext_watchdog_set_wall_limit(sandbox->slot, ns);
 
-		/* Takes effect for the call already running; see setCpuLimit. */
+		/* Takes effect for the call already running; see the CPU setter. */
 		if (sandbox->in_lua > 0) {
 			luaext_watchdog_arm(sandbox->slot);
 		}

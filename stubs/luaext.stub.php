@@ -748,14 +748,24 @@ final class Sandbox
      */
     public function preloadModule(string $name, LuaFunction|callable $loader): void {}
 
-    /** Null lifts the limit. */
-    public function setMemoryLimit(?int $bytes): void {}
+    /**
+     * Replace every limit at once, with the same object the constructor takes.
+     *
+     * Takes effect immediately, including for a call already running: each limit
+     * is read from the sandbox at the point it applies, not cached when the
+     * sandbox is built. A ceiling set below current usage unwinds nothing -- the
+     * next allocation, deadline check or write that would exceed it is refused.
+     *
+     * Pair with limits() to change one field:
+     *
+     *     $sandbox->setLimits($sandbox->limits()->with(cpuSeconds: 2.0));
+     *
+     * @throws Exception\ConfigurationError if a deadline cannot be armed.
+     */
+    public function setLimits(Limits $limits): void {}
 
-    /** Null lifts the limit. */
-    public function setCpuLimit(?float $seconds): void {}
-
-    /** Null lifts the limit. */
-    public function setWallClockLimit(?float $seconds): void {}
+    /** The limits in force, as a Limits object. */
+    public function limits(): Limits {}
 
     /**
      * Stop charging time to the script while a host callback does work of its
@@ -775,16 +785,15 @@ final class Sandbox
      */
     public function interrupt(): void {}
 
+    /**
+     * Everything this sandbox has spent, as one snapshot.
+     *
+     * The only way to read usage. There were once separate getMemoryUsage(),
+     * getCpuUsage() and four more like them, kept to make a LuaSandbox rename
+     * mechanical; each returned one field of this object, and together they made
+     * the surface larger than the thing it described.
+     */
     public function stats(): SandboxStats {}
-
-    /** Live bytes: Lua heap plus host-side buffers charged to the sandbox. */
-    public function getMemoryUsage(): int {}
-
-    public function getPeakMemoryUsage(): int {}
-
-    public function getCpuUsage(): float {}
-
-    public function getWallClockUsage(): float {}
 
     /** Buffered output, left in place. */
     public function getOutput(): string {}
@@ -792,11 +801,6 @@ final class Sandbox
     /** Buffered output, clearing the buffer. */
     #[\NoDiscard]
     public function takeOutput(): string {}
-
-    public function getOutputLength(): int {}
-
-    /** Whether output was dropped after the budget was reached. */
-    public function isOutputTruncated(): bool {}
 
     /**
      * Start sampling which Lua functions consume time.

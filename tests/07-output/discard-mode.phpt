@@ -24,9 +24,9 @@ var_dump($sandbox->takeOutput());
 // The bytes are still counted. Limits::$outputBytes is a statement about how
 // much a script may emit, not about where it lands, so a host can still see
 // that a Discard-mode script is shouting.
-var_dump($sandbox->getOutputLength());
 var_dump($sandbox->stats()->outputBytes);
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputBytes);
+var_dump($sandbox->stats()->outputTruncated);
 
 $sandbox->close();
 
@@ -38,7 +38,7 @@ $capped = new Sandbox(new SandboxConfig(
 
 (void) $capped->eval('print("far too much")');
 
-var_dump($capped->isOutputTruncated());
+var_dump($capped->stats()->outputTruncated);
 var_dump($capped->getOutput());
 var_dump($capped->stats()->outputTruncated);
 

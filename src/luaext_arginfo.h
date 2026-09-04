@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 0c928f59aa46493fcc284422b51560c28ee5efc7 */
+ * Stub hash: 6eff6befad8697f51592c3963f8a90b8b4279f79 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -172,15 +172,12 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sand
 	ZEND_ARG_OBJ_TYPE_MASK(0, loader, DevelopGravity\\LuaExt\\LuaFunction, MAY_BE_CALLABLE, NULL)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_setMemoryLimit, 0, 1, IS_VOID, 0)
-	ZEND_ARG_TYPE_INFO(0, bytes, IS_LONG, 1)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_setLimits, 0, 1, IS_VOID, 0)
+	ZEND_ARG_OBJ_INFO(0, limits, DevelopGravity\\LuaExt\\Limits, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_setCpuLimit, 0, 1, IS_VOID, 0)
-	ZEND_ARG_TYPE_INFO(0, seconds, IS_DOUBLE, 1)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_limits, 0, 0, DevelopGravity\\LuaExt\\Limits, 0)
 ZEND_END_ARG_INFO()
-
-#define arginfo_class_DevelopGravity_LuaExt_Sandbox_setWallClockLimit arginfo_class_DevelopGravity_LuaExt_Sandbox_setCpuLimit
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_pauseTimers, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
@@ -193,23 +190,9 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_stats, 0, 0, DevelopGravity\\LuaExt\\SandboxStats, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_getMemoryUsage, 0, 0, IS_LONG, 0)
-ZEND_END_ARG_INFO()
-
-#define arginfo_class_DevelopGravity_LuaExt_Sandbox_getPeakMemoryUsage arginfo_class_DevelopGravity_LuaExt_Sandbox_getMemoryUsage
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_getCpuUsage, 0, 0, IS_DOUBLE, 0)
-ZEND_END_ARG_INFO()
-
-#define arginfo_class_DevelopGravity_LuaExt_Sandbox_getWallClockUsage arginfo_class_DevelopGravity_LuaExt_Sandbox_getCpuUsage
-
 #define arginfo_class_DevelopGravity_LuaExt_Sandbox_getOutput arginfo_class_DevelopGravity_LuaExt_Sandbox_extensionVersion
 
 #define arginfo_class_DevelopGravity_LuaExt_Sandbox_takeOutput arginfo_class_DevelopGravity_LuaExt_Sandbox_extensionVersion
-
-#define arginfo_class_DevelopGravity_LuaExt_Sandbox_getOutputLength arginfo_class_DevelopGravity_LuaExt_Sandbox_getMemoryUsage
-
-#define arginfo_class_DevelopGravity_LuaExt_Sandbox_isOutputTruncated arginfo_class_DevelopGravity_LuaExt_Sandbox_pauseTimers
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_enableProfiler, 0, 0, _IS_BOOL, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, periodSeconds, IS_DOUBLE, 0, "0.002")
@@ -336,21 +319,14 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerLibrary);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setMemoryLimit);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setCpuLimit);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setWallClockLimit);
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits);
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, limits);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, pauseTimers);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, resumeTimers);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, interrupt);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getMemoryUsage);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getPeakMemoryUsage);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getCpuUsage);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getWallClockUsage);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutput);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, takeOutput);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutputLength);
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, isOutputTruncated);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, enableProfiler);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, disableProfiler);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getProfile);
@@ -424,21 +400,14 @@ static const zend_function_entry class_DevelopGravity_LuaExt_Sandbox_methods[] =
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerLibrary, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerLibrary, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerObject, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerObject, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, preloadModule, arginfo_class_DevelopGravity_LuaExt_Sandbox_preloadModule, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setMemoryLimit, arginfo_class_DevelopGravity_LuaExt_Sandbox_setMemoryLimit, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setCpuLimit, arginfo_class_DevelopGravity_LuaExt_Sandbox_setCpuLimit, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setWallClockLimit, arginfo_class_DevelopGravity_LuaExt_Sandbox_setWallClockLimit, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setLimits, arginfo_class_DevelopGravity_LuaExt_Sandbox_setLimits, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Sandbox, limits, arginfo_class_DevelopGravity_LuaExt_Sandbox_limits, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, pauseTimers, arginfo_class_DevelopGravity_LuaExt_Sandbox_pauseTimers, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, resumeTimers, arginfo_class_DevelopGravity_LuaExt_Sandbox_resumeTimers, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, interrupt, arginfo_class_DevelopGravity_LuaExt_Sandbox_interrupt, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, stats, arginfo_class_DevelopGravity_LuaExt_Sandbox_stats, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getMemoryUsage, arginfo_class_DevelopGravity_LuaExt_Sandbox_getMemoryUsage, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getPeakMemoryUsage, arginfo_class_DevelopGravity_LuaExt_Sandbox_getPeakMemoryUsage, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getCpuUsage, arginfo_class_DevelopGravity_LuaExt_Sandbox_getCpuUsage, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getWallClockUsage, arginfo_class_DevelopGravity_LuaExt_Sandbox_getWallClockUsage, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getOutput, arginfo_class_DevelopGravity_LuaExt_Sandbox_getOutput, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, takeOutput, arginfo_class_DevelopGravity_LuaExt_Sandbox_takeOutput, ZEND_ACC_PUBLIC|ZEND_ACC_NODISCARD)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getOutputLength, arginfo_class_DevelopGravity_LuaExt_Sandbox_getOutputLength, ZEND_ACC_PUBLIC)
-	ZEND_ME(DevelopGravity_LuaExt_Sandbox, isOutputTruncated, arginfo_class_DevelopGravity_LuaExt_Sandbox_isOutputTruncated, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, enableProfiler, arginfo_class_DevelopGravity_LuaExt_Sandbox_enableProfiler, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, disableProfiler, arginfo_class_DevelopGravity_LuaExt_Sandbox_disableProfiler, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, getProfile, arginfo_class_DevelopGravity_LuaExt_Sandbox_getProfile, ZEND_ACC_PUBLIC)

@@ -350,7 +350,7 @@ $sandbox = new Sandbox(new SandboxConfig(outputMode: OutputMode::Buffer));
 $capturedOutput = $sandbox->takeOutput();
 ```
 
-`getOutput()` reads without clearing; `takeOutput()` reads and clears in one step — useful when a sandbox handles several `call()`s and you want per-call output rather than an ever-growing buffer. `isOutputTruncated()` tells you whether `Limits::outputBytes` was hit under `OverflowBehavior::Truncate`.
+`getOutput()` reads without clearing; `takeOutput()` reads and clears in one step — useful when a sandbox handles several `call()`s and you want per-call output rather than an ever-growing buffer. `stats()->outputTruncated` tells you whether `Limits::outputBytes` was hit under `OverflowBehavior::Truncate`.
 
 > **`Limits::$outputBytes` bounds what is buffered at once, not what a script may produce in total.** `takeOutput()` hands over the bytes *and* the budget they occupied, so a host draining in a loop gives the script room to print again — which is the point of draining. The truncation flag deliberately does **not** reset: a host that took a truncated buffer still needs to know it was incomplete.
 >

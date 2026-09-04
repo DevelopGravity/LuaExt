@@ -183,7 +183,7 @@ function burn(float $seconds): void
 	global $sandbox;
 
 	/*
-	 * Spends CPU, and measures the spending with getCpuUsage() -- which is the
+	 * Spends CPU, and measures the spending with stats()->cpuSeconds -- which is the
 	 * exact quantity the limit enforces -- rather than with a wall clock.
 	 *
 	 * A wall-clock loop looks equivalent and is not. On a contended runner a
@@ -198,7 +198,7 @@ function burn(float $seconds): void
 	 *      frame is paused and never will move;
 	 *   3. the ceiling, which is starvation and is reported by the caller.
 	 */
-	$start = $sandbox->getCpuUsage();
+	$start = $sandbox->stats()->cpuSeconds;
 	$target = $start + $seconds;
 	$probeUntil = microtime(true) + BURN_PROBE_SECONDS;
 	$ceiling = microtime(true) + BURN_CEILING_SECONDS;
@@ -206,7 +206,7 @@ function burn(float $seconds): void
 	while (true) {
 		burnWork();
 
-		$spent = $sandbox->getCpuUsage();
+		$spent = $sandbox->stats()->cpuSeconds;
 
 		if ($spent >= $target) {
 			return;
@@ -271,7 +271,7 @@ $library = [
 		global $sandbox;
 
 		pauseTimers();
-		$sandbox->setCpuLimit(CPU_SECONDS);
+		$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: CPU_SECONDS));
 		burn(BURN_SECONDS);
 	},
 
@@ -295,7 +295,7 @@ $library = [
 	'cpu' => static function (): float {
 		global $sandbox;
 
-		return $sandbox->getCpuUsage();
+		return $sandbox->stats()->cpuSeconds;
 	},
 
 	'now' => static fn (): float => microtime(true),
@@ -310,7 +310,7 @@ $script = <<<'LUA'
 
 	-- Billed CPU, which is exactly the quantity the limit enforces. os.clock
 	-- reports it directly, but it needs the osTime capability and these
-	-- sandboxes are the untrusted default, so php.cpu() -- getCpuUsage() across
+	-- sandboxes are the untrusted default, so php.cpu() -- stats()->cpuSeconds across
 	-- the boundary -- is what actually runs here. Both report the same counter.
 	--
 	-- Deliberately NOT a wall clock: see the note on the PHP burn() above. A
@@ -410,7 +410,7 @@ function row(string $label, string $path, string ...$args): void
 	(void) $sandbox->eval($script, '=matrix');
 
 	$outcome = 'no';
-	$before = $sandbox->getCpuUsage();
+	$before = $sandbox->stats()->cpuSeconds;
 
 	try {
 		(void) $sandbox->call($path, ...$args);
@@ -435,7 +435,7 @@ function row(string $label, string $path, string ...$args): void
 	 * stopped. Worth the extra column: telling those apart previously cost an
 	 * artifact download and a guess.
 	 */
-	if ($outcome === 'no' && $sandbox->getCpuUsage() - $before >= CPU_SECONDS * 0.25) {
+	if ($outcome === 'no' && $sandbox->stats()->cpuSeconds - $before >= CPU_SECONDS * 0.25) {
 		$outcome = 'no/short';
 	}
 

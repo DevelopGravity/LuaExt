@@ -1,5 +1,5 @@
 --TEST--
-The four output methods answer in every mode, and a script that printed nothing reads as nothing
+The output surface answers in every mode, and a script that printed nothing reads as nothing
 --EXTENSIONS--
 luaext
 --FILE--
@@ -34,8 +34,8 @@ foreach ($modes as $name => $config) {
 		"%-8s output=%s length=%d truncated=%s take=%s\n",
 		$name,
 		var_export($sandbox->getOutput(), true),
-		$sandbox->getOutputLength(),
-		var_export($sandbox->isOutputTruncated(), true),
+		$sandbox->stats()->outputBytes,
+		var_export($sandbox->stats()->outputTruncated, true),
 		var_export($sandbox->takeOutput(), true),
 	);
 
@@ -50,7 +50,7 @@ foreach ($modes as $name => $config) {
 
 	// A script that emits nothing leaves all of it alone.
 	var_dump($sandbox->eval('return 1 + 1'));
-	printf("%-8s after-eval length=%d\n", $name, $sandbox->getOutputLength());
+	printf("%-8s after-eval length=%d\n", $name, $sandbox->stats()->outputBytes);
 
 	$sandbox->close();
 }

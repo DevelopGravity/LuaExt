@@ -622,71 +622,6 @@ bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox)
 	return luaext_sandbox_check_thread(sandbox) && luaext_sandbox_check_open(sandbox);
 }
 
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getMemoryUsage)
-{
-	const luaext_sandbox *sandbox;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	RETURN_LONG((zend_long)luaext_alloc_usage(sandbox));
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getPeakMemoryUsage)
-{
-	const luaext_sandbox *sandbox;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	RETURN_LONG((zend_long)luaext_alloc_peak(sandbox));
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setMemoryLimit)
-{
-	luaext_sandbox *sandbox;
-	zend_long bytes = 0;
-	bool unlimited = true;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-	Z_PARAM_LONG_OR_NULL(bytes, unlimited)
-	ZEND_PARSE_PARAMETERS_END();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	/*
-	 * Null is the one spelling of "no ceiling". Zero would be a second, and a
-	 * limit that no allocation could ever satisfy is far likelier to be a
-	 * mistake than an intention, so both it and a negative are refused rather
-	 * than quietly reinterpreted.
-	 */
-	if (!unlimited && bytes <= 0) {
-		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
-		RETURN_THROWS();
-	}
-
-	/*
-	 * A limit below current usage is accepted and does not unwind anything: the
-	 * next allocation that would grow the heap is refused instead. See
-	 * luaext_alloc_set_limit().
-	 */
-	luaext_alloc_set_limit(sandbox, unlimited ? 0 : (size_t)bytes);
-}
-
 /* -------------------------------------------------------------------------
  * Execution
  *
@@ -1383,91 +1318,88 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 	}
 }
 
-/*
- * Seconds to nanoseconds, with null meaning "no ceiling".
+/* -------------------------------------------------------------------------
+ * Limits
  *
- * Zero would be a second spelling of that, and a limit no script could ever
- * satisfy is far likelier to be a mistake than an intention -- so it is refused
- * rather than quietly reinterpreted, exactly as setMemoryLimit() refuses zero.
- */
-/*
- * Seconds to nanoseconds, refusing anything the conversion cannot represent.
+ * ONE SETTER, TAKING THE OBJECT THE CONSTRUCTOR TAKES. There used to be three --
+ * setMemoryLimit, setCpuLimit, setWallClockLimit -- carried over from the
+ * extension this replaces, and between them they could change three of the
+ * fourteen limits a SandboxConfig can express. The other eleven were settable
+ * only at construction, for no reason anyone could state: every one of them is
+ * read from sandbox->policy at the point it applies, so all fourteen were always
+ * changeable and only three were reachable.
  *
- * Shares LUAEXT_LIMIT_MAX_SECONDS with the SandboxConfig path so that the same
- * number means the same thing however it arrives -- see luaext_types.h for why
- * the bound exists at all.
- */
-static bool luaext_sandbox_limit_ns(double seconds, bool unlimited, uint64_t *out)
+ * Collapsing them also ended a real inconsistency. A Limits object reads 0.0 as
+ * "no ceiling", the same as null; setCpuLimit(0.0) REFUSED it. The same number
+ * meant two different things depending on which door it came through. Now there
+ * is one door, and luaext_config_limits_read() is the same function the
+ * constructor uses, so the rules cannot drift apart again.
+ * ---------------------------------------------------------------------- */
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits)
 {
-	if (unlimited) {
-		*out = 0;
-		return true;
+	luaext_sandbox *sandbox;
+	zval *limits_zv;
+	luaext_limits limits;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_OBJECT_OF_CLASS(limits_zv, luaext_ce_limits)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
 	}
 
-	/* Written as a positive test so NAN, which compares false against
-	 * everything, is refused by the same condition rather than slipping past a
-	 * negated one. Zero is refused rather than treated as a second spelling of
-	 * "no ceiling", exactly as setMemoryLimit() refuses it: a limit no script
-	 * could ever satisfy is far likelier to be a mistake than an intention. */
-	if (!(seconds > 0.0)) {
-		zend_argument_value_error(1, "must be greater than 0, or null to lift the limit");
-		return false;
+	/* Read into a local first. Nothing is applied until every field has been
+	 * accepted, so a Limits the conversion refuses leaves the sandbox on the
+	 * limits it already had rather than half-way onto new ones. */
+	if (!luaext_config_limits_read(Z_OBJ_P(limits_zv), &limits)) {
+		RETURN_THROWS();
 	}
 
 	/*
-	 * Saturate, matching what a Limits object does with the same number -- see
-	 * luaext_config.c. A deadline past LUAEXT_LIMIT_MAX_SECONDS cannot be held
-	 * in nanoseconds, and casting it would be undefined behaviour whose result
-	 * can be zero, which this API reads as "no ceiling". setCpuLimit(INF) would
-	 * then produce a sandbox with no CPU limit at all.
+	 * The three that own state elsewhere go through their own subsystems: the
+	 * allocator holds the memory ceiling, the timers re-arm a deadline that may
+	 * already be counting, and the output sink snapshotted its budget when the
+	 * sandbox was built. The remaining eleven are read live off the policy, so
+	 * storing the struct is all they need.
+	 *
+	 * Timers first, because arming is the only step that can still fail -- an
+	 * unstartable watchdog refuses a CPU deadline -- and a refusal that lands
+	 * after the policy was replaced would leave the sandbox describing limits it
+	 * is not enforcing.
 	 */
-	if (seconds >= LUAEXT_LIMIT_MAX_SECONDS) {
-		*out = UINT64_MAX;
-		return true;
+	if (!luaext_timers_set_cpu_limit(sandbox, limits.cpu_ns) ||
+		!luaext_timers_set_wall_limit(sandbox, limits.wall_ns)) {
+		RETURN_THROWS();
 	}
 
-	*out = (uint64_t)(seconds * 1e9);
-	return true;
+	sandbox->policy.limits = limits;
+
+	/*
+	 * A ceiling below current usage is accepted and unwinds nothing: the next
+	 * allocation or write that would exceed it is refused instead. See
+	 * luaext_alloc_set_limit().
+	 */
+	luaext_alloc_set_limit(sandbox, limits.memory_bytes);
+	luaext_output_set_limit(sandbox, limits.output_bytes);
 }
 
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setCpuLimit)
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, limits)
 {
-	luaext_sandbox *sandbox;
-	double seconds = 0.0;
-	bool unlimited = true;
-	uint64_t ns;
+	const luaext_sandbox *sandbox;
 
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-	Z_PARAM_DOUBLE_OR_NULL(seconds, unlimited)
-	ZEND_PARSE_PARAMETERS_END();
+	ZEND_PARSE_PARAMETERS_NONE();
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
-	if (!luaext_sandbox_check_usable(sandbox) ||
-		!luaext_sandbox_limit_ns(seconds, unlimited, &ns) ||
-		!luaext_timers_set_cpu_limit(sandbox, ns)) {
+	if (!luaext_sandbox_check_usable(sandbox)) {
 		RETURN_THROWS();
 	}
-}
 
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setWallClockLimit)
-{
-	luaext_sandbox *sandbox;
-	double seconds = 0.0;
-	bool unlimited = true;
-	uint64_t ns;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-	Z_PARAM_DOUBLE_OR_NULL(seconds, unlimited)
-	ZEND_PARSE_PARAMETERS_END();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox) ||
-		!luaext_sandbox_limit_ns(seconds, unlimited, &ns) ||
-		!luaext_timers_set_wall_limit(sandbox, ns)) {
-		RETURN_THROWS();
-	}
+	luaext_config_limits_create(&sandbox->policy.limits, return_value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, pauseTimers)
@@ -1547,36 +1479,6 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, stats)
 	luaext_config_stats_create(sandbox, return_value);
 }
 
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getCpuUsage)
-{
-	const luaext_sandbox *sandbox;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	RETURN_DOUBLE(luaext_timers_cpu_seconds(sandbox));
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getWallClockUsage)
-{
-	const luaext_sandbox *sandbox;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	RETURN_DOUBLE(luaext_timers_wall_seconds(sandbox));
-}
-
 static void luaext_sandbox_return_output(INTERNAL_FUNCTION_PARAMETERS, bool take)
 {
 	luaext_sandbox *sandbox;
@@ -1607,50 +1509,6 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutput)
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, takeOutput)
 {
 	luaext_sandbox_return_output(INTERNAL_FUNCTION_PARAM_PASSTHRU, true);
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getOutputLength)
-{
-	const luaext_sandbox *sandbox;
-	size_t length;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	length = luaext_output_length(sandbox);
-
-	if (EG(exception) != NULL) {
-		RETURN_THROWS();
-	}
-
-	RETURN_LONG((zend_long)length);
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, isOutputTruncated)
-{
-	const luaext_sandbox *sandbox;
-	bool truncated;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
-
-	if (!luaext_sandbox_check_usable(sandbox)) {
-		RETURN_THROWS();
-	}
-
-	truncated = luaext_output_truncated(sandbox);
-
-	if (EG(exception) != NULL) {
-		RETURN_THROWS();
-	}
-
-	RETURN_BOOL(truncated);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, enableProfiler)

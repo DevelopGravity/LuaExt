@@ -22,7 +22,7 @@ $sandbox = new Sandbox();
 
 $buffered = $sandbox->getOutput();
 var_dump(bin2hex($buffered));
-var_dump($sandbox->getOutputLength());
+var_dump($sandbox->stats()->outputBytes);
 $sandbox->close();
 
 // The same bytes reach a streaming host, still unexamined.

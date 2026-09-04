@@ -48,7 +48,7 @@ var_dump($features['wallClockLimit'] !== LimitSupport::Unsupported);
 // Nothing above is per-sandbox. features() is static, has no configured limit
 // to judge, and must answer identically however many sandboxes exist -- the
 // "this particular limit is too fine for this clock" decision belongs to
-// setCpuLimit(), which knows the limit.
+// setLimits(), which knows the limit.
 $sandbox = new Sandbox();
 var_dump(Sandbox::features() == $features);
 $sandbox->close();

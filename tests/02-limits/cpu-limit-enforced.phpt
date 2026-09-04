@@ -115,7 +115,7 @@ try {
 }
 
 var_dump($sandbox->isClosed());
-var_dump($sandbox->getCpuUsage() > 0.0);
+var_dump($sandbox->stats()->cpuSeconds > 0.0);
 
 // The budget really is spent, so a second runaway stops too -- and stops as a
 // CPU breach rather than as anything more exotic.

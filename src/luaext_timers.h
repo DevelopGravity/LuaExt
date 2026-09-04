@@ -105,7 +105,7 @@ void luaext_timers_detach(luaext_sandbox *sandbox);
  *
  * A deliberate divergence from the extension this replaces, which reset the
  * counter and so let a host callback call setCPULimit() in a loop and run
- * forever. It also keeps getCpuUsage() and the limit describing the same
+ * forever. It also keeps stats()->cpuSeconds and the limit describing the same
  * quantity, which is what makes them comparable.
  *
  * Return false with a PHP exception already thrown when the limit cannot be

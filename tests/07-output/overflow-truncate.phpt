@@ -21,17 +21,17 @@ $sandbox = new Sandbox(new SandboxConfig(limits: new Limits(
 // MAY emit, so only the byte past it is refused.
 var_dump($sandbox->eval('print("012345678") return "ran to the end"'));
 var_dump($sandbox->getOutput());
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputTruncated);
 
 // Past it, the excess is dropped and the script is not told. That is what
 // Truncate means, and it is why the flag exists.
 var_dump($sandbox->eval('print("more") return "still running"'));
 var_dump($sandbox->getOutput());
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputTruncated);
 
 // What the script EMITTED, not what survived: a byte count that shrank when the
 // sink dropped the excess would tell a host its script behaved.
-var_dump($sandbox->getOutputLength());
+var_dump($sandbox->stats()->outputBytes);
 var_dump($sandbox->stats()->outputBytes, $sandbox->stats()->outputTruncated);
 
 // Taking the output empties the buffer and resets the count -- but the
@@ -39,8 +39,8 @@ var_dump($sandbox->stats()->outputBytes, $sandbox->stats()->outputTruncated);
 // know it was incomplete.
 var_dump($sandbox->takeOutput());
 var_dump($sandbox->getOutput());
-var_dump($sandbox->getOutputLength());
-var_dump($sandbox->isOutputTruncated());
+var_dump($sandbox->stats()->outputBytes);
+var_dump($sandbox->stats()->outputTruncated);
 var_dump($sandbox->stats()->outputTruncated);
 
 $sandbox->close();

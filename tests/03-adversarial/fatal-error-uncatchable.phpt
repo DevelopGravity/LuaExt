@@ -29,7 +29,7 @@ use DevelopGravity\LuaExt\SandboxConfig;
 
 /*
  * The whole extension rests on this. If any of these constructs can catch a
- * limit breach and carry on, then setCpuLimit() is a suggestion and untrusted
+ * limit breach and carry on, then a CPU limit is a suggestion and untrusted
  * code runs for as long as it likes. Every one of them is a protected call in
  * disguise, and every one of them has to re-raise instead of returning.
  *

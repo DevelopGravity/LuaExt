@@ -21,7 +21,7 @@ $sandbox = new Sandbox();
 $sandbox->registerLibrary('host', [
 	// Leaves the script with no headroom at all, from inside the call.
 	'exhaust' => static function () use ($sandbox): void {
-		$sandbox->setMemoryLimit($sandbox->getMemoryUsage());
+		$sandbox->setLimits($sandbox->limits()->with(memoryBytes: $sandbox->stats()->memoryBytes));
 	},
 ]);
 
@@ -62,7 +62,7 @@ $sandbox->close();
 // without a stack. Recorded here so the absence is a known answer rather than a
 // surprise.
 $starved = new Sandbox();
-$starved->setMemoryLimit(512 * 1024);
+$starved->setLimits($starved->limits()->with(memoryBytes: 512 * 1024));
 
 try {
 	(void) $starved->eval("local t = {} while true do t[#t + 1] = string.rep('x', 4096) end",
