@@ -38,6 +38,13 @@ on:
         description: 'Whether php/php-windows-builder/extension should run the .phpt suite after building.'
         type: boolean
         default: true
+      test-runner-args:
+        description: >-
+          Extra arguments for run-tests.php. A directory here scopes the run to
+          that directory, which is how ci.yml asks Windows for the
+          platform-neutral conformance suite without the timing-sensitive legs.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -78,3 +85,4 @@ jobs:
           arch: ${{ matrix.arch }}
           ts: ${{ matrix.ts }}
           run-tests: ${{ inputs.run-tests }}
+          test-runner-args: ${{ inputs.test-runner-args }}

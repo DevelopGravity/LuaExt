@@ -781,48 +781,129 @@ static int luaext_iolib_open(lua_State *L)
 	return 1;
 }
 
-/* The iterator io.lines and file:lines hand back. Upvalue 1 is the handle,
- * upvalue 2 whether reaching the end should close it. */
+/*
+ * Formats a single lines() iterator may carry.
+ *
+ * Each one becomes an upvalue and Lua caps a closure at 255 of those, so this
+ * has to be below that with room for the three the iterator uses itself. It is
+ * far past any real use: upstream's own examples pass one.
+ */
+#define LUAEXT_IOLIB_MAX_LINE_FORMATS 200
+
+/*
+ * The iterator io.lines and file:lines hand back.
+ *
+ * Upvalue 1 is the handle, 2 whether reaching the end should close it, 3 how
+ * many formats follow, and 4.. the formats themselves.
+ *
+ * THE FORMATS USED TO BE MISSING ENTIRELY. Both lines() functions accepted them
+ * -- Lua's signature is `io.lines(filename, ...)` -- and then read a plain line
+ * whatever was asked for, so `f:lines("L")` silently dropped the newline it was
+ * specifically asked to keep. Silently: no error, just the wrong bytes. They go
+ * through luaext_iolib_read_one() now, which is the same function :read() uses,
+ * so the two cannot answer differently again.
+ */
 static int luaext_iolib_lines_iter(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	luaext_vfs_handle *handle = (luaext_vfs_handle *)lua_touserdata(L, lua_upvalueindex(1));
 	bool close_at_end = lua_toboolean(L, lua_upvalueindex(2)) != 0;
+	int formats = (int)lua_tointeger(L, lua_upvalueindex(3));
 	zend_string *refusal = NULL;
-	int got;
+	int produced = 0;
+	int index;
 
 	if (handle == NULL || handle->closed) {
 		return 0;
 	}
 
-	got = luaext_iolib_read_line(L, sandbox, handle, false, &refusal);
+	/* The formats go back onto a cleared stack at 1..formats, so read_one()
+	 * finds them where it expects an argument, and its results land above. */
+	lua_settop(L, 0);
+	luaL_checkstack(L, formats + 2, "too many formats for one lines() iterator");
 
-	if (got < 0) {
-		return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
+	for (index = 0; index < formats; index++) {
+		lua_pushvalue(L, lua_upvalueindex(4 + index));
 	}
 
-	if (got == 0) {
-		if (close_at_end) {
-			(void)luaext_vfs_handle_close(L, sandbox, handle, &refusal);
+	for (index = 1; index <= formats; index++) {
+		int got = luaext_iolib_read_one(L, sandbox, handle, index, &refusal);
 
-			if (refusal != NULL) {
-				zend_string_release(refusal);
-			}
+		if (got < 0) {
+			return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
 		}
 
-		return 0;
+		produced++;
+
+		/* Stop at the first format that read nothing: the ones after it would
+		 * be reading past the end of the file. */
+		if (lua_isnil(L, -1)) {
+			break;
+		}
 	}
 
-	return 1;
+	/* The FIRST result decides whether the loop goes round again, which is what
+	 * makes `for line in f:lines("l", "l")` end on the pair that runs out. */
+	if (!lua_isnil(L, formats + 1)) {
+		return produced;
+	}
+
+	if (close_at_end) {
+		(void)luaext_vfs_handle_close(L, sandbox, handle, &refusal);
+
+		if (refusal != NULL) {
+			zend_string_release(refusal);
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Build the iterator closure over a handle already on the stack top, taking the
+ * formats from `first`..`last` of the caller's arguments.
+ *
+ * Shared so io.lines and file:lines cannot drift apart, which is how the format
+ * argument came to be honoured by neither.
+ */
+static void luaext_iolib_push_lines_iter(lua_State *L, int handle_index, bool close_at_end,
+										 int first, int last)
+{
+	int formats = last >= first ? last - first + 1 : 0;
+	int index;
+
+	luaL_argcheck(L, formats <= LUAEXT_IOLIB_MAX_LINE_FORMATS, first, "too many formats");
+	luaL_checkstack(L, formats + 4, "too many formats for one lines() iterator");
+
+	lua_pushvalue(L, handle_index);
+	lua_pushboolean(L, close_at_end ? 1 : 0);
+
+	/* No format means a line, the same default :read() applies. Materialised
+	 * here rather than special-cased in the iterator, so the iterator has one
+	 * shape for every call. */
+	if (formats == 0) {
+		lua_pushinteger(L, 1);
+		lua_pushliteral(L, "l");
+		lua_pushcclosure(L, luaext_iolib_lines_iter, 4);
+
+		return;
+	}
+
+	lua_pushinteger(L, formats);
+
+	for (index = first; index <= last; index++) {
+		lua_pushvalue(L, index);
+	}
+
+	lua_pushcclosure(L, luaext_iolib_lines_iter, 3 + formats);
 }
 
 static int luaext_iolib_file_lines(lua_State *L)
 {
 	(void)luaext_iolib_check_handle(L, 1);
 
-	lua_pushvalue(L, 1);
-	lua_pushboolean(L, 0); /* the script opened it; the script closes it */
-	lua_pushcclosure(L, luaext_iolib_lines_iter, 2);
+	/* the script opened it; the script closes it */
+	luaext_iolib_push_lines_iter(L, 1, false, 2, lua_gettop(L));
 
 	return 1;
 }
@@ -832,6 +913,11 @@ static int luaext_iolib_lines(lua_State *L)
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	zend_string *path;
 	zend_string *refusal = NULL;
+
+	/* Counted BEFORE anything else pushes: canonicalising leaves its path box on
+	 * the stack and opening leaves the handle, so the caller's own arguments are
+	 * only identifiable from here. */
+	int last_format = lua_gettop(L);
 
 	path = luaext_vfs_path_from_lua(L, sandbox, 1);
 
@@ -860,8 +946,8 @@ static int luaext_iolib_lines(lua_State *L)
 		return lua_error(L);
 	}
 
-	lua_pushboolean(L, 1); /* io.lines owns it, so the end of the file closes it */
-	lua_pushcclosure(L, luaext_iolib_lines_iter, 2);
+	/* io.lines owns the handle, so the end of the file closes it. */
+	luaext_iolib_push_lines_iter(L, lua_gettop(L), true, 2, last_format);
 
 	return 1;
 }

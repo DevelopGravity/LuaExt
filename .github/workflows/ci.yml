@@ -400,24 +400,31 @@ jobs:
   # ---------------------------------------------------------------------
   windows:
     name: Windows (PR validation)
-    # NO needs:. This is the whole point of the split above -- the DLL has never
-    # compiled once, and it was skipped every time because an unrelated platform
+    # NO needs:. This is the whole point of the split above -- the DLL had never
+    # compiled once, because it was skipped every time an unrelated platform
     # failed first. It builds from a checkout, so it depends on nothing here.
     uses: ./.github/workflows/windows-build.yml
     with:
       php-version-list: '8.5'
       arch-list: 'x64'
       ts-list: 'nts, ts'
-      # Build only, for now. The DLL has never once compiled, so nothing here
-      # has ever reached the test suite -- and that suite has 113 files and not
-      # one platform guard in it. Windows' CPU clock is a ~15.6 ms scheduler
-      # tick, which tests/02-limits/ asserts far below, so a first run would go
-      # red for reasons that say nothing about whether the build works.
+      # The DLL compiles now, so Windows finally runs something -- but only
+      # tests/10-lua/, and the scope is the point.
       #
-      # Writing skip conditions blind, against failures nobody has observed, is
-      # guesswork. Prove the DLL compiles first; then a real run names exactly
-      # which tests need guarding, and those get guarded.
-      run-tests: false
+      # That directory is platform-neutral BY CONSTRUCTION: it asserts what Lua
+      # computes, never how long anything takes, and every string.pack check
+      # names an explicit width and byte order rather than inheriting the
+      # machine's. So it is the one part of the suite that can be expected to
+      # pass here on the first run, and a failure in it means a real difference
+      # between this build and the others rather than a property of the runner.
+      #
+      # The rest stays out for now. Windows' CPU clock is a ~15.6 ms scheduler
+      # tick and tests/02-limits/ asserts far below it, so those need guards --
+      # and writing guards against failures nobody has observed is guesswork.
+      # Widening this to the whole suite is a follow-up with a real run's output
+      # behind it, which is the same rule that kept the build-only job honest.
+      run-tests: true
+      test-runner-args: 'tests/10-lua'
 
   # ---------------------------------------------------------------------
   # Single required status for branch protection.

@@ -10,6 +10,8 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <string.h>
+
 /* -------------------------------------------------------------------------
  * Live-thread tracking
  *
@@ -240,8 +242,22 @@ static int luaext_corolib_resume(lua_State *L)
 		return lua_error(L);
 	}
 
-	lua_pushboolean(L, 0);
+	/*
+	 * MOVE FIRST, THEN INSERT THE false BENEATH IT. The obvious spelling --
+	 * push false, then xmove the error across -- is wrong when `co` IS `L`,
+	 * which happens the moment a coroutine resumes itself: lua_xmove returns
+	 * immediately when its two states are the same, so the error stays where it
+	 * already was and the false lands ON TOP of it. resume then answered
+	 * `"cannot resume non-suspended coroutine", false` instead of
+	 * `false, "cannot resume non-suspended coroutine"` -- the documented pair,
+	 * backwards, on the one path a script reaches by accident.
+	 *
+	 * This spelling is correct either way: the xmove is a no-op exactly when the
+	 * error is already on this stack, and lua_insert operates on one stack.
+	 */
 	lua_xmove(co, L, 1);
+	lua_pushboolean(L, 0);
+	lua_insert(L, -2);
 
 	return 2;
 }
@@ -312,38 +328,41 @@ static int luaext_corolib_yield(lua_State *L)
 	return lua_yield(L, lua_gettop(L));
 }
 
+/*
+ * The one place a coroutine's status is decided.
+ *
+ * Split out from the status() method because close() has to make the same
+ * judgement: a running or normal coroutine cannot be closed, and asking
+ * lua_closethread() to do it anyway resets a stack that is still executing.
+ */
+static const char *luaext_corolib_status_name(lua_State *L, lua_State *co)
+{
+	if (L == co) {
+		return "running";
+	}
+
+	switch (lua_status(co)) {
+	case LUA_YIELD:
+		return "suspended";
+
+	case LUA_OK:
+		if (lua_getstack(co, 0, &(lua_Debug){0}) > 0) {
+			return "normal"; /* it resumed someone else */
+		}
+
+		return lua_gettop(co) == 0 ? "dead" : "suspended"; /* created, never resumed */
+
+	default:
+		return "dead"; /* it finished with an error */
+	}
+}
+
 static int luaext_corolib_status(lua_State *L)
 {
 	lua_State *co = lua_tothread(L, 1);
-	const char *name;
 
 	luaL_argexpected(L, co != NULL, 1, "coroutine");
-
-	if (L == co) {
-		name = "running";
-	} else {
-		switch (lua_status(co)) {
-		case LUA_YIELD:
-			name = "suspended";
-			break;
-
-		case LUA_OK:
-			if (lua_getstack(co, 0, &(lua_Debug){0}) > 0) {
-				name = "normal"; /* it resumed someone else */
-			} else if (lua_gettop(co) == 0) {
-				name = "dead";
-			} else {
-				name = "suspended"; /* created, never resumed */
-			}
-			break;
-
-		default:
-			name = "dead"; /* it finished with an error */
-			break;
-		}
-	}
-
-	lua_pushstring(L, name);
+	lua_pushstring(L, luaext_corolib_status_name(L, co));
 
 	return 1;
 }
@@ -370,9 +389,25 @@ static int luaext_corolib_isyieldable(lua_State *L)
 static int luaext_corolib_close(lua_State *L)
 {
 	lua_State *co = lua_tothread(L, 1);
+	const char *state;
 	int status;
 
 	luaL_argexpected(L, co != NULL, 1, "coroutine");
+
+	/*
+	 * ONLY A SUSPENDED OR DEAD COROUTINE MAY BE CLOSED, and the check has to be
+	 * here rather than left to lua_closethread(), which does not make it.
+	 * Closing resets the thread's stack and closes its upvalues -- on a
+	 * coroutine that is still executing, that is the stack the current frame is
+	 * running on. Without this guard `coroutine.close(co)` from inside `co`
+	 * returned true and left the caller reading a stack that had been reset
+	 * underneath it.
+	 */
+	state = luaext_corolib_status_name(L, co);
+
+	if (strcmp(state, "suspended") != 0 && strcmp(state, "dead") != 0) {
+		return luaL_error(L, "cannot close a %s coroutine", state);
+	}
 
 	status = lua_closethread(co, L);
 
@@ -391,8 +426,12 @@ static int luaext_corolib_close(lua_State *L)
 		return lua_error(L);
 	}
 
-	lua_pushboolean(L, 0);
+	/* Move then insert, for the reason resume spells out above. Unreachable
+	 * with co == L now that a running coroutine is refused, but written the
+	 * safe way regardless -- the two should not drift apart. */
 	lua_xmove(co, L, 1);
+	lua_pushboolean(L, 0);
+	lua_insert(L, -2);
 
 	return 2;
 }
