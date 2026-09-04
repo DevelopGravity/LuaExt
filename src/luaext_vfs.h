@@ -200,6 +200,23 @@ bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_h
 zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int index);
 
 /*
+ * Copy `length` bytes into a zend_string Lua's collector owns, for handing to a
+ * backend call as an argument.
+ *
+ * SAME CONTRACT AS ABOVE, and for the same reason: BORROWED, never released by
+ * the caller, and only valid until that caller returns. Every backend call can
+ * raise, and a raise longjmps past any dtor the frame was going to run -- so an
+ * argument the frame owns is an argument the frame leaks. A ranged file:write()
+ * leaked its whole payload this way, once per refusal, at whatever size the
+ * script chose.
+ *
+ * Returns NULL with an error raised when the sandbox is closing, where a box
+ * would never be finalised.
+ */
+zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, const char *data,
+									  size_t length);
+
+/*
  * Charge `bytes` of new buffering against VfsQuota::$maxTotalBytes.
  *
  * Called by the write path when a buffered handle grows. Raises a fatal Lua

@@ -36,6 +36,8 @@ header_printed=0
 readonly RULES=(
 	'ZVAL_ARR[[:space:]]*[(]~ZVAL_ARR~stamps refcounted onto a possibly-immutable HashTable; receive with Z_PARAM_ARRAY_HT and keep with ZVAL_COPY'
 	'not implemented yet~unimplemented method~a declared method that throws is invisible to every documentation check, because the name resolves; either implement it or remove it from the stubs'
+	'zend_hash_find_ptr[[:space:]]*[(][^)]*function_table~case-sensitive method lookup~a function_table is keyed LOWERCASE, so this resolves every single-word method and silently misses every camelCase one; use zend_hash_str_find_ptr_lc, which also hashes off the bytes instead of building a lowered copy to throw away'
+	'ZVAL_STRINGL?[[:space:]]*[(][[:space:]]*&args\[~owned zval in a backend argument list~ZVAL_STRING(L) into an args[] array makes a copy THIS FRAME owns, and every backend call can raise; the raise longjmps past the dtor on the next line. A ranged file:write() leaked its whole payload that way, once per refused write, at whatever size the script chose. Use luaext_vfs_anchor_string() so Lua'"'"'s collector owns it, or ZVAL_STR to borrow one that already outlives the call'
 )
 
 for rule in "${RULES[@]}"; do

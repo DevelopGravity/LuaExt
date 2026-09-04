@@ -536,19 +536,31 @@ static int luaext_iolib_file_write(lua_State *L)
 			zval args[3];
 			zval result;
 			zend_string *refusal = NULL;
+			zend_string *payload = luaext_vfs_anchor_string(L, sandbox, data, length);
 
+			if (payload == NULL) {
+				return lua_error(L);
+			}
+
+			/*
+			 * The payload is ANCHORED IN LUA, not owned here, and that is the
+			 * whole point. A borrowed ZVAL_STR is not an option -- the bytes are
+			 * Lua's and the backend may keep what it is handed -- so a copy has
+			 * to exist. It used to be made with ZVAL_STRINGL and released on the
+			 * next line, which never ran when luaext_vfs_call() raised: every
+			 * write refused by the operations quota leaked its whole payload, at
+			 * whatever size the script picked.
+			 */
 			ZVAL_STR(&args[0], handle->path);
 			ZVAL_LONG(&args[1], (zend_long)handle->offset);
-			ZVAL_STRINGL(&args[2], data, length);
+			ZVAL_STR(&args[2], payload);
 
 			if (luaext_vfs_call(L, sandbox, "writeRange", 3, args, &result, &refusal) !=
 				LUAEXT_VFS_OK) {
-				zval_ptr_dtor(&args[2]);
 				return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
 			}
 
 			luaext_vfs_note_bytes(sandbox, length);
-			zval_ptr_dtor(&args[2]);
 			zval_ptr_dtor(&result);
 		} else {
 			/*

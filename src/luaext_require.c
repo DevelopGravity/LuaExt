@@ -378,7 +378,6 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, const char *name,
 									   size_t name_len, const char *requested_by)
 {
-	zend_string *method;
 	zend_function *fn;
 	zval args[2];
 	zval result;
@@ -391,9 +390,11 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		return 0;
 	}
 
-	method = zend_string_init("resolve", strlen("resolve"), 0);
-	fn = zend_hash_find_ptr(&Z_OBJCE(sandbox->module_resolver_zv)->function_table, method);
-	zend_string_release(method);
+	/* _lc(), for the reason luaext_vfs.c spells out: a function_table is keyed
+	 * lowercase, and this form hashes straight off the literal instead of
+	 * building a zend_string to look up with and throw away. */
+	fn = zend_hash_str_find_ptr_lc(&Z_OBJCE(sandbox->module_resolver_zv)->function_table, "resolve",
+								   strlen("resolve"));
 
 	if (fn == NULL) {
 		luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",

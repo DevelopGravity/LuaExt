@@ -14,6 +14,23 @@
 
 #include <php.h>
 
+/*
+ * The floor, enforced where every build path has to pass through it.
+ *
+ * composer.json says ">=8.5" and PIE honours it, but nothing stopped a plain
+ * `phpize && ./configure && make` against 8.4 -- config.m4 checks pthreads, C11
+ * atomics and the vendored Lua manifest and never the engine's own version. That
+ * build failed, but somewhere deep in a translation unit, with an error about a
+ * macro rather than about the version. config.w32 could not have checked it
+ * either: the Windows build does not run config.m4 at all.
+ *
+ * A header every source file includes is the one place all three paths share.
+ */
+#if PHP_VERSION_ID < 80500
+#error                                                                                             \
+	"luaext requires PHP 8.5 or later. Check `php-config --version`, or point --with-php-config at an 8.5+ install."
+#endif
+
 #define PHP_LUAEXT_NAME "luaext"
 
 /*

@@ -865,7 +865,6 @@ static bool luaext_phpcall_collect_allowlist(HashTable *methods, zval *instance,
 	ZEND_HASH_FOREACH_VAL(allowlist, entry)
 	{
 		zend_string *requested;
-		zend_string *lowered;
 		zend_function *method;
 		const char *refusal;
 
@@ -879,15 +878,20 @@ static bool luaext_phpcall_collect_allowlist(HashTable *methods, zval *instance,
 		}
 
 		requested = Z_STR_P(entry);
-		lowered = zend_string_tolower(requested);
 
 		/*
 		 * Looked up in the class's own table rather than resolved as a callable:
 		 * a name the class does not declare must be an error, not a silent
 		 * detour through __call.
+		 *
+		 * _lc() because a function_table is keyed lowercase, and because it
+		 * hashes case-insensitively off the bytes rather than building a lowered
+		 * copy to throw away. The copy is where luaext_vfs.c's 48-per-test leak
+		 * came from -- this site released correctly, but the shape is the one
+		 * that goes wrong, and tools/check-banned-idioms.sh now refuses it.
 		 */
-		method = (zend_function *)zend_hash_find_ptr(&ce->function_table, lowered);
-		zend_string_release(lowered);
+		method = (zend_function *)zend_hash_str_find_ptr_lc(
+			&ce->function_table, ZSTR_VAL(requested), ZSTR_LEN(requested));
 
 		if (method == NULL) {
 			zend_throw_exception_ex(luaext_ce_configuration_error, 0,

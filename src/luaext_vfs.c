@@ -340,22 +340,29 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
 }
 
 /*
- * A canonical path, owned by Lua's collector rather than by the C frame that
- * asked for it.
+ * A zend_string owned by Lua's collector rather than by the C frame that made
+ * it.
  *
- * WHY IT IS NOT JUST A zend_string. Everything a script does with a path --
- * open, remove, rename -- goes on to call the backend, and every one of those
- * calls can raise: a quota refusal, a FileSystem that is gone, a method the
- * interface promises and the class does not have. luaext_error_raise() ends in
- * lua_error(), which longjmps, and a longjmp runs no cleanup whatsoever. A
- * caller holding the string across such a call leaks it, on precisely the paths
- * that only execute when something has already gone wrong.
+ * WHY THIS EXISTS. Everything a script does through the VFS ends in a call to
+ * the backend, and every one of those calls can raise: a quota refusal, a
+ * FileSystem that is gone, a method the interface promises and the class does
+ * not have. luaext_error_raise() ends in lua_error(), which longjmps, and a
+ * longjmp runs no cleanup whatsoever. A frame holding a string across such a
+ * call leaks it, on precisely the paths that only execute when something has
+ * already gone wrong.
  *
- * That is not a hazard someone might one day hit. io.open() leaked its path on
- * every maxOpenHandles, maxFiles and maxOperations refusal -- three leaks in one
- * test under PHP's debug allocator, and silence in a release build and under
- * macOS `leaks`, which sees the request arena freed wholesale and calls it
- * clean.
+ * That is not a hazard someone might one day hit. It has been found twice:
+ *
+ *   - io.open() leaked its canonical path on every maxOpenHandles, maxFiles and
+ *     maxOperations refusal;
+ *   - a ranged file:write() leaked the COPY of the bytes it hands writeRange(),
+ *     which is script-sized -- a loop writing 1 MB chunks leaked a megabyte on
+ *     every refusal.
+ *
+ * Both were silent in a release build and under macOS `leaks`, which sees the
+ * request arena freed wholesale and calls it clean. PHP's debug allocator is the
+ * only thing that reports them, which is why this file's tests earn their place
+ * on the debug and sanitizer legs rather than here.
  *
  * Handing the string to Lua ends the whole class instead of one instance of it.
  * The box lives in the calling C function's own stack frame, so an unwind of any
@@ -365,23 +372,23 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
  * returns.
  */
 typedef struct {
-	zend_string *path;
-} luaext_vfs_path_ud;
+	zend_string *held;
+} luaext_vfs_string_ud;
 
-static int luaext_vfs_path_release(lua_State *L)
+static int luaext_vfs_string_release(lua_State *L)
 {
-	luaext_vfs_path_ud *box = (luaext_vfs_path_ud *)lua_touserdata(L, 1);
+	luaext_vfs_string_ud *box = (luaext_vfs_string_ud *)lua_touserdata(L, 1);
 
-	if (box != NULL && box->path != NULL) {
-		zend_string_release(box->path);
-		box->path = NULL;
+	if (box != NULL && box->held != NULL) {
+		zend_string_release(box->held);
+		box->held = NULL;
 	}
 
 	return 0;
 }
 
 /*
- * Push the metatable every path box in this state shares.
+ * Push the metatable every anchored-string box in this state shares.
  *
  * Its own registry key, not luaext_key_zvalmt: a metatable *is* its __gc, so
  * giving a box the closure storage's finaliser would have that __gc read a
@@ -390,7 +397,7 @@ static int luaext_vfs_path_release(lua_State *L)
  * replace __gc, or stamp it onto a value of its own and hand the collector a
  * pointer we never allocated.
  */
-static void luaext_vfs_path_metatable(lua_State *L)
+static void luaext_vfs_string_metatable(lua_State *L)
 {
 	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_pathmt) == LUA_TTABLE) {
 		return;
@@ -399,7 +406,7 @@ static void luaext_vfs_path_metatable(lua_State *L)
 	lua_pop(L, 1);
 	lua_createtable(L, 0, 2);
 
-	lua_pushcfunction(L, luaext_vfs_path_release);
+	lua_pushcfunction(L, luaext_vfs_string_release);
 	lua_setfield(L, -2, "__gc");
 
 	lua_pushboolean(L, 0);
@@ -407,6 +414,58 @@ static void luaext_vfs_path_metatable(lua_State *L)
 
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_pathmt);
+}
+
+/*
+ * Push an empty box and return it, armed and ready to be filled.
+ *
+ * THE ORDER IS LOAD BEARING. The box goes up empty, with its metatable, BEFORE
+ * the string exists: setting a metatable that carries __gc is what marks a
+ * userdata for finalisation, so doing it the other way round leaves a window in
+ * which the string is owned by nothing -- which is the bug this exists to
+ * prevent.
+ *
+ * Returns NULL, with an error raised, once the state is closing: a box built
+ * then would never be collected. lua_close() sets GCSTPCLS for its whole run and
+ * luaC_checkfinalizer() returns early while that bit is set, so an object created
+ * inside a finaliser is never added to the finobj list and its __gc NEVER RUNS --
+ * the same trap the error subsystem documents. Reaching here during close means
+ * a script __gc touching the VFS, which is already torn down by then, so the
+ * call had no future anyway.
+ */
+static luaext_vfs_string_ud *luaext_vfs_push_box(lua_State *L, luaext_sandbox *sandbox)
+{
+	luaext_vfs_string_ud *box;
+
+	if (sandbox == NULL || sandbox->closed) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+						   "This sandbox is closing: its filesystem is no longer reachable");
+		return NULL;
+	}
+
+	luaL_checkstack(L, 3, "luaext: no stack to hold a string for the filesystem");
+
+	box = (luaext_vfs_string_ud *)lua_newuserdatauv(L, sizeof(*box), 0);
+	box->held = NULL;
+
+	luaext_vfs_string_metatable(L);
+	lua_setmetatable(L, -2);
+
+	return box;
+}
+
+zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, const char *data,
+									  size_t length)
+{
+	luaext_vfs_string_ud *box = luaext_vfs_push_box(L, sandbox);
+
+	if (box == NULL) {
+		return NULL;
+	}
+
+	box->held = zend_string_init(data, length, 0);
+
+	return box->held;
 }
 
 /*
@@ -427,7 +486,7 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 	char *buffer;
 	size_t out_len = 0;
 	luaext_vfs_path_status status;
-	luaext_vfs_path_ud *box;
+	luaext_vfs_string_ud *box;
 
 	raw = luaL_checklstring(L, index, &raw_len);
 
@@ -443,38 +502,11 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 		return NULL;
 	}
 
-	/*
-	 * Refused rather than boxed once the state is closing, because a box built
-	 * here would never be collected and the string it holds would never be
-	 * released.
-	 *
-	 * lua_close() sets GCSTPCLS for its whole run and luaC_checkfinalizer()
-	 * returns early while that bit is set, so an object created inside a
-	 * finaliser is never added to the finobj list and its __gc NEVER RUNS -- the
-	 * same trap the error subsystem documents. Reaching here during close means a
-	 * script __gc calling io.open or os.remove, and the VFS is already torn down
-	 * by then, so the call had no future anyway: this only moves the refusal one
-	 * step earlier, to before there is anything to lose.
-	 */
-	if (sandbox == NULL || sandbox->closed) {
-		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
-						   "This sandbox is closing: its filesystem is no longer reachable");
+	box = luaext_vfs_push_box(L, sandbox);
+
+	if (box == NULL) {
 		return NULL;
 	}
-
-	/*
-	 * The box goes up empty, with its metatable, BEFORE the string exists.
-	 * Setting a metatable that carries __gc is what marks a userdata for
-	 * finalisation, so doing it in the other order leaves a window in which the
-	 * string is owned by nothing -- which is the bug this exists to prevent.
-	 */
-	luaL_checkstack(L, 3, "luaext: no stack to canonicalise a path");
-
-	box = (luaext_vfs_path_ud *)lua_newuserdatauv(L, sizeof(*box), 0);
-	box->path = NULL;
-
-	luaext_vfs_path_metatable(L);
-	lua_setmetatable(L, -2);
 
 	buffer = emalloc(raw_len + 2);
 
@@ -496,10 +528,10 @@ zend_string *luaext_vfs_path_from_lua(lua_State *L, luaext_sandbox *sandbox, int
 		return NULL;
 	}
 
-	box->path = zend_string_init(buffer, out_len, 0);
+	box->held = zend_string_init(buffer, out_len, 0);
 	efree(buffer);
 
-	return box->path;
+	return box->held;
 }
 
 void luaext_vfs_note_bytes(luaext_sandbox *sandbox, size_t bytes)
