@@ -19,14 +19,11 @@ use DevelopGravity\LuaExt\SandboxConfig;
 // This exercises both halves together, because a dump nothing can load is not
 // evidence of anything.
 
-// Sealed, which is the supported way to round-trip: without a key the dump is
-// a blob nothing can vouch for, and compileBinary() refuses it unless an
-// operator has set luaext.allow_raw_bytecode. See the sealing test for that.
+// No sealing configuration at all: dump() seals with the default checksum, and
+// compileBinary() verifies it. The round trip works out of the box, with no key
+// to manage and no INI to open -- that is the point of the default.
 $capabilities = (new Capabilities())->with(dumpBytecode: true, loadBytecode: true);
-$sandbox = new Sandbox(new SandboxConfig(
-	capabilities: $capabilities,
-	bytecodeKey: str_repeat('k', 32),
-));
+$sandbox = new Sandbox(new SandboxConfig(capabilities: $capabilities));
 
 $function = $sandbox->compile('local a, b = ... return a * b + 1', '@math.lua');
 
@@ -36,7 +33,7 @@ $full = $function->dump(false);
 // Both are sealed: the seal's magic, then Lua's own ESC byte in the payload.
 printf("stripped is sealed:       %s\n", var_export(substr($stripped, 0, 4) === 'LXBC', true));
 printf("full is sealed:           %s\n", var_export(substr($full, 0, 4) === 'LXBC', true));
-printf("payload is a Lua chunk:   %s\n", var_export(substr($stripped, 37, 4) === "\x1bLua", true));
+printf("payload is a Lua chunk:   %s\n", var_export(substr($stripped, 22, 4) === "\x1bLua", true));
 
 // Stripping removes debug information, so it cannot be larger.
 printf("stripping is smaller:     %s\n", var_export(strlen($stripped) < strlen($full), true));

@@ -83,6 +83,7 @@ DevelopGravity\LuaExt\SandboxConfig
   seed                 NULL
   deterministic        false
   cacheCompiledChunks  false
+  sealMode             DevelopGravity\LuaExt\SealMode::Checksum
   bytecodeKey          NULL
 NULL
 NULL

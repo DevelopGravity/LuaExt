@@ -331,6 +331,9 @@ typedef struct {
 	 */
 	const char *bytecode_key;
 	size_t bytecode_key_len;
+
+	/* luaext_seal_algo. Checksum unless the host asked otherwise. */
+	uint8_t seal_mode;
 } luaext_policy;
 
 #define luaext_has_cap(policy, cap) (((policy)->caps & (uint32_t)(cap)) != 0)

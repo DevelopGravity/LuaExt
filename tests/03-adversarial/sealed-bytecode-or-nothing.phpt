@@ -1,5 +1,5 @@
 --TEST--
-Bytecode is refused unless it can be vouched for, and no corruption survives
+Bytecode is refused unless it can be vouched for, in whichever way was asked for
 --EXTENSIONS--
 luaext
 --FILE--
@@ -12,124 +12,160 @@ use DevelopGravity\LuaExt\Exception\BytecodeIntegrityError;
 use DevelopGravity\LuaExt\Exception\ConfigurationError;
 use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
+use DevelopGravity\LuaExt\SealMode;
 
 // WHAT THIS FILE IS FOR.
 //
 // Lua's binary loader validates a chunk's header, buffer bounds, constant tags
 // and string indices -- and then stops. It does not check opcodes, register
-// indices, constant indices or jump targets, so corruption in the instruction
-// stream reaches the VM intact. Measured by flipping one byte at each position
-// of a 118-byte chunk and loading each: 57% refused, 33% RAN ANYWAY, and 10%
-// killed the process outright.
+// indices, constant indices or jump targets, and the checked fraction SHRINKS
+// as blobs grow: flipping one byte at each position of a 150-byte chunk gave
+// 57% refused / 23% right answer anyway / 8% WRONG answer / 13% dead process,
+// while a 297 KB chunk gave only 17% refused and 82% ran.
 //
-// There is no verifier to add. So a blob is authenticated before the loader
-// sees it, and anything that cannot be authenticated is refused.
+// There is no verifier to add, so a blob is vouched for before the loader sees
+// it, and anything that cannot be is refused.
 
 $capabilities = (new Capabilities())->with(dumpBytecode: true, loadBytecode: true);
 $keyOne = str_repeat("\x11", 32);
 $keyTwo = str_repeat("\x22", 32);
 
-$build = static fn (?string $key): Sandbox => new Sandbox(new SandboxConfig(
+$checksum = new Sandbox(new SandboxConfig(capabilities: $capabilities));
+$authed = new Sandbox(new SandboxConfig(
 	capabilities: $capabilities,
-	bytecodeKey: $key,
+	sealMode: SealMode::Authenticated,
+	bytecodeKey: $keyOne,
 ));
 
-$sealed = $build($keyOne);
-$unkeyed = $build(null);
+$source = 'local n = ... return n * 2';
+$checksummed = $checksum->compile($source, '@double.lua')->dump(true);
+$authenticated = $authed->compile($source, '@double.lua')->dump(true);
 
-$blob = $sealed->compile('local n = ... return n * 2', '@double.lua')->dump(true);
-$raw = $unkeyed->compile('local n = ... return n * 2', '@double.lua')->dump(true);
+// The default needs no key and no INI: a dump loads back out of the box.
+printf("checksum round-trips:  %d\n", $checksum->compileBinary($checksummed, '@d.lua')->call(21)[0]);
+printf("authed round-trips:    %d\n", $authed->compileBinary($authenticated, '@d.lua')->call(21)[0]);
 
-printf("keyed dump is sealed:   %s\n", var_export(str_starts_with($blob, 'LXBC'), true));
-printf("unkeyed dump is raw:    %s\n", var_export(str_starts_with($raw, "\x1bLua"), true));
-printf("sealed round-trips:     %d\n", $sealed->compileBinary($blob, '@d.lua')->call(21)[0]);
-
-// Every way a blob can fail to be vouched for. All one condition to the caller:
-// this is not something the sandbox is willing to execute.
 $refuses = static function (string $label, Sandbox $sandbox, string $bytecode): void {
 	try {
 		$sandbox->compileBinary($bytecode, '@probe.lua');
-		printf("%-24s LOADED\n", $label);
+		printf("%-30s LOADED\n", $label);
 	} catch (BytecodeIntegrityError $error) {
-		printf("%-24s refused\n", $label);
+		printf("%-30s refused\n", $label);
 	}
 };
 
-$refuses('wrong key', $build($keyTwo), $blob);
-$refuses('no key for a seal', $unkeyed, $blob);
-$refuses('raw, key configured', $sealed, $raw);
-$refuses('raw, no key, INI off', $unkeyed, $raw);
+// A blob is verified against the mode the SANDBOX is configured for, never the
+// one the blob announces, so the two modes do not interchange.
+$refuses('checksum blob, authed sandbox', $authed, $checksummed);
+$refuses('authed blob, checksum sandbox', $checksum, $authenticated);
 
-// THE PROPERTY THAT MAKES "never share the bytecode store" ENFORCED rather than
-// advised: a blob sealed by one process cannot be loaded by another that does
-// not hold the same key. An attacker who can write the store has not gained
-// anything, because what they write will not verify.
-$other = $build($keyTwo);
-$otherBlob = $other->compile('return "theirs"', '@theirs.lua')->dump(true);
-$refuses('their blob, our key', $sealed, $otherBlob);
-$other->close();
+// THE DOWNGRADE ATTACK, which is the reason the announced algorithm is not
+// trusted. An attacker strips the HMAC and re-seals the same payload as a
+// checksum -- which anyone can compute, since it is unkeyed. If the blob's own
+// byte chose the check, the key would stop mattering entirely.
+$payload = substr($authenticated, 6 + 32);
+$forged = 'LXBC' . chr(1) . chr(1) . hash('xxh128', chr(1) . chr(1) . $payload, true) . $payload;
 
-// A key too short to be a key authenticates nothing while looking as though it
-// does, which is worse than having none.
-try {
-	$build('too-short');
-	echo "short key: ACCEPTED\n";
-} catch (ConfigurationError $error) {
-	printf("short key: refused (%s)\n", str_contains($error->getMessage(), 'random_bytes') ? 'told how to fix it' : 'no guidance');
-}
+$refuses('downgraded blob, authed', $authed, $forged);
 
-// THE SWEEP. Every single-byte corruption of a sealed blob must be refused --
-// not merely most of them, which is what the bare loader manages. Nothing here
-// may run, and nothing may crash.
-$ran = 0;
-$refused = 0;
+// And it IS a well-formed checksum blob -- the forgery is real, it is simply
+// not accepted where authentication was asked for. An unkeyed checksum being
+// forgeable is the documented property, not a defect: it answers "did this
+// survive the trip", never "did this come from us".
+printf("%-30s %s\n", 'forgery is a valid checksum', var_export(
+	(static function (Sandbox $sandbox, string $blob): bool {
+		try {
+			$sandbox->compileBinary($blob, '@f.lua');
 
-for ($offset = 0; $offset < strlen($blob); $offset++) {
-	$corrupt = $blob;
-	$corrupt[$offset] = chr(ord($corrupt[$offset]) ^ 0xFF);
+			return true;
+		} catch (BytecodeIntegrityError $error) {
+			return false;
+		}
+	})($checksum, $forged),
+	true,
+));
 
+// Authentication's actual purchase: a blob sealed under one key does not load
+// under another, so a bytecode store shared between processes fails CLOSED.
+$stranger = new Sandbox(new SandboxConfig(
+	capabilities: $capabilities,
+	sealMode: SealMode::Authenticated,
+	bytecodeKey: $keyTwo,
+));
+
+$refuses('their key, our sandbox', $authed, $stranger->compile('return 1', '@t.lua')->dump(true));
+$stranger->close();
+
+// The mode and the key have to agree; each half alone is a host saying one
+// thing and getting another.
+foreach ([
+	'authed without a key' => static fn (): Sandbox => new Sandbox(new SandboxConfig(
+		capabilities: $capabilities, sealMode: SealMode::Authenticated)),
+	'checksum with a key' => static fn (): Sandbox => new Sandbox(new SandboxConfig(
+		capabilities: $capabilities, bytecodeKey: $keyOne)),
+	'key too short' => static fn (): Sandbox => new Sandbox(new SandboxConfig(
+		capabilities: $capabilities, sealMode: SealMode::Authenticated, bytecodeKey: 'short')),
+] as $label => $build) {
 	try {
-		$sealed->compileBinary($corrupt, '@corrupt.lua')->call(1);
-		$ran++;
-	} catch (BytecodeIntegrityError $error) {
-		$refused++;
+		$build();
+		printf("%-30s ACCEPTED\n", $label);
+	} catch (ConfigurationError $error) {
+		printf("%-30s refused\n", $label);
 	}
 }
 
-// The byte count is not asserted: it moves with the Lua version and the
-// platform's integer widths, and what matters is that NONE of them got through.
-printf("\nsweep covered every byte:  %s\n", var_export($refused === strlen($blob), true));
-printf("nothing ran:               %s\n", var_export($ran === 0, true));
+// THE SWEEP, in both modes. Every single-byte corruption and every truncation
+// must be refused -- not merely most, which is all the bare loader manages.
+foreach (['checksum' => [$checksum, $checksummed], 'authed' => [$authed, $authenticated]] as $mode => [$sandbox, $blob]) {
+	$ran = 0;
+	$refused = 0;
 
-// Truncation too, at every length. A short read from a cache is as likely as a
-// flipped byte and just as unloadable.
-$shortRefused = 0;
+	for ($offset = 0; $offset < strlen($blob); $offset++) {
+		$corrupt = $blob;
+		$corrupt[$offset] = chr(ord($corrupt[$offset]) ^ 0xFF);
 
-for ($length = 0; $length < strlen($blob); $length++) {
-	try {
-		$sealed->compileBinary(substr($blob, 0, $length), '@short.lua');
-	} catch (BytecodeIntegrityError $error) {
-		$shortRefused++;
+		try {
+			$sandbox->compileBinary($corrupt, '@corrupt.lua')->call(1);
+			$ran++;
+		} catch (BytecodeIntegrityError $error) {
+			$refused++;
+		}
 	}
+
+	$short = 0;
+
+	for ($length = 0; $length < strlen($blob); $length++) {
+		try {
+			$sandbox->compileBinary(substr($blob, 0, $length), '@short.lua');
+		} catch (BytecodeIntegrityError $error) {
+			$short++;
+		}
+	}
+
+	// Byte counts are not asserted: they move with the Lua version and the
+	// platform's integer widths. What matters is that none got through.
+	printf("\n%s: every corruption refused: %s\n", $mode, var_export($refused === strlen($blob) && $ran === 0, true));
+	printf("%s: every truncation refused: %s\n", $mode, var_export($short === strlen($blob), true));
 }
 
-printf("every truncation refused: %s\n", var_export($shortRefused === strlen($blob), true));
-
-$sealed->close();
-$unkeyed->close();
+$checksum->close();
+$authed->close();
 
 ?>
 --EXPECT--
-keyed dump is sealed:   true
-unkeyed dump is raw:    true
-sealed round-trips:     42
-wrong key                refused
-no key for a seal        refused
-raw, key configured      refused
-raw, no key, INI off     refused
-their blob, our key      refused
-short key: refused (told how to fix it)
+checksum round-trips:  42
+authed round-trips:    42
+checksum blob, authed sandbox  refused
+authed blob, checksum sandbox  refused
+downgraded blob, authed        refused
+forgery is a valid checksum    true
+their key, our sandbox         refused
+authed without a key           refused
+checksum with a key            refused
+key too short                  refused
 
-sweep covered every byte:  true
-nothing ran:               true
-every truncation refused: true
+checksum: every corruption refused: true
+checksum: every truncation refused: true
+
+authed: every corruption refused: true
+authed: every truncation refused: true

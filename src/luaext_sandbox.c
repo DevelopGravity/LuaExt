@@ -936,44 +936,33 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, compileBinary)
 	 * blob nothing can vouch for is to refuse it.
 	 */
 	if (luaext_seal_is_sealed(ZSTR_VAL(bytecode), ZSTR_LEN(bytecode))) {
-		if (sandbox->policy.bytecode_key == NULL) {
-			zend_throw_exception(
-				luaext_ce_bytecode_integrity_error,
-				"This bytecode is sealed, but the sandbox has no SandboxConfig::$bytecodeKey "
-				"to verify it with. Configure the key it was sealed with.",
-				0);
-			RETURN_THROWS();
-		}
-
-		if (!luaext_seal_open(ZSTR_VAL(bytecode), ZSTR_LEN(bytecode), sandbox->policy.bytecode_key,
-							  sandbox->policy.bytecode_key_len, &payload, &payload_len)) {
-			zend_throw_exception(
-				luaext_ce_bytecode_integrity_error,
-				"This bytecode does not verify against SandboxConfig::$bytecodeKey. It was "
-				"sealed with a different key, or it has been altered since -- either way it "
-				"is not something this sandbox will execute.",
-				0);
-			RETURN_THROWS();
-		}
-	} else if (sandbox->policy.bytecode_key != NULL) {
 		/*
-		 * No silent fallback. Configuring a key says this sandbox loads only what
-		 * it sealed; accepting a raw blob anyway would leave the path open while
-		 * the configuration reads as though it were closed, and an attacker who
-		 * can write the store would simply strip the seal.
+		 * Verified against the mode THIS SANDBOX is configured for, never the
+		 * one the blob announces. Trusting the blob's own byte would let an
+		 * authenticated chunk be downgraded to a checksummed one: recompute an
+		 * xxh128, which is unkeyed and anybody can do, and the key stops
+		 * mattering.
 		 */
-		zend_throw_exception(
-			luaext_ce_bytecode_integrity_error,
-			"This sandbox has a SandboxConfig::$bytecodeKey, so it loads only sealed "
-			"bytecode. This blob carries no seal.",
-			0);
-		RETURN_THROWS();
+		if (!luaext_seal_open(ZSTR_VAL(bytecode), ZSTR_LEN(bytecode),
+							  (luaext_seal_algo)sandbox->policy.seal_mode,
+							  sandbox->policy.bytecode_key, sandbox->policy.bytecode_key_len,
+							  &payload, &payload_len)) {
+			zend_throw_exception(
+				luaext_ce_bytecode_integrity_error,
+				"This bytecode does not verify. It was sealed by a sandbox configured "
+				"differently -- another SealMode, or another SandboxConfig::$bytecodeKey -- or "
+				"it has been altered since. Either way it is not something this sandbox will "
+				"execute.",
+				0);
+			RETURN_THROWS();
+		}
 	} else if (!LUAEXT_G(allow_raw_bytecode)) {
 		zend_throw_exception(
 			luaext_ce_bytecode_integrity_error,
-			"Loading unsealed bytecode is disabled. Set SandboxConfig::$bytecodeKey and seal "
-			"it with dump(), or set luaext.allow_raw_bytecode=1 in php.ini to accept blobs "
-			"nothing can vouch for.",
+			"This blob carries no seal, and loading unsealed bytecode is disabled. Anything "
+			"dump() produces is sealed and loads without any INI change; set "
+			"luaext.allow_raw_bytecode=1 in php.ini only to accept blobs from elsewhere, "
+			"which nothing can vouch for.",
 			0);
 		RETURN_THROWS();
 	} else {

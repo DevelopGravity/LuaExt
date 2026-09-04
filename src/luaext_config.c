@@ -442,6 +442,13 @@ static uint8_t luaext_config_overflow(const zval *value)
 			   : (uint8_t)LUAEXT_OVERFLOW_FAIL;
 }
 
+static uint8_t luaext_config_seal_mode(const zend_object *mode)
+{
+	return mode != NULL && mode == zend_enum_get_case_cstr(luaext_ce_seal_mode, "Authenticated")
+			   ? (uint8_t)LUAEXT_SEAL_AUTHENTICATED
+			   : (uint8_t)LUAEXT_SEAL_CHECKSUM;
+}
+
 static void luaext_config_default_limits(luaext_limits *out)
 {
 	out->memory_bytes = LUAEXT_DEFAULT_MEMORY_BYTES;
@@ -545,7 +552,7 @@ static bool luaext_config_vfs_quota(zend_object *quota, luaext_vfs_quota *out)
 
 static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 								zend_object *filesystem, bool seed_is_fixed, bool deterministic,
-								const zend_string *bytecode_key)
+								const zend_object *seal_mode, const zend_string *bytecode_key)
 {
 	bool debug_hooks = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "debugHooks");
 	bool vfs = capabilities != NULL && LUAEXT_GET_BOOL(capabilities, "vfs");
@@ -601,6 +608,35 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	 * bytecode was vouched for. Refused here rather than at first use, in the
 	 * same spirit as every other unsatisfiable combination on this path.
 	 */
+	/*
+	 * The mode and the key have to agree. Each half alone is a host saying one
+	 * thing and getting another: a key with Checksum would never be used, and
+	 * Authenticated without one has nothing to authenticate with. Refused here
+	 * rather than resolved silently, exactly as a fixed seed without
+	 * deterministic is.
+	 */
+	if (luaext_config_seal_mode((const zend_object *)seal_mode) == LUAEXT_SEAL_AUTHENTICATED &&
+		bytecode_key == NULL) {
+		zend_throw_exception(
+			luaext_ce_configuration_error,
+			"SealMode::Authenticated seals bytecode with an HMAC, so it needs "
+			"SandboxConfig::$bytecodeKey. Pass one from random_bytes(32), or leave the mode "
+			"at SealMode::Checksum, which needs no key and still catches corruption.",
+			0);
+		return false;
+	}
+
+	if (luaext_config_seal_mode((const zend_object *)seal_mode) == LUAEXT_SEAL_CHECKSUM &&
+		bytecode_key != NULL) {
+		zend_throw_exception(
+			luaext_ce_configuration_error,
+			"SandboxConfig::$bytecodeKey is only used by SealMode::Authenticated, and this "
+			"sandbox seals with SealMode::Checksum, which is unkeyed. Pass "
+			"sealMode: SealMode::Authenticated to use the key, or drop it.",
+			0);
+		return false;
+	}
+
 	if (bytecode_key != NULL && ZSTR_LEN(bytecode_key) < LUAEXT_SEAL_MIN_KEY_LEN) {
 		zend_throw_exception_ex(
 			luaext_ce_configuration_error, 0,
@@ -677,13 +713,13 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *limits,
 										zend_object *vfs_quota, zend_object *filesystem,
 										bool seed_is_fixed, zend_long seed, bool deterministic,
-										bool cache_compiled_chunks, zend_string *bytecode_key,
-										luaext_policy *policy)
+										bool cache_compiled_chunks, zend_object *seal_mode,
+										zend_string *bytecode_key, luaext_policy *policy)
 {
 	memset(policy, 0, sizeof(*policy));
 
 	if (!luaext_config_check(capabilities, limits, filesystem, seed_is_fixed, deterministic,
-							 bytecode_key)) {
+							 seal_mode, bytecode_key)) {
 		return false;
 	}
 
@@ -699,6 +735,7 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	policy->seed_is_fixed = seed_is_fixed;
 	policy->seed = seed_is_fixed ? (uint64_t)seed : 0;
 	policy->cache_compiled_chunks = cache_compiled_chunks;
+	policy->seal_mode = luaext_config_seal_mode(seal_mode);
 	policy->bytecode_key = bytecode_key != NULL ? ZSTR_VAL(bytecode_key) : NULL;
 	policy->bytecode_key_len = bytecode_key != NULL ? ZSTR_LEN(bytecode_key) : 0;
 
@@ -715,7 +752,7 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 	if (config == NULL || Z_TYPE_P(config) != IS_OBJECT) {
 		/* No configuration at all is the untrusted baseline with default limits. */
 		return luaext_config_resolve_parts(NULL, NULL, NULL, NULL, false, 0, false, false, NULL,
-										   policy);
+										   NULL, policy);
 	}
 
 	object = Z_OBJ_P(config);
@@ -728,6 +765,7 @@ bool luaext_config_resolve(zval *config, luaext_policy *policy)
 		LUAEXT_GET_OBJECT(object, "vfsQuota"), LUAEXT_GET_OBJECT(object, "filesystem"),
 		Z_TYPE_P(seed) == IS_LONG, Z_TYPE_P(seed) == IS_LONG ? Z_LVAL_P(seed) : 0,
 		LUAEXT_GET_BOOL(object, "deterministic"), LUAEXT_GET_BOOL(object, "cacheCompiledChunks"),
+		LUAEXT_GET_OBJECT(object, "sealMode"),
 		Z_TYPE_P(LUAEXT_GET(object, "bytecodeKey")) == IS_STRING
 			? Z_STR_P(LUAEXT_GET(object, "bytecodeKey"))
 			: NULL,
@@ -1189,12 +1227,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	bool seed_is_null = true;
 	bool deterministic = false;
 	bool cache_compiled_chunks = false;
+	zend_object *seal_mode = NULL;
 	zend_string *bytecode_key = NULL;
 	zend_object *object;
 	luaext_policy policy;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 13)
+	ZEND_PARSE_PARAMETERS_START(0, 14)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(capabilities, luaext_ce_capabilities)
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(limits, luaext_ce_limits)
@@ -1208,6 +1247,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	Z_PARAM_LONG_OR_NULL(seed, seed_is_null)
 	Z_PARAM_BOOL(deterministic)
 	Z_PARAM_BOOL(cache_compiled_chunks)
+	Z_PARAM_OBJ_OF_CLASS(seal_mode, luaext_ce_seal_mode)
 	Z_PARAM_STR_OR_NULL(bytecode_key)
 	ZEND_PARSE_PARAMETERS_END();
 
@@ -1226,8 +1266,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	 * because resolution is pure.
 	 */
 	if (!luaext_config_resolve_parts(capabilities, limits, vfs_quota, filesystem, !seed_is_null,
-									 seed, deterministic, cache_compiled_chunks, bytecode_key,
-									 &policy)) {
+									 seed, deterministic, cache_compiled_chunks, seal_mode,
+									 bytecode_key, &policy)) {
 		RETURN_THROWS();
 	}
 
@@ -1301,6 +1341,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	LUAEXT_SET(object, "deterministic", &value);
 	ZVAL_BOOL(&value, cache_compiled_chunks);
 	LUAEXT_SET(object, "cacheCompiledChunks", &value);
+
+	if (seal_mode == NULL) {
+		seal_mode = zend_enum_get_case_cstr(luaext_ce_seal_mode, "Checksum");
+	}
+
+	ZVAL_OBJ_COPY(&value, seal_mode);
+	LUAEXT_SET(object, "sealMode", &value);
 
 	if (bytecode_key != NULL) {
 		ZVAL_STR_COPY(&value, bytecode_key);

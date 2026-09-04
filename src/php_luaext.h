@@ -56,6 +56,7 @@ extern zend_class_entry *luaext_ce_output_mode;
 extern zend_class_entry *luaext_ce_overflow_behavior;
 extern zend_class_entry *luaext_ce_profiler_unit;
 extern zend_class_entry *luaext_ce_limit_support;
+extern zend_class_entry *luaext_ce_seal_mode;
 
 /*
  * Exceptions. RuntimeError and its subclasses are the only ones a Lua script

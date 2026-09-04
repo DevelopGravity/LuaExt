@@ -566,9 +566,15 @@ static int luaext_baselib_load(lua_State *L)
 	 * Gating only the host side would leave this door open while the
 	 * configuration read as though raw bytecode were off.
 	 *
-	 * A script cannot seal anything: it never sees the key. So with the INI
-	 * off there is no script-side path to the binary loader at all, which is
-	 * the intent rather than a side effect.
+	 * THE SCRIPT SIDE NEVER CONSULTS A SEAL, and must not start. The default
+	 * seal is an unkeyed xxh128 checksum, which a script could compute for
+	 * itself out of string.char() -- so "accept a sealed blob here" would be a
+	 * bypass wearing the word "sealed", not a check. Sealing answers a question
+	 * the HOST asks about bytes it is about to load; it can never be a
+	 * permission for a script.
+	 *
+	 * So this gate is the capability AND the INI, unconditionally, and with the
+	 * INI off there is no script-side path to the binary loader at all.
 	 */
 	bool allow_binary = sandbox != NULL &&
 						luaext_has_cap(&sandbox->policy, LUAEXT_CAP_LOAD_BYTECODE) &&

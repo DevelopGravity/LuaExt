@@ -516,22 +516,28 @@ the other, and only you know which you have.
 
 ### If the sandbox is per-request: cache sealed bytecode
 
-`compile()` + `dump()` produces a binary chunk that `compileBinary()` loads faster than
-parsing: 30 µs against 73 µs on a 3.5 KB script, or **1.5× on a whole
-construct/eval/close cycle** (84 µs against 129 µs) — the case the in-sandbox cache
-cannot help with.
+`compile()` + `dump()` produces a binary chunk that `compileBinary()` loads far faster
+than parsing, and the gap widens as scripts grow:
 
-Those are the *sealed* figures, and they are the ones that matter, because sealed is the
-supported path. The ratio holds as scripts grow — 2.6× against parsing at 3.8 KB, 39 KB
-and 200 KB alike — but the composition changes: verification is 23 µs of the 34 µs load at
-3.8 KB and 1251 µs of 1720 µs at 200 KB, because ext/hash's SHA-256 runs at roughly
-240 MB/s here with no hardware acceleration. An unsealed load skips that and is 2.1× end
-to end rather than 1.5×, which is the gap the table below exists to justify, not a reason
-to prefer it.
+| Script | Parse | Sealed (checksum) | Sealed (HMAC) |
+|---|---:|---:|---:|
+| 3.8 KB | 87 µs | **11 µs** (7.6×) | 33 µs (2.6×) |
+| 200 KB | 4348 µs | **488 µs** (8.9×) | 1602 µs (2.7×) |
 
-Bytecode is dangerous to load, so the extension does two things about it. Set a key and
-blobs are sealed with an HMAC and verified before Lua sees them; leave it unset and
-unsealed blobs are refused entirely unless an operator sets `luaext.allow_raw_bytecode=1`.
+Bytecode is dangerous to load, so everything `dump()` produces is sealed and
+`compileBinary()` verifies it first. The default seal is an unkeyed **xxh128 checksum**:
+no key to manage, no INI to open, and 25 µs on a 297 KB blob. Only blobs from *elsewhere*
+— `string.dump()` output, a build step — need `luaext.allow_raw_bytecode=1`.
+
+```php
+$cache = new InProcessBytecodeCache($capabilities);   // no key needed
+```
+
+Switch to `SealMode::Authenticated` when the store might be reachable by another process:
+it seals with HMAC-SHA256 over a key you supply, so a blob sealed under one key will not
+load under another and accidental sharing fails closed instead of working. It costs about
+48× the checksum (1219 µs against 25 µs on 297 KB), which is still ahead of a 4.4 ms
+parse.
 
 ```php
 use DevelopGravity\LuaExt\Capabilities;
@@ -543,20 +549,14 @@ final class SealedBytecodeCache
     /** @var array<string, string> */
     private array $compiled = [];
 
-    // One key per process, never written next to the bytecode it seals.
-    private readonly string $key;
-
     public function __construct(private readonly Capabilities $capabilities)
     {
-        $this->key = random_bytes(32);
     }
 
     public function sandbox(): Sandbox
     {
-        return new Sandbox(new SandboxConfig(
-            capabilities: $this->capabilities,
-            bytecodeKey: $this->key,
-        ));
+        // Default SealMode::Checksum: no key, and dump() still seals.
+        return new Sandbox(new SandboxConfig(capabilities: $this->capabilities));
     }
 
     public function bytecodeFor(string $source, string $chunkName): string

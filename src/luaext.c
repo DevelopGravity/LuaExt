@@ -55,6 +55,7 @@ zend_class_entry *luaext_ce_output_mode;
 zend_class_entry *luaext_ce_overflow_behavior;
 zend_class_entry *luaext_ce_profiler_unit;
 zend_class_entry *luaext_ce_limit_support;
+zend_class_entry *luaext_ce_seal_mode;
 
 zend_class_entry *luaext_ce_lua_throwable;
 zend_class_entry *luaext_ce_lua_exception;
@@ -163,6 +164,7 @@ static void luaext_register_classes(void)
 	luaext_ce_overflow_behavior = register_class_DevelopGravity_LuaExt_OverflowBehavior();
 	luaext_ce_profiler_unit = register_class_DevelopGravity_LuaExt_ProfilerUnit();
 	luaext_ce_limit_support = register_class_DevelopGravity_LuaExt_LimitSupport();
+	luaext_ce_seal_mode = register_class_DevelopGravity_LuaExt_SealMode();
 
 	luaext_ce_lua_method_attribute = register_class_DevelopGravity_LuaExt_LuaMethod();
 

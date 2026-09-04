@@ -285,6 +285,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
 	luaext_function_obj *function;
 	luaext_sandbox *sandbox;
 	luaext_function_dump_ctx ctx = {0};
+	zend_string *sealed;
 	lua_State *L;
 	bool strip = true;
 	int status;
@@ -377,21 +378,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
 	smart_str_0(&ctx.buf);
 
 	/*
-	 * Sealed when the sandbox has a key, raw otherwise.
+	 * Always sealed, in whichever way the sandbox is configured for -- an
+	 * unkeyed checksum by default, an HMAC when the host supplied a key.
 	 *
-	 * Producing bytecode was never the dangerous half, so there is no gate here
-	 * -- but what comes out of an unkeyed sandbox is a blob compileBinary() will
-	 * refuse unless luaext.allow_raw_bytecode is on, because nothing can vouch
-	 * for it. The key is what makes a dump loadable again.
+	 * Producing bytecode was never the dangerous half, so there is no gate on
+	 * this path. Sealing unconditionally is what makes a dump loadable again
+	 * without an operator opening luaext.allow_raw_bytecode: what comes back
+	 * can be vouched for, so it does not need the escape hatch meant for blobs
+	 * that cannot.
 	 */
-	if (sandbox->policy.bytecode_key != NULL) {
-		zend_string *sealed =
-			luaext_seal_wrap(ZSTR_VAL(ctx.buf.s), ZSTR_LEN(ctx.buf.s), sandbox->policy.bytecode_key,
-							 sandbox->policy.bytecode_key_len);
+	sealed = luaext_seal_wrap(ZSTR_VAL(ctx.buf.s), ZSTR_LEN(ctx.buf.s),
+							  (luaext_seal_algo)sandbox->policy.seal_mode,
+							  sandbox->policy.bytecode_key, sandbox->policy.bytecode_key_len);
 
-		smart_str_free(&ctx.buf);
-		RETURN_STR(sealed);
-	}
-
-	RETURN_STR(ctx.buf.s);
+	smart_str_free(&ctx.buf);
+	RETURN_STR(sealed);
 }

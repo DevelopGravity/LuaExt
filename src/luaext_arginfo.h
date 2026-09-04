@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: ec266cdd272b488fc87963d308dcb8a663835a02 */
+ * Stub hash: 0c928f59aa46493fcc284422b51560c28ee5efc7 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -83,6 +83,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig___const
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, deterministic, _IS_BOOL, 0, "false")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cacheCompiledChunks, _IS_BOOL, 0, "false")
+	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, sealMode, DevelopGravity\\LuaExt\\SealMode, 0, "DevelopGravity\\LuaExt\\SealMode::Checksum")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bytecodeKey, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
@@ -539,6 +540,17 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_LimitSupport(void)
 	return class_entry;
 }
 
+static zend_class_entry *register_class_DevelopGravity_LuaExt_SealMode(void)
+{
+	zend_class_entry *class_entry = zend_register_internal_enum("DevelopGravity\\LuaExt\\SealMode", IS_UNDEF, NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Checksum", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Authenticated", NULL);
+
+	return class_entry;
+}
+
 static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaMethod(void)
 {
 	zend_class_entry ce, *class_entry;
@@ -901,6 +913,13 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxConfig(void
 	zend_string *property_cacheCompiledChunks_name = zend_string_init("cacheCompiledChunks", sizeof("cacheCompiledChunks") - 1, 1);
 	zend_declare_typed_property(class_entry, property_cacheCompiledChunks_name, &property_cacheCompiledChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
 	zend_string_release(property_cacheCompiledChunks_name);
+
+	zval property_sealMode_default_value;
+	ZVAL_UNDEF(&property_sealMode_default_value);
+	zend_string *property_sealMode_name = zend_string_init("sealMode", sizeof("sealMode") - 1, 1);
+	zend_string *property_sealMode_class_DevelopGravity_LuaExt_SealMode = zend_string_init("DevelopGravity\\LuaExt\\SealMode", sizeof("DevelopGravity\\LuaExt\\SealMode")-1, 1);
+	zend_declare_typed_property(class_entry, property_sealMode_name, &property_sealMode_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_CLASS(property_sealMode_class_DevelopGravity_LuaExt_SealMode, 0, 0));
+	zend_string_release(property_sealMode_name);
 
 	zval property_bytecodeKey_default_value;
 	ZVAL_UNDEF(&property_bytecodeKey_default_value);
