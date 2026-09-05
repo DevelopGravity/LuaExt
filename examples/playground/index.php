@@ -40,6 +40,37 @@ use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
 use DevelopGravity\LuaExt\VfsQuota;
 
+// The safety net for the one failure every other message here depends on: the
+// extension itself not being loaded. Without this, the first Sandbox::class
+// reference dies as "Class ... not found" -- technically true, entirely
+// unhelpful, and rendered as a blank page or a JSON parse error in the UI.
+// Checked before anything touches the API, answered in the shape the caller
+// speaks: JSON for a POST, a readable page for a browser.
+if (!extension_loaded('luaext')) {
+    $advice = sprintf(
+        "The luaext extension is not loaded in this PHP (%s, %s).\n\n"
+        . "Load it explicitly:\n"
+        . "    php -d extension=modules/luaext.so -S localhost:8080 examples/playground/index.php\n\n"
+        . "or install it for this PHP:\n"
+        . "    pie install developgravity/lua-ext\n\n"
+        . "php.ini in use: %s",
+        PHP_VERSION,
+        PHP_SAPI,
+        php_ini_loaded_file() ?: '(none)',
+    );
+
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'errorClass' => 'ExtensionNotLoaded', 'message' => $advice]);
+    } else {
+        header('Content-Type: text/plain; charset=utf-8');
+        http_response_code(500);
+        echo "LuaExt Playground\n=================\n\n", $advice, "\n";
+    }
+
+    exit(1);
+}
+
 // Chunk names need an @ prefix or errors lose their line numbers (compile() does
 // not normalise the name the way validate() does).
 const CHUNK_NAME = '@playground.lua';
@@ -911,6 +942,7 @@ function buildLimitsFromPayload(array $payload): Limits
         maxSourceBytes: readClampedBytes($rawLimits, 'maxSourceBytes', 1048576, 1024, MAX_VFS_FILE_BYTES),
         maxConversionDepth: readClampedInt($rawLimits, 'maxConversionDepth', 64, 1, 256),
         maxCachedChunks: readClampedInt($rawLimits, 'maxCachedChunks', 64, 1, 1024),
+        billHostTime: readBool($rawLimits, 'billHostTime', false),
     );
 }
 
@@ -1910,6 +1942,7 @@ Loopback-only development tool. The <strong>Host classes</strong> panel evaluate
 <details><summary>Advanced limits</summary><div id="limit-advanced-grid"></div></details>
 <div class="field"><label for="limit-outputOverflow">outputOverflow</label>
 <select id="limit-outputOverflow"><option>Fail</option><option>Truncate</option></select></div>
+<div class="checkbox-field"><input type="checkbox" id="limit-billHostTime"><label for="limit-billHostTime">billHostTime <span class="muted">(bill host callbacks to the script)</span></label></div>
 <p class="muted">cpuSeconds and wallClockSeconds are capped at <span id="seconds-cap"></span>s by the playground (php -S is single-worker).</p>
 <details><summary>VFS quota</summary><div id="quota-grid"></div>
 <div class="checkbox-field"><input type="checkbox" id="quota-billWallTime"><label for="quota-billWallTime">billWallTime</label></div>
@@ -2057,6 +2090,7 @@ function defaultState() {
         limits: Object.fromEntries(limitDefinitions.map((definition) => [definition.key, definition.defaultValue])),
         outputOverflow: 'Fail',
         vfsQuota: Object.fromEntries(quotaDefinitions.map((definition) => [definition.key, definition.defaultValue])),
+        billHostTime: false,
         billWallTime: false,
         outputMode: 'Buffer',
         outputChunkBytes: 8192,
@@ -2142,6 +2176,7 @@ function applyStateToForm(state) {
         const value = state.vfsQuota[definition.key];
         byId('quota-' + definition.key).value = definition.isBytes ? formatByteSize(value) : value;
     }
+    byId('limit-billHostTime').checked = state.billHostTime;
     byId('quota-billWallTime').checked = state.billWallTime;
     byId('output-mode').value = state.outputMode;
     byId('output-chunk-bytes').value = formatByteSize(state.outputChunkBytes);
@@ -2204,6 +2239,7 @@ function collectStateFromForm() {
                 ? parseByteSize(byId('quota-' + definition.key).value)
                 : numberOrNull(byId('quota-' + definition.key).value, false)],
         )),
+        billHostTime: byId('limit-billHostTime').checked,
         billWallTime: byId('quota-billWallTime').checked,
         outputMode: byId('output-mode').value,
         outputChunkBytes: parseByteSize(byId('output-chunk-bytes').value),
@@ -2249,7 +2285,7 @@ function collectPayload() {
         source: state.source,
         inputJson: state.inputJson,
         capabilities: { ...state.capabilities, osEnvAllowList: state.osEnvAllowList },
-        limits: { ...state.limits, outputOverflow: state.outputOverflow },
+        limits: { ...state.limits, outputOverflow: state.outputOverflow, billHostTime: state.billHostTime },
         vfsQuota: { ...state.vfsQuota, billWallTime: state.billWallTime },
         outputMode: state.outputMode,
         outputChunkBytes: state.outputChunkBytes,

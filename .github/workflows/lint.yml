@@ -198,6 +198,14 @@ jobs:
           set -euo pipefail
           php tools/check-docs-api.php
 
+      # The playground drifted the very first time a new Limits field shipped
+      # (billHostTime), and the miss surfaced as a user report. Same stub
+      # source of truth, same job.
+      - name: Playground covers the config surface
+        run: |
+          set -euo pipefail
+          php tools/check-playground-sync.php
+
   # -------------------------------------------------------------------
   # The watchdog thread has no TSRM context, so a LUAEXT_G() from it
   # would silently read another thread's module globals rather than

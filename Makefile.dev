@@ -122,6 +122,7 @@ check:
 	: "-n so the stubs can be declared: a developer of this extension normally has"; \
 	: "it loaded system-wide, and that copy is whatever was last installed."; \
 	run docs-api              "" "" $(PHP) -n tools/check-docs-api.php; \
+	run playground-sync       "" "" $(PHP) -n tools/check-playground-sync.php; \
 	run watchdog-purity       "" "" tools/check-watchdog-purity.sh; \
 	run banned-idioms         "" "" tools/check-banned-idioms.sh; \
 	run linkage               "" "" tools/check-linkage.sh; \
