@@ -31,23 +31,33 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config);
 void luaext_output_shutdown(luaext_sandbox *sandbox);
 
 /*
+ * What a refused write ran out of. Both refusals used to come back as one
+ * `false`, so a memory refusal was reported with the output-budget message --
+ * untrue, and it pointed the host at the one limit that could not fix it.
+ * ACCEPTED is 0 so leftover boolean tests invert and get caught rather than
+ * quietly passing.
+ */
+typedef enum {
+	LUAEXT_OUTPUT_ACCEPTED = 0,
+	LUAEXT_OUTPUT_REFUSED_BUDGET, /* outputBytes is spent; raise LUAEXT_ERR_OUTPUT */
+	LUAEXT_OUTPUT_REFUSED_MEMORY, /* memoryBytes cannot hold the buffer; raise LUAEXT_ERR_MEMORY */
+} luaext_output_status;
+
+/*
  * Write one chunk.
  *
- * THE CONTRACT CALLERS CODE AGAINST -- print, io.write and warn all rely on it:
- *
- *   true   written, or truncated and recorded. Carry on; nothing to report.
- *   false  the caller must stop and raise.
- *
- * The Truncate-versus-Fail decision lives here rather than in the caller,
- * because this is what knows the OverflowBehavior. A caller that sees false
- * raises LUAEXT_ERR_OUTPUT as FATAL -- a script must not be able to pcall its
- * way past its own output budget.
+ * The contract callers code against -- print, io.write and warn all rely on it:
+ * ACCEPTED means written (or truncated and recorded), either refusal means stop
+ * and raise the named error as fatal. The Truncate-versus-Fail decision lives
+ * here rather than in the caller, because this is what knows the
+ * OverflowBehavior; a script must not be able to pcall its way past either
+ * budget.
  *
  * Callers that hold unreleased zvals must not raise directly; they ask the
  * timer layer to request an interrupt instead, and the next hook tick raises it
  * for them. print holds nothing and may raise on the spot.
  */
-bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length);
+luaext_output_status luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length);
 
 /*
  * As above, naming the stream the bytes came from.
@@ -56,8 +66,8 @@ bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t lengt
  * first, because the host is told $isStderr once per chunk: a chunk carrying
  * both would have to lie about half of it.
  */
-bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size_t length,
-								 bool is_stderr);
+luaext_output_status luaext_output_write_channel(luaext_sandbox *sandbox, const char *data,
+												 size_t length, bool is_stderr);
 
 /*
  * What Sandbox::getOutput() / takeOutput() report. `take` empties the buffer and

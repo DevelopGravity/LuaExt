@@ -277,15 +277,26 @@ static int luaext_baselib_print(lua_State *L)
 	 * The write is the last thing this frame does that can fail, and it owns
 	 * nothing when it happens: the buffer has already collapsed into the string
 	 * on the stack, and there is no zval or emalloc'd block here at all. That
-	 * matters twice over -- false means the budget is spent and the host asked to
-	 * fail rather than truncate, so this raises on the spot; and the sink itself
-	 * may unwind, because in Callback mode it calls a host callback that can
-	 * throw. Either way nothing is stranded, and the traceback names the print
-	 * that overran.
+	 * matters twice over -- a refusal means a budget is spent and the host asked
+	 * to fail rather than truncate, so this raises on the spot; and the sink
+	 * itself may unwind, because in Callback mode it calls a host callback that
+	 * can throw. Either way nothing is stranded, and the traceback names the
+	 * print that overran. Each refusing budget gets its own error, so the host
+	 * is pointed at the limit that actually ran out.
 	 */
-	if (!luaext_output_write(sandbox, line, length)) {
+	switch (luaext_output_write(sandbox, line, length)) {
+	case LUAEXT_OUTPUT_ACCEPTED:
+		break;
+
+	case LUAEXT_OUTPUT_REFUSED_BUDGET:
 		luaext_error_raise(L, LUAEXT_ERR_OUTPUT, true,
 						   "The sandbox has written all the output it is allowed");
+		break;
+
+	case LUAEXT_OUTPUT_REFUSED_MEMORY:
+		luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+						   "The sandbox's memory budget cannot hold this output");
+		break;
 	}
 
 	lua_pop(L, 1);
@@ -388,9 +399,19 @@ static int luaext_baselib_warn(lua_State *L)
 
 	/* Same reasoning as print: nothing is owned here, so both the refusal and an
 	 * unwind out of a Callback-mode sink are safe. */
-	if (!luaext_output_write(sandbox, line, length)) {
+	switch (luaext_output_write(sandbox, line, length)) {
+	case LUAEXT_OUTPUT_ACCEPTED:
+		break;
+
+	case LUAEXT_OUTPUT_REFUSED_BUDGET:
 		luaext_error_raise(L, LUAEXT_ERR_OUTPUT, true,
 						   "The sandbox has written all the output it is allowed");
+		break;
+
+	case LUAEXT_OUTPUT_REFUSED_MEMORY:
+		luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+						   "The sandbox's memory budget cannot hold this output");
+		break;
 	}
 
 	lua_pop(L, 1);

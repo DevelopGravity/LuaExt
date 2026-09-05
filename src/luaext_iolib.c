@@ -65,14 +65,24 @@ static int luaext_iolib_write_values(lua_State *L, int first, bool is_stderr)
 				lua_pushfstring(L, "string or number expected, got %s", luaL_typename(L, index)));
 		}
 
-		if (!luaext_output_write_channel(sandbox, text, length, is_stderr)) {
-			/*
-			 * Fatal, exactly as print()'s overflow is. A script that could catch
-			 * its own output limit would write again, so OutputLimitError is one
-			 * of the errors pcall must not swallow.
-			 */
+		/*
+		 * Both refusals are fatal, exactly as print()'s overflow is: a script
+		 * that could catch its own limit would write again. Each names the
+		 * budget that actually refused, since the host tunes them separately.
+		 */
+		switch (luaext_output_write_channel(sandbox, text, length, is_stderr)) {
+		case LUAEXT_OUTPUT_ACCEPTED:
+			break;
+
+		case LUAEXT_OUTPUT_REFUSED_BUDGET:
 			luaext_error_raise(L, LUAEXT_ERR_OUTPUT, true,
 							   "The sandbox has written all the output it is allowed");
+			break;
+
+		case LUAEXT_OUTPUT_REFUSED_MEMORY:
+			luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+							   "The sandbox's memory budget cannot hold this output");
+			break;
 		}
 	}
 

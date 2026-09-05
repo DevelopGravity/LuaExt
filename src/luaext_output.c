@@ -459,13 +459,13 @@ void luaext_output_shutdown(luaext_sandbox *sandbox)
  * Writing
  * ---------------------------------------------------------------------- */
 
-bool luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length)
+luaext_output_status luaext_output_write(luaext_sandbox *sandbox, const char *data, size_t length)
 {
 	return luaext_output_write_channel(sandbox, data, length, false);
 }
 
-bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size_t length,
-								 bool is_stderr)
+luaext_output_status luaext_output_write_channel(luaext_sandbox *sandbox, const char *data,
+												 size_t length, bool is_stderr)
 {
 	luaext_output *out;
 	size_t accepted;
@@ -474,13 +474,13 @@ bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size
 	/* Teardown can still reach a print from a finaliser. Nothing to record and
 	 * nothing to report. */
 	if (sandbox == NULL || sandbox->closed) {
-		return true;
+		return LUAEXT_OUTPUT_ACCEPTED;
 	}
 
 	out = &sandbox->out;
 
 	if (data == NULL || length == 0) {
-		return true;
+		return LUAEXT_OUTPUT_ACCEPTED;
 	}
 
 	/*
@@ -491,7 +491,9 @@ bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size
 	 */
 	if (is_stderr != out->buffered_is_stderr && smart_str_get_len(&out->buf) > 0) {
 		if (!luaext_output_flush(sandbox, true)) {
-			return true; /* an exception is pending; the caller reports it */
+			/* An exception is pending; the caller reports it. ACCEPTED so no
+			 * second error is raised over the real one. */
+			return LUAEXT_OUTPUT_ACCEPTED;
 		}
 	}
 
@@ -529,15 +531,11 @@ bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size
 
 	if (accepted > 0 && out->mode != (uint8_t)LUAEXT_OUTPUT_DISCARD) {
 		if (!luaext_output_reserve(sandbox, accepted)) {
-			/*
-			 * The sandbox cannot afford to hold this. Reported through the same
-			 * channel as a budget breach because the header gives this function
-			 * exactly one way to say "stop": the caller raises, which is the
-			 * right outcome even if OutputLimitError is a narrower name than
-			 * the cause deserves.
-			 */
+			/* The memory budget, not the output budget, refused this. Saying so
+			 * is the point of the tri-state: the two limits are tuned
+			 * separately and the old shared `false` blamed the wrong one. */
 			out->truncated = true;
-			return false;
+			return LUAEXT_OUTPUT_REFUSED_MEMORY;
 		}
 
 		luaext_output_append(out, data, accepted);
@@ -549,21 +547,27 @@ bool luaext_output_write_channel(luaext_sandbox *sandbox, const char *data, size
 	 * output and the host is still owed them in order.
 	 */
 	if (!luaext_output_flush(sandbox, false)) {
+		/* Normally raises the callback's own exception and never returns. The
+		 * exception-free failure -- call_user_function refusing a callback
+		 * validated at construction -- is close enough to unreachable that it
+		 * keeps the budget error rather than growing a fourth status. */
 		luaext_output_report_exception(sandbox);
-		return false;
+		return LUAEXT_OUTPUT_REFUSED_BUDGET;
 	}
 
 	if (!overflowed) {
-		return true;
+		return LUAEXT_OUTPUT_ACCEPTED;
 	}
 
 	/*
 	 * The one decision this file exists to make. Truncate has already recorded
-	 * the loss, so the script carries on none the wiser; Fail reports failure
-	 * and the caller raises a fatal OutputLimitError, which is the only form a
-	 * script cannot pcall its way past.
+	 * the loss, so the script carries on none the wiser; Fail reports the spent
+	 * budget and the caller raises a fatal OutputLimitError, which is the only
+	 * form a script cannot pcall its way past.
 	 */
-	return sandbox->policy.limits.output_overflow == (uint8_t)LUAEXT_OVERFLOW_TRUNCATE;
+	return sandbox->policy.limits.output_overflow == (uint8_t)LUAEXT_OVERFLOW_TRUNCATE
+			   ? LUAEXT_OUTPUT_ACCEPTED
+			   : LUAEXT_OUTPUT_REFUSED_BUDGET;
 }
 
 /* -------------------------------------------------------------------------

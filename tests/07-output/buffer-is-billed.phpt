@@ -36,6 +36,11 @@ $sandbox->close();
 // And a budget too small to hold the output refuses it rather than growing
 // past the ceiling. The Lua string itself fits; three copies of it in the
 // output buffer do not.
+//
+// The refusal is a MEMORY error, and this line used to expect OutputLimitError:
+// outputBytes is 0 here -- unbounded -- so "written all the output it is
+// allowed" was never the truth about this refusal. What ran out is the memory
+// budget, and the error now says so.
 $tight = new Sandbox(new SandboxConfig(limits: new Limits(
 	memoryBytes: 700000,
 	outputBytes: 0,
@@ -65,5 +70,5 @@ $tight->close();
 bool(true)
 int(200001)
 bool(true)
-DevelopGravity\LuaExt\Exception\OutputLimitError
+DevelopGravity\LuaExt\Exception\MemoryLimitError
 bool(true)
