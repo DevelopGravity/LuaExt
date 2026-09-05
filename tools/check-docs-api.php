@@ -38,6 +38,7 @@ const DEFAULT_DOCS = [
     __DIR__ . '/../docs/migrating-from-luasandbox.md',
     __DIR__ . '/../docs/performance.md',
     __DIR__ . '/../docs/platform-support.md',
+    __DIR__ . '/../docs/playground.md',
 ];
 
 /**

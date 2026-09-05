@@ -102,6 +102,7 @@ $sandbox->registerObject('text', new TextService());
 - [docs/cookbook.md](docs/cookbook.md) — practical recipes: host services (including a PDO/SQLite example), `FileSystem` backends, vendoring pure-Lua libraries, output capture, usage-based billing, coroutine patterns.
 - [docs/lua-api.md](docs/lua-api.md) — the Lua-side reference: exactly which standard library members are available, replaced or absent, plus `require()` and coroutine semantics.
 - [docs/exceptions.md](docs/exceptions.md) — the exception hierarchy, what a script can and cannot catch, and how to read a Lua traceback.
+- [docs/playground.md](docs/playground.md) — a browser playground in one file under `examples/`: every capability, limit and quota behind a Run button, with an in-memory VFS and live stats.
 
 **Choosing how to run it**
 
