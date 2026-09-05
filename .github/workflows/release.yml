@@ -189,6 +189,10 @@ jobs:
         env:
           LUAEXT_TARGET_REF: ${{ github.event.release.target_commitish || github.ref_name }}
           LUAEXT_TARGET_SHA: ${{ github.sha }}
+          # Without a token Composer's VCS resolution rides the runner pool's
+          # anonymous API rate limit and falls back to SSH on exhaustion; see
+          # pie-install.yml, where the macOS pool hit exactly that.
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         run: |
           set -euo pipefail
           php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
@@ -313,6 +317,8 @@ jobs:
 
       - name: pie install (Unix)
         if: runner.os != 'Windows'
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         run: |
           php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
           php /tmp/pie.phar install "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
@@ -321,6 +327,8 @@ jobs:
       - name: pie install (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         # pwsh does not stop on a failing native command, and Select-String
         # -Quiet only prints a boolean, so without explicit checks this step
         # could pass with nothing installed at all.

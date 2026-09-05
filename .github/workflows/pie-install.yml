@@ -72,6 +72,13 @@ jobs:
         env:
           LUAEXT_REF: ${{ github.head_ref || github.ref_name }}
           LUAEXT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Composer resolves the VCS repository through the GitHub API when it
+          # has a token; anonymously it is at the mercy of the runner pool's
+          # shared rate limit, and on rate-limit it falls back to `git clone`
+          # over SSH -- which a runner has no key for. The macOS pool exhausts
+          # the anonymous limit routinely, so the first-ever macOS leg failed
+          # with "Permission denied (publickey)" while Linux sailed through.
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         run: |
           set -euo pipefail
           php /tmp/pie.phar repository:add vcs \
