@@ -5,32 +5,42 @@
 # This wraps that build plus the repo's own tooling so day-to-day commands
 # are one word long.
 #
-# Usage:
-#   make -f Makefile.dev <target>
-# or, more conveniently, symlink it once:
-#   ln -s Makefile.dev GNUmakefile && make <target>
+# Usage: just `make <target>`. GNUmakefile at the repo root includes this file,
+# and GNU make prefers GNUmakefile over the generated Makefile -- see that file
+# for why, and for how to reach the generated one directly.
 #
-# macOS arm64 quick start: brew install php, then `make -f Makefile.dev build`.
+# The three commands that matter:
+#   make            build the extension (release)
+#   make dev        build + test + check — run this before you push
+#   make check      every gate CI runs, and nothing else
+#
+# macOS arm64 quick start: brew install php, then `make`.
 # No system Lua is ever required — Lua is vendored and compiled in-tree.
+#
+# EVERY RECURSIVE CALL INTO THE GENERATED MAKEFILE PASSES -f Makefile. Without
+# it, $(MAKE) re-reads GNUmakefile -> this file -> the same target, forever.
 
 SHELL := /bin/bash
 PHP ?= php
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 FUZZ_SECONDS ?= 30
 
-.PHONY: build build-debug test format format-check vendor-verify gen-stubs gen-stubs-check docs-check build-ide-stubs fuzz clean
+# Bare `make` builds, which is what it did before GNUmakefile existed.
+.DEFAULT_GOAL := build
+
+.PHONY: build build-debug test check dev leak-check format format-check vendor-verify gen-stubs gen-stubs-check docs-check fuzz clean clean-tests
 
 ## Configure + build a release extension build.
 build:
 	phpize
 	./configure
-	$(MAKE) -j$(JOBS)
+	$(MAKE) -f Makefile -j$(JOBS)
 
 ## Configure + build with --enable-luaext-debug.
 build-debug:
 	phpize
 	./configure --enable-luaext-debug
-	$(MAKE) -j$(JOBS)
+	$(MAKE) -f Makefile -j$(JOBS)
 
 ## Build (release) and run the .phpt suite.
 ## Seconds any single test may run before run-tests.php kills it.
@@ -47,15 +57,93 @@ build-debug:
 TEST_TIMEOUT ?= 10
 
 test: build
-	TEST_TIMEOUT=$(TEST_TIMEOUT) $(MAKE) test
+	TEST_TIMEOUT=$(TEST_TIMEOUT) $(MAKE) -f Makefile test
+
+## -------------------------------------------------------------------------
+## check — every gate CI runs, and nothing else.
+##
+## THIS LIST IS THE LOCAL COPY OF WHAT lint.yml AND build-matrix.yml RUN. If you
+## add a gate to CI, add it here in the same change; a `make check` that is
+## missing one lies by omission, which is worse than not having it.
+##
+## tools/check-lua-upstream.sh is deliberately ABSENT: it polls the network on a
+## schedule from upstream-watch.yml. It is not a pre-push gate and would make
+## this fail on a train.
+##
+## A SKIPPED CHECK IS NOT A PASSING CHECK. Four of these need a binary that may
+## not be installed, so each reports ok / FAIL / SKIPPED with an install hint,
+## and a skip exits non-zero exactly like a failure. Pass ALLOW_SKIP=1 to
+## downgrade skips to a warning -- which makes the loose behaviour something you
+## ask for by name rather than something you get by accident.
+## -------------------------------------------------------------------------
+ALLOW_SKIP ?= 0
+
+check:
+	@fail=0; skip=0; \
+	run() { \
+		local name="$$1" tool="$$2" hint="$$3"; shift 3; \
+		if [ -n "$$tool" ] && ! command -v "$$tool" >/dev/null 2>&1 && [ ! -x "$$tool" ]; then \
+			printf '  %-26s SKIPPED  (no %s — %s)\n' "$$name" "$$tool" "$$hint"; \
+			skip=$$((skip + 1)); return; \
+		fi; \
+		if out=$$("$$@" 2>&1); then \
+			printf '  %-26s ok\n' "$$name"; \
+		else \
+			printf '  %-26s FAIL\n' "$$name"; \
+			printf '%s\n' "$$out" | sed 's/^/      /'; \
+			fail=$$((fail + 1)); \
+		fi; \
+	}; \
+	echo "== gates =="; \
+	run clang-format          "$(CLANG_FORMAT)" "pip install clang-format==18.1.8 into .venv" \
+	    $(MAKE) -s -f Makefile.dev format-check; \
+	run editorconfig          ec "brew install editorconfig-checker" \
+	    ec -exclude 'third_party|luaext_arginfo\.h|ide-stubs' -disable-indentation; \
+	run shellcheck            shellcheck "brew install shellcheck" \
+	    bash -c 'shellcheck tools/*.sh'; \
+	run actionlint            actionlint "brew install actionlint" \
+	    actionlint; \
+	run workflow-php-version  "" "" tools/check-workflow-php-version.sh; \
+	run generated-artifacts   "" "" tools/check-generated.sh; \
+	run docs-api              "" "" $(PHP) tools/check-docs-api.php; \
+	run watchdog-purity       "" "" tools/check-watchdog-purity.sh; \
+	run banned-idioms         "" "" tools/check-banned-idioms.sh; \
+	run linkage               "" "" tools/check-linkage.sh; \
+	echo; \
+	if [ $$fail -gt 0 ]; then \
+		echo "$$fail gate(s) FAILED."; exit 1; \
+	elif [ $$skip -gt 0 ] && [ "$(ALLOW_SKIP)" != "1" ]; then \
+		echo "$$skip gate(s) could not run. A check that did not run is not a check"; \
+		echo "that passed — install the tool, or accept the gap with ALLOW_SKIP=1."; \
+		exit 1; \
+	else \
+		echo "all gates ok$$([ $$skip -gt 0 ] && echo " ($$skip skipped, allowed)")"; \
+	fi
+
+## The pre-push command: everything CI will do to this checkout.
+dev: test check
+
+## Run the suite against a debug PHP, which is the only build whose allocator
+## reports leaks — a release build and macOS `leaks` both say clean. See
+## CONTRIBUTING.md for the recipe that produces one; the driver script is local
+## and gitignored, so this only wires it up when it is present.
+leak-check:
+	@if [ ! -x .tools/test-debug-php.sh ]; then \
+		echo "No .tools/test-debug-php.sh — see CONTRIBUTING.md for the debug-PHP recipe."; \
+		exit 1; \
+	fi
+	.tools/test-debug-php.sh
 
 ## Formatting uses a PINNED clang-format (see .github/workflows/lint.yml).
 ## Versions disagree about output -- 18.1.3 and 18.1.8 differ on brace spacing
 ## in a macro -- so CI installs an exact version, and a mismatched local binary
 ## produces a diff CI then rejects. Get the same one with:
 ##   python3 -m venv .venv && .venv/bin/pip install clang-format==18.1.8
-## then: make -f Makefile.dev format CLANG_FORMAT=.venv/bin/clang-format
-CLANG_FORMAT ?= clang-format
+##
+## .venv/bin/clang-format is preferred automatically when it exists, because
+## that is where the pinned one goes and defaulting to whatever is on PATH means
+## defaulting to the wrong version. Override with CLANG_FORMAT=<path>.
+CLANG_FORMAT ?= $(shell [ -x .venv/bin/clang-format ] && echo .venv/bin/clang-format || echo clang-format)
 
 ## Reformat our own C sources in place. Vendored Lua (third_party/) and
 ## generated arginfo are never touched.
@@ -73,8 +161,8 @@ format-check:
 	find $$dirs -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_arginfo.h' -exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 ## Verify third_party/lua-5.5.1 still matches the pinned upstream tarball
-## plus patches/*.patch (tools/vendor-lua.sh belongs to the vendoring
-## workstream; this just calls it).
+## plus patches/*.patch. tools/vendor-lua.sh does the work; this just calls it.
+## Also run by `make check`, via tools/check-generated.sh.
 vendor-verify:
 	tools/vendor-lua.sh --check
 
@@ -91,20 +179,11 @@ gen-stubs-check:
 docs-check:
 	php tools/check-docs-api.php
 
-## Build the polished, IDE-facing stub package sources into ide-stubs/.
-## tools/build-ide-stubs.php belongs to the stub-authoring workstream.
-build-ide-stubs:
-	@if [ ! -f tools/build-ide-stubs.php ]; then \
-		echo "tools/build-ide-stubs.php not present yet."; exit 1; \
-	fi
-	$(PHP) tools/build-ide-stubs.php
-
 ## Build and run every fuzz/fuzz_*.c target for FUZZ_SECONDS each (default
-## 30s; CI's fuzz.yml uses a longer default). fuzz/ is a later-phase
-## deliverable of a different workstream.
+## 30s; CI's fuzz.yml uses a longer default).
 fuzz:
 	@if [ ! -f fuzz/Makefile ]; then \
-		echo "fuzz/ not present yet."; exit 1; \
+		echo "fuzz/Makefile is missing — this checkout is incomplete."; exit 1; \
 	fi
 	$(MAKE) -C fuzz
 	@for src in fuzz/fuzz_*.c; do \
@@ -118,8 +197,32 @@ fuzz:
 	done
 
 ## Remove build artifacts and tooling caches.
+##
+## THIS DELIBERATELY DOES NOT CALL THE GENERATED `make clean`. That target is
+## copied verbatim out of php-src's Makefile.global and runs
+##
+##     find . -name \*.lo -o -name \*.o -o -name \*.dep | xargs rm -f
+##
+## from the repository root. `find .` has never heard of .gitignore, so it walks
+## into .tools/, .venv/, a worktree -- anything parked in the tree. It deleted a
+## 300 MB php-src build here once, which is what prompted this.
+##
+## Same set of artifacts, same effect on the project, but pruned. The prune
+## clauses come FIRST because find evaluates left to right: putting them after
+## the -name tests would match the files before deciding not to descend.
+##
+## The unscoped one is still available on purpose, for a genuinely full sweep:
+##     make -f Makefile clean
+CLEAN_PRUNE = -path ./.git -o -path ./.tools -o -path ./.venv -o -path ./.idea
+
 clean:
-	@if [ -f Makefile ] && [ -f config.status ]; then $(MAKE) clean; fi
+	find . \( $(CLEAN_PRUNE) \) -prune -o \
+		\( -name '*.lo' -o -name '*.o' -o -name '*.dep' -o -name '*.la' \
+		   -o -name '*.a' -o -name '*.so' -o -name '*.gcno' -o -name '*.gcda' \) \
+		-type f -print0 | xargs -0 rm -f
+	find . \( $(CLEAN_PRUNE) \) -prune -o \
+		-name .libs -type d -print0 | xargs -0 rm -rf
+	rm -f modules/* libs/* 2>/dev/null || true
 	rm -rf .tools-cache ide-stubs
 	$(MAKE) -f Makefile.dev clean-tests
 

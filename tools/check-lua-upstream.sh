@@ -47,7 +47,7 @@ fail() {
 # --- Determine the currently vendored version -----------------------------
 #
 # third_party/lua-5.5.1/ is created and maintained by tools/vendor-lua.sh
-# (a sibling tool owned by the vendoring workstream, not by this script).
+# (tools/vendor-lua.sh does that; this script only reports what is available).
 # We read the version from the vendored directory's own name
 # (third_party/lua-X.Y.Z/) rather than parsing UPSTREAM_VERSION's internal
 # format, since the directory name is the one thing the repo layout

@@ -109,6 +109,10 @@ $sandbox->registerObject('text', new TextService());
 - [docs/performance.md](docs/performance.md) — what the sandbox costs, measured: the interpreter against stock Lua, and a matrix across the compile cache, output modes, filesystem backend shapes and the profiler.
 - [docs/migrating-from-luasandbox.md](docs/migrating-from-luasandbox.md) — the mechanical rename, and the behaviour changes that are not mechanical.
 
+**Working on it**
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to build (including the debug PHP that is the only thing able to see a leak), what every gate checks, where a new test belongs, and the C conventions that keep untrusted code contained.
+
 **Trusting it**
 
 - [SECURITY.md](SECURITY.md) — the threat model: what is and is not defended against, the trust model, and how to report a vulnerability.
