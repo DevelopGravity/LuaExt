@@ -236,16 +236,21 @@ static uint32_t luaext_config_open_libs(uint32_t caps)
 	}
 
 	/*
-	 * Exception 1: LUAEXT_LIB_CORO means our wrapper, never upstream's
-	 * luaopen_coroutine. The wrapper is what caps live coroutines and stops
-	 * resume() from returning a fatal error as `false, err` instead of
+	 * Exception 1: LUAEXT_LIB_CORO means upstream's luaopen_coroutine, which is
+	 * never installed. The wrapper in luaext_corolib.c is what caps live
+	 * coroutines and stops resume() returning a fatal as `false, err` instead of
 	 * re-raising it, so upstream's table would quietly undo two guarantees.
 	 *
-	 * So the bit is deliberately NOT set here, even though the capability
-	 * defaults to true: setting it would name a library that no opener
-	 * installs, which is worse than absent because it reads as done. A sandbox
-	 * therefore has no coroutine table at all, and Sandbox::features() reports
-	 * the capability as unimplemented rather than letting it look granted.
+	 * The bit therefore stays clear even though the capability defaults to true.
+	 * That is NOT the same as the capability being unimplemented: the wrapper is
+	 * installed by luaext_corolib_install() on its own, so a default sandbox has
+	 * a full coroutine table and Sandbox::features() reports the capability as
+	 * granted. This bitset says which UPSTREAM openers to run, and the answer for
+	 * coroutines is none of them.
+	 *
+	 * (This comment used to say a sandbox had no coroutine table at all and that
+	 * features() reported the capability unimplemented. Both were true before the
+	 * wrapper landed and neither has been true for several waves.)
 	 */
 
 	/*
@@ -598,11 +603,6 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	}
 
 	/*
-	 * The seed is Lua's string hash seed. Pinning it makes a run reproducible
-	 * and simultaneously makes hash flooding reproducible, so it is only
-	 * accepted from a host that has said out loud it wants determinism.
-	 */
-	/*
 	 * A key too short to be a key authenticates nothing while looking as though
 	 * it does, which is worse than no key at all -- the host would believe the
 	 * bytecode was vouched for. Refused here rather than at first use, in the
@@ -615,8 +615,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	 * rather than resolved silently, exactly as a fixed seed without
 	 * deterministic is.
 	 */
-	if (luaext_config_seal_mode((const zend_object *)seal_mode) == LUAEXT_SEAL_AUTHENTICATED &&
-		bytecode_key == NULL) {
+	if (luaext_config_seal_mode(seal_mode) == LUAEXT_SEAL_AUTHENTICATED && bytecode_key == NULL) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
 			"SealMode::Authenticated seals bytecode with an HMAC, so it needs "
@@ -626,8 +625,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 		return false;
 	}
 
-	if (luaext_config_seal_mode((const zend_object *)seal_mode) == LUAEXT_SEAL_CHECKSUM &&
-		bytecode_key != NULL) {
+	if (luaext_config_seal_mode(seal_mode) == LUAEXT_SEAL_CHECKSUM && bytecode_key != NULL) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
 			"SandboxConfig::$bytecodeKey is only used by SealMode::Authenticated, and this "
@@ -647,6 +645,11 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 		return false;
 	}
 
+	/*
+	 * The seed is Lua's string hash seed. Pinning it makes a run reproducible
+	 * and simultaneously makes hash flooding reproducible, so it is only
+	 * accepted from a host that has said out loud it wants determinism.
+	 */
 	if (seed_is_fixed && !deterministic) {
 		zend_throw_exception(
 			luaext_ce_configuration_error,
