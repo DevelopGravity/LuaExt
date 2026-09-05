@@ -82,6 +82,21 @@ for rule in "${RULES[@]}"; do
 	EOF
 done
 
+# One rule outside src/: the default `build` target in Makefile.dev must not
+# reconfigure a tree that is already configured. Bare `make` reaches it through
+# GNUmakefile from every context, including CI jobs that just configured with
+# flags -- an unguarded ./configure there silently threw that configuration
+# away (sanitizer legs built against the wrong PHP; debug legs built release).
+# Named targets like reconfigure and build-debug exist to reconfigure and are
+# exempt; only the default path is checked.
+if awk '/^build:/{f=1;next} f&&/^[^\t]/{f=0} f' Makefile.dev |
+	grep -E '\./configure' | grep -qv 'test -f Makefile'; then
+	printf '%s: Makefile.dev'"'"'s build target runs ./configure without the\n' \
+		"${PROGRAM_NAME}" >&2
+	printf 'test -f Makefile guard, so a bare make discards existing configuration.\n' >&2
+	status=1
+fi
+
 if [ "$status" -ne 0 ]; then
 	printf '\nIf one is genuinely correct, mark that line:\n    /* luaext-allow: <reason> */\n' >&2
 	exit 1
