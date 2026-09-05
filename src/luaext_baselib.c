@@ -641,10 +641,20 @@ static int luaext_baselib_load(lua_State *L)
 	 *
 	 * The one case this cannot see is a refused ALLOCATION inside the parser:
 	 * Lua raises that with its own preallocated string and no status survives
-	 * the return, so `load(huge)` still answers `fail, "not enough memory"`
-	 * where pcall would have re-raised. Closing that properly wants a latched
-	 * breach flag on the sandbox that every protected boundary consults, which
-	 * is a change to the allocator and error subsystems rather than to this one.
+	 * the return, so in principle `load(huge)` could answer
+	 * `fail, "not enough memory"` where pcall would have re-raised. Closing that
+	 * properly wants a latched breach flag on the sandbox that every protected
+	 * boundary consults, which is a change to the allocator and error subsystems
+	 * rather than to this one.
+	 *
+	 * IN PRACTICE IT HAS NOT BEEN REACHABLE. Every attempt to drive a parser-side
+	 * refusal produced a fatal MemoryLimitError instead, because the allocator's
+	 * refusal unwinds before load() can turn it into a return value.
+	 * tests/03-adversarial/pcall-cannot-catch-a-memory-breach.phpt now pins that
+	 * as its `load` case, so if a change to the error path ever does turn a limit
+	 * breach back into a value here, it fails rather than going unnoticed. The
+	 * hazard is left described because the reasoning still holds; what changed is
+	 * that it is now guarded.
 	 */
 	if (lua_gettop(L) == 2 && lua_isnil(L, 1) && luaext_error_is_fatal(L, 2)) {
 		lua_remove(L, 1);
