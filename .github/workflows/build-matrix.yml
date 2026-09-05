@@ -76,6 +76,36 @@ jobs:
           JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
           make -j"$JOBS"
 
+      # A debug leg that quietly builds release stays green while running none
+      # of the assertions it exists for -- which happened, when GNUmakefile's
+      # build target reconfigured over this job's flags. The generated Makefile
+      # carries -DLUAEXT_DEBUG=1 exactly when the flag survived.
+      - name: Assert the configuration survived the build
+        run: |
+          if [ "${{ matrix.build_type }}" = "debug" ]; then
+            grep -q -- '-DLUAEXT_DEBUG=1' Makefile || {
+              echo "::error::This is a debug leg but the built Makefile has no -DLUAEXT_DEBUG=1 — something reconfigured over it." >&2
+              exit 1
+            }
+          else
+            if grep -q -- '-DLUAEXT_DEBUG=1' Makefile; then
+              echo "::error::This is a release leg but the built Makefile carries -DLUAEXT_DEBUG=1." >&2
+              exit 1
+            fi
+          fi
+
+      # PIE delivers this extension with `make install`, which the matrix never
+      # ran -- so GNUmakefile hiding the install target passed every leg here
+      # and failed only at install time.
+      - name: make install places the extension
+        run: |
+          rm -rf /tmp/luaext-install-probe
+          make install INSTALL_ROOT=/tmp/luaext-install-probe
+          find /tmp/luaext-install-probe -name 'luaext.*' | grep -q . || {
+            echo "::error::make install completed but installed no luaext extension." >&2
+            exit 1
+          }
+
       # Before the tests, because the failure it catches makes every test crash
       # for a reason none of them can explain: a source file left out of the
       # build links to a null stub on macOS rather than failing.
@@ -92,7 +122,17 @@ jobs:
           # unbounded loop is the point -- so a regression in the limit does not
           # fail the run, it pins a core for a minute per affected test. Nothing
           # here legitimately takes more than a couple of seconds.
-          TEST_TIMEOUT: '20'
+          #
+          # macOS gets more, and the reason is measured rather than felt: the
+          # shared macOS runners starve CPU in bursts, and the timing tests in
+          # tests/02-limits/ respond by waiting out their own starvation ceiling
+          # per affected row (BURN_CEILING_SECONDS in pause-resume-matrix.phpt).
+          # Several starved rows in one file approach 20s of mostly-idle waiting;
+          # killing the test at that point converts "slow runner" into a failure
+          # the artifacts then blame on the wrong thing. Debug legs are also
+          # genuinely debug now (assertions, -O0-ish costs), which the old 20s
+          # never had to accommodate because those legs silently built release.
+          TEST_TIMEOUT: ${{ startsWith(matrix.os, 'macos') && '45' || '20' }}
 
       # Runs HERE rather than in lint.yml's drift-checks job, which sets PHP up
       # with tokenizer only and never builds the extension. Two of the three
