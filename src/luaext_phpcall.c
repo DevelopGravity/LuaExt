@@ -337,9 +337,31 @@ static int luaext_phpcall_invoke(lua_State *L)
 		 *
 		 * A zend_bailout inside the callback longjmps past this, leaving the
 		 * pause outstanding as well as the in_php increment the same bailout
-		 * already stranded. That is the existing tracked hazard, not a new one:
-		 * a leaked pause errs towards NOT billing, so it is the one direction
-		 * worth naming out loud.
+		 * already stranded. A leaked pause errs towards NOT billing, which is
+		 * the one direction worth naming out loud.
+		 *
+		 * THERE IS DELIBERATELY NO zend_try AROUND THIS CALL, and the reason is
+		 * not that the hazard was overlooked.
+		 *
+		 * Catching the bailout would let this frame put in_lua and in_php back.
+		 * That is exactly the wrong thing to do. luaext_sandbox_close() uses
+		 * `in_lua > 0` as its evidence that a call was abandoned mid-flight, and
+		 * refuses to lua_close() a state in that condition -- so "restoring" the
+		 * counter would erase the only signal that teardown has, and hand the
+		 * collector a state whose C frames are gone. The bookkeeping being
+		 * stranded is what makes the shutdown path safe.
+		 *
+		 * Nor is there anything else to recover. The watchdog slot is released
+		 * by luaext_timers_detach() during close, which runs before that guard.
+		 * A poisoned-sandbox flag would have nothing to protect: a bailout ends
+		 * the request, so there is no later call to refuse.
+		 *
+		 * Measured rather than assumed, under a debug PHP with assertions on,
+		 * across six bailout shapes -- PHP's memory_limit and
+		 * max_execution_time, each with an open VFS handle, a suspended
+		 * coroutine, a nested Lua->PHP->Lua chain, and pending finalisers. All
+		 * end the request cleanly. exit() is a separate mechanism entirely and
+		 * is handled in luaext_error.c; it is not a bailout at all.
 		 */
 		luaext_timers_php_returned(sandbox);
 	}
