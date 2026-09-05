@@ -26,3 +26,24 @@
 # including `make -f Makefile clean`, which is the unscoped one.
 
 include Makefile.dev
+
+# EVERYTHING NOT NAMED IN Makefile.dev MUST STILL REACH THE GENERATED MAKEFILE,
+# and this rule is not a convenience -- it is a bug fix.
+#
+# Shadowing was meant to override ONE target. What it actually did was hide every
+# target php-src generates, `install` among them, and a bare `make install` is
+# precisely what PIE runs after ./configure. Installing the extension from the
+# published package therefore failed with
+#
+#     make: *** No rule to make target `install'.  Stop.
+#
+# on a Makefile that had an install target the whole time. `make` itself worked,
+# which is what let it ship: Makefile.dev sets .DEFAULT_GOAL and forwards the
+# build, so only the second half of the install broke.
+#
+# .DEFAULT catches any target no rule here defines and forwards it unchanged.
+# That keeps the override list exactly as long as Makefile.dev's target list and
+# makes this file transparent for everything else -- which is the only safe shape
+# for a makefile that sits in front of a generated one.
+.DEFAULT:
+	@$(MAKE) -f Makefile $@
