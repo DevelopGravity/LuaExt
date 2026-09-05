@@ -1440,16 +1440,21 @@ static bool luaext_ser_frame_ok(const zval *frame)
 				return false;
 			}
 		} else if (zend_string_equals_literal(key, "currentLine") ||
-				   zend_string_equals_literal(key, "lineDefined") ||
-				   zend_string_equals_literal(key, "lastLineDefined")) {
+				   zend_string_equals_literal(key, "lineDefined")) {
 			if (Z_TYPE_P(value) != IS_LONG) {
 				return false;
 			}
-		} else if (zend_string_equals_literal(key, "isTailCall")) {
-			if (Z_TYPE_P(value) != IS_TRUE && Z_TYPE_P(value) != IS_FALSE) {
-				return false;
-			}
 		} else {
+			/*
+			 * Includes two keys this list used to allow, "lastLineDefined" and
+			 * "isTailCall": luaext_error_trace_to_zval() copies exactly the six
+			 * fields above and nothing has ever produced either, so accepting
+			 * them was a standing contradiction of the rule this function is
+			 * built on. Harmless in itself -- both were type-checked and nothing
+			 * reads them -- but a validator that documents "refuse what the
+			 * capture path does not emit" and then does not is how the next
+			 * stray key gets waved through on precedent.
+			 */
 			return false;
 		}
 	}

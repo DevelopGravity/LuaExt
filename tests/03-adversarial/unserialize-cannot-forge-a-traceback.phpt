@@ -18,8 +18,24 @@ use DevelopGravity\LuaExt\Sandbox;
 // a working traceback.
 //
 // The fix is not to refuse serialization -- sandbox exceptions have to survive a
-// queue -- but to own the unserialize path, so this file is really two claims:
-// a genuine exception round-trips, and a hand-built one does not become real.
+// queue -- but to own the unserialize path. What that buys, precisely:
+//
+//   - The MANGLED key is dead. __unserialize() reads the plain "luaTrace" data
+//     key and nothing else, so the original direct-property attack writes a
+//     property nothing ever reads.
+//   - Through the PLAIN key, only a payload shaped exactly like a genuine
+//     capture is stored; every malformed shape is dropped whole.
+//   - A payload that IS shaped exactly right gets stored, deliberately: it is
+//     indistinguishable from a genuine round-trip, and the traceback is
+//     attribution data rather than a capability -- the same standing SECURITY.md
+//     gives chunk names. A host that unserializes untrusted data has already
+//     lost more than a traceback.
+//
+// The shape cases below use the PLAIN key, because that is the code path with
+// branches to drive. An earlier version of this file sent every one of them
+// through the mangled key, where they all "passed" without the validator
+// running at all -- proven by the extra-keys case, which the validator of the
+// day accepted and the test still called refused.
 
 $mangled = static function (string $name): string {
 	return "\0luaext\0" . $name;
@@ -59,9 +75,24 @@ $report = static function (string $label, string $payload): void {
 	);
 };
 
-// The original attack: a well-formed frame under the mangled key.
-$report('well-formed forgery', $forge(RuntimeError::class, [
+// The original attack: a well-formed frame under the MANGLED key. Dead because
+// nothing reads that key any more, not because the shape was judged.
+$report('mangled-key forgery', $forge(RuntimeError::class, [
 	$mangled('luaTrace') => [[
+		'source' => '@totally-real.lua',
+		'what' => 'Lua',
+		'name' => 'adminOnly',
+		'nameWhat' => 'global',
+		'currentLine' => 1337,
+		'lineDefined' => 1300,
+	]],
+]));
+
+// The same frame under the PLAIN key is stored -- this is the documented
+// accept, pinned so it cannot drift silently. See the header for why storing
+// it is the design and not a hole.
+$report('plain-key well-formed', $forge(RuntimeError::class, [
+	'luaTrace' => [[
 		'source' => '@totally-real.lua',
 		'what' => 'Lua',
 		'name' => 'adminOnly',
@@ -73,26 +104,46 @@ $report('well-formed forgery', $forge(RuntimeError::class, [
 
 // Everything below is the surface the handler ADDS by accepting input at all.
 // A type confusion here would be a worse bug than the forgery it closes, so each
-// shape is driven explicitly rather than assumed unreachable.
-$report('trace is a string', $forge(RuntimeError::class, [$mangled('luaTrace') => 'not a trace']));
-$report('trace is an int', $forge(RuntimeError::class, [$mangled('luaTrace') => 42]));
-$report('frame is a string', $forge(RuntimeError::class, [$mangled('luaTrace') => ['nope']]));
-$report('frame is nested', $forge(RuntimeError::class, [$mangled('luaTrace') => [[['deep']]]]));
+// shape is driven explicitly -- through the plain key, where the validator
+// actually runs.
+$report('trace is a string', $forge(RuntimeError::class, ['luaTrace' => 'not a trace']));
+$report('trace is an int', $forge(RuntimeError::class, ['luaTrace' => 42]));
+$report('frame is a string', $forge(RuntimeError::class, ['luaTrace' => ['nope']]));
+$report('frame is nested', $forge(RuntimeError::class, ['luaTrace' => [[['deep']]]]));
 $report('fields wrong type', $forge(RuntimeError::class, [
-	$mangled('luaTrace') => [['source' => 99, 'currentLine' => 'not-an-int']],
+	'luaTrace' => [['source' => 99, 'currentLine' => 'not-an-int']],
 ]));
 $report('line is an array', $forge(RuntimeError::class, [
-	$mangled('luaTrace') => [['source' => '@x.lua', 'currentLine' => ['boom']]],
+	'luaTrace' => [['source' => '@x.lua', 'currentLine' => ['boom']]],
+]));
+
+// Keys the capture path never emits are refused even when their values are
+// well-typed. The validator used to allow "lastLineDefined" and "isTailCall"
+// on the strength of lua_getinfo() knowing them -- but nothing here has ever
+// written either, and a validator built on "refuse what capture does not emit"
+// has to mean it.
+$report('unemitted keys', $forge(RuntimeError::class, [
+	'luaTrace' => [[
+		'source' => '@x.lua',
+		'what' => 'Lua',
+		'name' => null,
+		'nameWhat' => '',
+		'currentLine' => 1,
+		'lineDefined' => 1,
+		'lastLineDefined' => 9,
+		'isTailCall' => false,
+	]],
 ]));
 
 // Bounded: the capture path stops at LUAEXT_ERROR_TRACE_FRAMES (64), so a
 // payload claiming ten thousand frames must not be honoured either.
 $report('10k frames', $forge(RuntimeError::class, [
-	$mangled('luaTrace') => array_fill(0, 10000, ['source' => '@x.lua', 'currentLine' => 1]),
+	'luaTrace' => array_fill(0, 10000, ['source' => '@x.lua', 'currentLine' => 1]),
 ]));
 
 // A forged SANDBOX is the other half of the same idea -- getSandbox() must never
-// hand back something a payload chose.
+// hand back something a payload chose, under either key. There is no plain-key
+// equivalent to pin: __unserialize() has no sandbox entry to read at all.
 $report('forged sandbox key', $forge(RuntimeError::class, [
 	$mangled('sandbox') => ['not', 'a', 'sandbox'],
 ]));
@@ -134,13 +185,15 @@ try {
 
 ?>
 --EXPECT--
-well-formed forgery    trace=null line=NULL chunk=NULL
+mangled-key forgery    trace=null line=NULL chunk=NULL
+plain-key well-formed  trace=FORGED(1) line=1337 chunk='@totally-real.lua'
 trace is a string      trace=null line=NULL chunk=NULL
 trace is an int        trace=null line=NULL chunk=NULL
 frame is a string      trace=null line=NULL chunk=NULL
 frame is nested        trace=null line=NULL chunk=NULL
 fields wrong type      trace=null line=NULL chunk=NULL
 line is an array       trace=null line=NULL chunk=NULL
+unemitted keys         trace=null line=NULL chunk=NULL
 10k frames             trace=null line=NULL chunk=NULL
 forged sandbox key     trace=null line=NULL chunk=NULL
 
