@@ -58,8 +58,11 @@ use DevelopGravity\LuaExt\SandboxConfig;
  *
  * Deliberately absent: any assertion about elapsed or consumed time. The
  * reference printed both, which made it a test of the machine it ran on. Here
- * the burn is twice the limit and the assertion is only whether the budget ran
+ * the burn is 1.5x the limit and the assertion is only whether the budget ran
  * out, so a 15.6 ms Windows tick and a 1 ns Linux clock give the same answer.
+ * The multiple used to be 2x; it only ever had to survive clock granularity,
+ * and 50ms of slack is still thousands of Windows ticks, while every 0.01s
+ * shaved off the burn is CPU a starved macOS runner no longer has to find.
  *
  * The wall-clock limit is well over an order of magnitude above the CPU limit
  * and exists only as a backstop: a row that wedges fails in a few seconds with
@@ -69,7 +72,7 @@ use DevelopGravity\LuaExt\SandboxConfig;
 
 const CPU_SECONDS = 0.10;
 const WALL_BACKSTOP_SECONDS = 9.0;
-const BURN_SECONDS = 0.20;
+const BURN_SECONDS = 0.15;
 
 /*
  * How long a burn waits before concluding it is not being billed at all.
@@ -179,20 +182,25 @@ function measureCpuEfficiency(): float
  *
  * A measurement taken while idle cannot be allowed to produce a ceiling with no
  * headroom in it, so the floor stands independently of what was measured: at
- * 3.0s a burn needing 0.20s of CPU survives down to 6.7% sustained efficiency,
+ * 3.0s a burn needing 0.15s of CPU survives down to 5% sustained efficiency,
  * and the row only has to reach CPU_SECONDS rather than the full target for the
  * limit to fire, which is 3.3%. The cap keeps one wedged row failing inside the
  * harness timeout, and both stay under WALL_BACKSTOP_SECONDS so a slow burn is
  * an ordinary outcome rather than a backstop trip reported as the wrong
  * exception class.
  *
- * THE NUMBERS CAME UP FROM 2.0/4.0 BECAUSE CI SAID SO, not because a local run
- * failed -- this file passes here in both release and debug. On the shared
- * macOS runners it did not, and the artifacts name the shape exactly: ONE or TWO
- * rows per leg, always the deepest billed chains, always `no/short` (billed, but
- * the budget never ran out). Marginal starvation, not a broken assertion. So the
- * fix is headroom, taken from the gap that already existed under the backstop
- * rather than invented.
+ * These numbers come from CI, not local runs -- this file passes here in both
+ * release and debug. The shared macOS runners have failed it twice, both times
+ * with the same shape in the artifacts: only the deepest billed chains, always
+ * `no/short` (billed, but the budget never ran out). The extension itself was
+ * ruled out before the numbers moved again: callback CPU bills at ratio 1.00
+ * to Lua CPU, the counter advances live mid-callback, and the clock resolves
+ * at 1us. Starvation, so headroom: first 2.0/4.0 became 3.0/5.0, then the burn
+ * came down to 0.15 (still 1.5x the limit) and the cap up to 7.0, at which a
+ * starved row needs ~2.1% sustained efficiency to finish its burn and ~1.4% to
+ * trip the limit. The macOS TEST_TIMEOUT rose alongside, because several
+ * starved rows waiting out a 7s ceiling can pass 20s of wall doing nothing
+ * wrong.
  *
  * If a leg still prints "no/short" after this, the answer is more headroom or a
  * shorter burn -- never a smaller assertion. The rows are the specification.
@@ -203,7 +211,7 @@ function measureCpuEfficiency(): float
  */
 define(
 	'BURN_CEILING_SECONDS',
-	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 3.0), 5.0),
+	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 3.0), 7.0),
 );
 
 function burn(float $seconds): void
@@ -215,8 +223,8 @@ function burn(float $seconds): void
 	 * exact quantity the limit enforces -- rather than with a wall clock.
 	 *
 	 * A wall-clock loop looks equivalent and is not. On a contended runner a
-	 * thread can pass a 0.20s wall deadline having been descheduled for most of
-	 * it, spending far less than 0.20s of CPU, so a row that means "burn twice
+	 * thread can pass a 0.15s wall deadline having been descheduled for most of
+	 * it, spending far less than 0.15s of CPU, so a row that means "burn past
 	 * the limit" quietly burns half of it and the budget never runs out. That is
 	 * not flakiness in the limit; it is the test failing to spend what it claims.
 	 *
@@ -357,7 +365,7 @@ $script = <<<'LUA'
 	--
 	-- Deliberately NOT a wall clock: see the note on the PHP burn() above. A
 	-- descheduled thread passes a wall deadline without having spent the budget,
-	-- which turns "burn twice the limit" into a row that never trips.
+	-- which turns "burn past the limit" into a row that never trips.
 	local function clock()
 		if os ~= nil and os.clock ~= nil then
 			return os.clock()
