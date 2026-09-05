@@ -1447,11 +1447,6 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	 * Read off the watchdog, which is the same quantity the CPU limit enforces
 	 * -- so a host billing from these figures bills for exactly what would have
 	 * stopped the script.
-	 *
-	 * These were hardcoded zero behind a TODO waiting for the watchdog to exist.
-	 * It landed two waves ago, and the zeros stayed, which is the failure the
-	 * comment itself warned about: a plausible-looking figure reaching a billing
-	 * pipeline. Zero is only honest while nothing is accounted.
 	 */
 	ZVAL_DOUBLE(&value, luaext_timers_cpu_seconds(sandbox));
 	LUAEXT_SET(object, "cpuSeconds", &value);

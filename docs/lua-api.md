@@ -15,13 +15,13 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 | `base` (globals) | Filtered, with replacements — see below | Adds `load` (text-only; `mode = "b"` additionally requires the `loadBytecode` capability, which stays off even here) |
 | `coroutine` | LuaExt's own wrapper around upstream, gated by the `coroutines` capability (on by default), capped and call-scoped — see [Coroutines](#coroutines) | Same |
 | `string` | Open; `string.dump` removed; `string.format("%p")` rejected | `string.dump` restored behind the `dumpBytecode` capability |
-| `table` | **All members**, including `table.move` and `table.create` (their loops are patched to be interruptible) | Same |
+| `table` | **All members**, including `table.move` (its loops are patched to be interruptible) and `table.create` (no loop to patch — bounded by its own arguments) | Same |
 | `math` | Open; `math.randomseed` replaced | Same |
 | `utf8` | Open, with an interruptible scan | Same |
 | `os` | LuaExt's own, **not** upstream's: `clock`, `date`, `difftime`, `time` under `osTime`; `getenv` under `osEnv` + allowlist | Same |
 | `io` | LuaExt's own, **not** upstream's. The output half (`io.write`, `io.stdout`, `io.stderr`) is unconditional; the filesystem half (`io.open`, `io.lines`, handles) needs `vfs` — see [io/os emulation](#ioos-emulation) | Same |
 | `package` | Upstream version **never linked into the binary**. LuaExt's replacement appears with the `require` capability and carries only `loaded`, `preload` and a read-only `path` — no `cpath`, `searchers` or `loadlib` | Same |
-| `debug` | `debug.traceback` only | Adds `debug.getinfo`/`getlocal`/`getupvalue` behind `debugIntrospect`; `debug.sethook` only via the separate `debugHooks` capability (mutually exclusive with a CPU limit — see SECURITY.md) |
+| `debug` | `debug.traceback` only | Adds `debug.getinfo`/`getlocal`/`getupvalue` behind `debugIntrospect`; `debug.sethook` only via the separate `debugHooks` capability (mutually exclusive with a CPU *or* wall-clock limit — both must be cleared, see SECURITY.md) |
 
 ## Replaced members, and why
 
@@ -29,7 +29,7 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 - **`print`** writes to the sandbox's configured output sink (`OutputMode::Buffer`/`Callback`/`Discard`) instead of a process-wide stream; there is no stdout to write to inside the sandbox at all.
 - **`pcall` / `xpcall`** catch `RuntimeError`-family (catchable) errors exactly like upstream, but re-raise `FatalError`-family errors (a CPU/wall-clock/memory/output limit trip, a host abort, a coroutine limit, …) instead of returning `false, err`. For `xpcall`, the message handler is not invoked at all when the underlying error is fatal — a script cannot inspect, log, or otherwise interact with a fatal error from inside its own handler.
 - **`collectgarbage`** is restricted to `count`, `step`, `isrunning` and `collect` for untrusted scripts — `collect` is included deliberately, since collecting *more* is the safe direction; the tuning verbs are withheld because a script could otherwise defeat the sandbox's own allocator-level GC-pressure tuning. `gcControl` (granted under `Trusted`) restores the tuning verbs.
-- **`math.randomseed()`** no longer returns anything. Upstream Lua 5.4+ returns the seed components it derived, which are partly address-based — an information leak useful for defeating ASLR. LuaExt's replacement is `void`, takes only integer input, and when called with no arguments seeds from the sandbox's configured seed source (a CSPRNG unless the host explicitly opted into a fixed, deterministic seed).
+- **`math.randomseed()`** no longer returns anything, and requires an integer argument. Upstream Lua 5.4+ returns the seed components it derived, and its no-argument form derives them from a stack address and a clock — an information leak useful for defeating ASLR. LuaExt's replacement is `void` and refuses the no-argument form for the same reason; a script that wants a fresh sequence supplies its own number. (The generator's *initial* seed still comes from the sandbox's configured seed source: a CSPRNG unless the host opted into a fixed, deterministic seed.)
 - **`os.clock()`** (LuaExt's own `os`, not upstream's) is sandbox-local rather than process-wide, and its resolution is intentionally rounded to roughly 20 microseconds to avoid becoming a high-resolution timing side channel.
 - **`warn`** (Lua 5.4+'s warning system) is gated behind the `warn` capability and, when enabled, routes to the same output sink rather than the process's stderr; `lua_setwarnf` is always installed by the extension so that nothing from an unconfigured warning system reaches the host process's stderr by default.
 - **`lua_newstate`**'s hash-seed is supplied explicitly from the extension's own CSPRNG (or a host-provided fixed seed under `deterministic: true`) rather than Lua's own `luaL_makeseed`, which has the same address-derived-entropy property being avoided elsewhere.
@@ -47,8 +47,9 @@ These are not filtered or wrapped — they simply do not exist in a LuaExt sandb
 
 Withholding comes in two granularities, and they answer probes differently.
 
-**Whole libraries** a sandbox lacks — `coroutine`, `utf8`, `require`, and `debug` when no
-debug capability is granted — are genuinely absent: the global is `nil`. Touching one
+**Whole libraries** a sandbox lacks — `coroutine`, `utf8`, `require` and `package`
+(both under the `require` capability), and `debug` when no debug capability is
+granted — are genuinely absent: the global is `nil`. Touching one
 raises a fatal `FeatureNotGrantedError` naming the capability, so the supported probe is
 the one that never touches the nil:
 

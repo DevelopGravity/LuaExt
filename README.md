@@ -9,7 +9,7 @@ A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run
 
 Package: `developgravity/lua-ext` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
-> **Status: pre-1.0, no tagged release, no external audit.** Every capability the extension defines is implemented, and 137 tests cover compilation, the PHP↔Lua boundary, the CPU/wall-clock/memory/output budgets, the capability-gated standard library, coroutines, the virtual filesystem, `require()`, the profiler, Lua language conformance, and the adversarial cases where a script tries to catch its own limit breach.
+> **Status: pre-1.0, no tagged release, no external audit.** Every capability the extension defines is implemented, and the `.phpt` suite (150 tests and counting — `make test` prints the live figure) covers compilation, the PHP↔Lua boundary, the CPU/wall-clock/memory/output budgets, the capability-gated standard library, coroutines, the virtual filesystem, `require()`, the profiler, Lua language conformance, and the adversarial cases where a script tries to catch its own limit breach.
 
 ## Why this exists
 
@@ -23,7 +23,7 @@ This is a from-scratch rewrite, not a fork, and there is no compatibility shim �
 
 ## Requirements
 
-- PHP **8.5** or later (NTS and ZTS, including FrankenPHP workers). The build refuses anything older.
+- PHP **8.5** or later (NTS and ZTS). The build refuses anything older. ZTS builds compile and pass the suite, but behaviour under *real* concurrency — several worker threads running sandboxes at once, as FrankenPHP and friends do — has no test coverage yet; see [SECURITY.md](SECURITY.md)'s threading section before caching sandboxes across worker threads.
 - **Linux** (x64, arm64) or **macOS** (x64, arm64): a C toolchain to build from source. No system Lua is used or required.
 - **Windows** x64: builds, and installs as a prebuilt DLL with no toolchain needed. See [platform support](docs/platform-support.md) for what "enforced" means per OS and for the current state of Windows test coverage.
 

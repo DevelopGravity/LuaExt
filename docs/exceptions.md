@@ -43,7 +43,7 @@ Throwable
     │       ├── CoroutineLimitError      maxLiveCoroutines / maxCoroutineDepth
     │       ├── HostAbortError           Sandbox::interrupt(), or a VfsQuota
     │       ├── ErrorHandlerError        the error handler itself failed
-    │       ├── PanicError               the interpreter panicked
+    │       ├── PanicError               reserved: a panic ends the request instead
     │       └── ConversionError          a value that cannot cross the boundary
     └── LuaLogicException            (abstract, extends \LogicException)
         ├── ConfigurationError           a SandboxConfig that cannot be satisfied

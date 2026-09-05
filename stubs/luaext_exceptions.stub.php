@@ -277,8 +277,14 @@ class ErrorHandlerError extends FatalError
 }
 
 /**
- * The interpreter reported an unrecoverable internal fault. The sandbox is
- * closed and must not be reused.
+ * Reserved for an interpreter panic: an unrecoverable internal fault reported
+ * outside any protected call.
+ *
+ * No shipped code path throws it. A Lua panic function may not return -- Lua
+ * calls abort() the moment it does -- so the panic handler ends the request
+ * instead of raising anything catchable, and this class exists so the
+ * hierarchy has a name for that fault should a recoverable panic path ever
+ * exist. Catching it today catches nothing.
  */
 class PanicError extends FatalError
 {

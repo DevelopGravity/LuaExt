@@ -10,7 +10,7 @@ Everything here is enforced by something. Where it isn't, it says so.
 
 ```bash
 make            # phpize && ./configure && make — a release build
-make test       # the above, then the .phpt suite (137 tests)
+make test       # the above, then the .phpt suite (its summary prints the live count)
 make dev        # build + test + check — run this before you push
 ```
 
@@ -123,6 +123,7 @@ make dev
 | `workflow-php-version` | every workflow pinning the same PHP version |
 | `generated-artifacts` | the vendored Lua tree, `*_arginfo.h`, the build-file source lists, and the stdlib golden files all matching what generates them |
 | `docs-api` | documentation naming API that does not exist — including wrong named arguments, which a syntax check cannot see |
+| `playground-sync` | a config field or stats field the example playground cannot drive or display |
 | `watchdog-purity` | the watchdog reaching anything PHP or Lua owns |
 | `banned-idioms` | C that compiles cleanly and fails somewhere expensive |
 | `linkage` | the built module's symbol surface |

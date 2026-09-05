@@ -73,8 +73,8 @@ trap makes `vmfetch` call `luaG_traceexec` on *every instruction*. Raising
 `luaext.hook_count` does not help, because the count throttles the hook body, not the
 per-instruction call that reaches it.
 
-So the `lvm.c` patch buys roughly a **35× reduction in enforcement overhead**
-(+0.5% against +55%). It is also why `luaext.hook_count=0` no longer voids the limits:
+So the `lvm.c` patch buys roughly a **110× reduction in enforcement overhead**
+(+0.5% against +55.2% on the TOTAL row). It is also why `luaext.hook_count=0` no longer voids the limits:
 the interpreter carries the check itself, so there is no INI setting that can silently
 disarm a security guarantee.
 
@@ -221,9 +221,10 @@ its workloads: the ratio is a property of the chunk, not of the cache.
 
 **The second half of that sentence matters as much as the first.** A sandbox built per
 request, evaluated once, and closed compiles into an empty cache every time and gains
-**nothing**. Measured on this machine, that shape costs ~128 µs end to end: ~33 µs to
-construct the interpreter and ~79 µs to parse. The cache cannot touch either. If that is
-your pattern, this setting is pure overhead and should stay off.
+**nothing**. Measured on this machine, that shape pays ~84 µs before the script body even
+runs: ~33 µs to construct the interpreter (the lifecycle table above) and ~51 µs to parse
+a 3.5 KB chunk (the uncached column of the cache table). The cache cannot touch either.
+If that is your pattern, this setting is pure overhead and should stay off.
 
 It is also why the gain is single-digit rather than the ~10× that comparing `eval()`
 against `compile()` + `call()` suggests: the cache key is the chunk name and the source, so every
@@ -256,10 +257,11 @@ accumulation. The per-1,000-cycle deltas say so directly:
 +0, +144, +16, +16, +0, +32, +0, +32, +288, +32 KiB
 ```
 
-Three rounds grew by nothing at all, and a genuine per-cycle leak cannot skip rounds. At
-the observed 0.056 KiB/cycle average a real leak would have cost ~5.6 MiB over the same
-run; the actual total is a tenth of that and flat in the middle. For reference, a PHP
-process with no extension loaded grows ~176 KiB on its own over a comparable loop.
+Three rounds grew by nothing at all, and a genuine per-cycle leak cannot skip rounds: even
+a 1-byte-per-cycle leak would add ~1 KiB to every round, and a leak of the observed
+average (0.056 KiB/cycle) would show every round growing ~56 KiB instead of three flat
+ones. For reference, a PHP process with no extension loaded grows ~176 KiB on its own over
+a comparable loop.
 
 > **A create/close cycle leaks nothing.** Worker-mode use does not accumulate.
 

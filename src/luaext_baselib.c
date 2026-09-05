@@ -47,9 +47,9 @@
  * dofile and loadfile are withheld at every capability level: they open real
  * files by name, and the sandbox's only filesystem is the VFS.
  *
- * load is the compileAtRuntime capability. It is deleted unconditionally by the
- * placeholder this file replaces, which is why granting that capability does
- * nothing at all today.
+ * load is the compileAtRuntime capability: granting it is what makes the
+ * function exist, and its mode argument is clamped to text unless loadBytecode
+ * is also granted.
  * ---------------------------------------------------------------------- */
 
 const luaext_member luaext_baselib_allow[] = {

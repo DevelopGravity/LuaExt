@@ -183,9 +183,9 @@ static void luaext_sandbox_unlink(luaext_sandbox *sandbox)
  * pushes (luaext_phpcall_push, luaext_require_preload) precisely so that a
  * memory error there unwinds to them instead of arriving here.
  *
- * THE OLD TODO HERE SAID TO RAISE PanicError INSTEAD. That is not implementable,
- * and the reason is worth writing down so nobody spends another afternoon on it:
- * a panic function may not return. Lua calls abort() the moment it does, so
+ * Raising a PHP exception from here instead is not implementable, and the
+ * reason is worth writing down so nobody spends another afternoon on it: a
+ * panic function may not return. Lua calls abort() the moment it does, so
  * throwing a PHP exception and returning 0 would trade a controlled request
  * failure for killing the whole process -- strictly worse in a worker SAPI. The
  * only ways out are longjmp to a recovery point, which needs a setjmp at every

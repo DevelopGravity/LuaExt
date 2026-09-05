@@ -26,12 +26,9 @@
 # script generates in stubs/ and then copies each "*_arginfo.h" into src/
 # under the same basename.
 #
-# TODO(verify): once stubs/*.stub.php actually exists (Wave 1, agent ②),
-# confirm whether it is one consolidated stub (producing a single
-# src/luaext_arginfo.h, matching the plan's repo layout literally) or
-# several per-class stubs (producing several src/<name>_arginfo.h files).
-# This script handles either shape as-is; only the comment/expectation
-# above may need updating.
+# The repo settled on two stubs -- luaext.stub.php for the API and
+# luaext_exceptions.stub.php for the error hierarchy -- so two arginfo
+# headers land in src/.
 #
 # Usage:
 #   tools/gen-stubs.sh            regenerate stubs/*_arginfo.h, then copy

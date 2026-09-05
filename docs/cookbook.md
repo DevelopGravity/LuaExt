@@ -532,7 +532,8 @@ no key to manage, no INI to open, and 25 µs on a 297 KB blob. Only blobs from *
 — `string.dump()` output, a build step — need `luaext.allow_raw_bytecode=1`.
 
 ```php
-$cache = new InProcessBytecodeCache($capabilities);   // no key needed
+$cache = new SealedBytecodeCache($capabilities);   // no key needed: sandbox()
+                                                   // defaults to SealMode::Checksum
 ```
 
 Switch to `SealMode::Authenticated` when the store might be reachable by another process:

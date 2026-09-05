@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 9220666d48101bddabb2f529efca3f23a3d87117 */
+ * Stub hash: 10ddc898e18278462d602003b836c27980011d3e */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaTrace, 0, 0, IS_ARRAY, 1)
 ZEND_END_ARG_INFO()

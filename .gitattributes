@@ -9,7 +9,6 @@ fuzz/          export-ignore
 bench/         export-ignore
 tools/         export-ignore
 .github/       export-ignore
-docs/          export-ignore
 
 .gitattributes    export-ignore
 .gitignore        export-ignore
