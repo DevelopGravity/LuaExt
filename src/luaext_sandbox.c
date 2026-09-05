@@ -1328,6 +1328,24 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 		instanceof_function(Z_OBJCE_P(loader), luaext_ce_lua_function)) {
 		luaext_function_obj *handle = luaext_function_from_obj(Z_OBJ_P(loader));
 
+		/*
+		 * A ref names a slot in ONE sandbox's registry table, so a handle from
+		 * another sandbox does not fail here -- it silently reads THIS sandbox's
+		 * slot of the same number, which is an unrelated function or nil. The
+		 * conversion path refuses a foreign handle for exactly that reason
+		 * (luaext_convert.c, the LUA_TFUNCTION case); this is the other door into
+		 * the same registry and needs the same guard rather than trusting a host
+		 * not to mix handles from two sandboxes.
+		 *
+		 * Ownership before liveness, so a handle from a different sandbox that is
+		 * also closed is reported as what it actually is.
+		 */
+		if (Z_TYPE(handle->sandbox_zv) != IS_OBJECT || Z_OBJ(handle->sandbox_zv) != &sandbox->std) {
+			zend_throw_exception(luaext_ce_configuration_error,
+								 "That LuaFunction belongs to a different sandbox", 0);
+			RETURN_THROWS();
+		}
+
 		if (handle->ref < 0) {
 			zend_throw_exception(luaext_ce_configuration_error,
 								 "That LuaFunction belongs to a sandbox that has been closed", 0);
@@ -1335,6 +1353,15 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 		}
 
 		luaext_convert_ref_push(sandbox, L, handle->ref);
+
+		/* The slot may have been released since the handle was made. package.preload
+		 * must hold a function, or require() would try to call a nil. */
+		if (!lua_isfunction(L, -1)) {
+			lua_pop(L, 1);
+			zend_throw_exception(luaext_ce_configuration_error,
+								 "That LuaFunction no longer references a Lua function", 0);
+			RETURN_THROWS();
+		}
 	} else if (!luaext_phpcall_push(sandbox, loader, ZSTR_VAL(name))) {
 		RETURN_THROWS();
 	}
