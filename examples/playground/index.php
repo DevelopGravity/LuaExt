@@ -409,6 +409,61 @@ function readClampedInt(array $source, string $key, int $default, int $minimum, 
 }
 
 /**
+ * Parse a byte count that may carry a unit suffix: "32MB", "1 GB", "512kb",
+ * or a plain number of bytes. Binary multiples (KB = 1024), because that is
+ * what every limit in the extension means by a kilobyte.
+ *
+ * Null for anything unparsable or negative, so callers keep their own
+ * default-vs-refuse decision.
+ */
+function parseByteSizeOrNull(mixed $value): ?int
+{
+    if (is_int($value)) {
+        return $value >= 0 ? $value : null;
+    }
+
+    if (is_float($value)) {
+        return is_finite($value) && $value >= 0 ? (int) $value : null;
+    }
+
+    if (!is_string($value)) {
+        return null;
+    }
+
+    if (preg_match('/^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$/i', $value, $matches) !== 1) {
+        return null;
+    }
+
+    $multiplier = match (strtolower($matches[2] ?? 'b')) {
+        'kb' => 1024,
+        'mb' => 1048576,
+        'gb' => 1073741824,
+        default => 1,
+    };
+
+    $bytes = (float) $matches[1] * $multiplier;
+
+    return $bytes <= PHP_INT_MAX ? (int) $bytes : PHP_INT_MAX;
+}
+
+/**
+ * readClampedInt for fields measured in bytes: the payload value may be a
+ * number or a unit-suffixed string ("32MB").
+ *
+ * @param array<string, mixed> $source
+ */
+function readClampedBytes(array $source, string $key, int $default, int $minimum, int $maximum): int
+{
+    $bytes = parseByteSizeOrNull($source[$key] ?? null);
+
+    if ($bytes === null) {
+        return $default;
+    }
+
+    return max($minimum, min($maximum, $bytes));
+}
+
+/**
  * Read a float field from a request payload, clamped to a sane range.
  *
  * @param array<string, mixed> $source
@@ -450,13 +505,13 @@ function resolveSecondsLimit(array $rawLimits, string $key, float $default): flo
  */
 function resolveMemoryBytesLimit(array $rawLimits): int
 {
-    $requested = $rawLimits['memoryBytes'] ?? null;
+    $requested = parseByteSizeOrNull($rawLimits['memoryBytes'] ?? null);
 
-    if (!is_numeric($requested) || (int) $requested <= 0) {
+    if ($requested === null || $requested <= 0) {
         return MAX_MEMORY_BYTES;
     }
 
-    return min((int) $requested, MAX_MEMORY_BYTES);
+    return min($requested, MAX_MEMORY_BYTES);
 }
 
 /**
@@ -845,15 +900,15 @@ function buildLimitsFromPayload(array $payload): Limits
         memoryBytes: resolveMemoryBytesLimit($rawLimits),
         cpuSeconds: resolveSecondsLimit($rawLimits, 'cpuSeconds', 1.0),
         wallClockSeconds: resolveSecondsLimit($rawLimits, 'wallClockSeconds', 5.0),
-        outputBytes: readClampedInt($rawLimits, 'outputBytes', 1048576, 1024, MAX_OUTPUT_BYTES),
+        outputBytes: readClampedBytes($rawLimits, 'outputBytes', 1048576, 1024, MAX_OUTPUT_BYTES),
         outputOverflow: resolveOverflowBehavior($rawLimits),
         maxLiveCoroutines: readClampedInt($rawLimits, 'maxLiveCoroutines', 64, 1, 1024),
         maxCoroutineDepth: readClampedInt($rawLimits, 'maxCoroutineDepth', 16, 1, 256),
         maxCallDepth: readClampedInt($rawLimits, 'maxCallDepth', 200, 1, 5000),
         maxModules: readClampedInt($rawLimits, 'maxModules', 64, 1, 1024),
         maxRequireDepth: readClampedInt($rawLimits, 'maxRequireDepth', 16, 1, 64),
-        maxStringLength: readClampedInt($rawLimits, 'maxStringLength', 67108864, 1024, MAX_MEMORY_BYTES),
-        maxSourceBytes: readClampedInt($rawLimits, 'maxSourceBytes', 1048576, 1024, MAX_VFS_FILE_BYTES),
+        maxStringLength: readClampedBytes($rawLimits, 'maxStringLength', 67108864, 1024, MAX_MEMORY_BYTES),
+        maxSourceBytes: readClampedBytes($rawLimits, 'maxSourceBytes', 1048576, 1024, MAX_VFS_FILE_BYTES),
         maxConversionDepth: readClampedInt($rawLimits, 'maxConversionDepth', 64, 1, 256),
         maxCachedChunks: readClampedInt($rawLimits, 'maxCachedChunks', 64, 1, 1024),
     );
@@ -868,8 +923,8 @@ function buildVfsQuotaFromPayload(array $payload): VfsQuota
 
     return new VfsQuota(
         maxOpenHandles: readClampedInt($rawQuota, 'maxOpenHandles', 16, 1, 256),
-        maxFileBytes: readClampedInt($rawQuota, 'maxFileBytes', 1048576, 1, MAX_VFS_FILE_BYTES),
-        maxTotalBytes: readClampedInt($rawQuota, 'maxTotalBytes', 8388608, 1, MAX_VFS_TOTAL_BYTES),
+        maxFileBytes: readClampedBytes($rawQuota, 'maxFileBytes', 1048576, 1, MAX_VFS_FILE_BYTES),
+        maxTotalBytes: readClampedBytes($rawQuota, 'maxTotalBytes', 8388608, 1, MAX_VFS_TOTAL_BYTES),
         maxFiles: readClampedInt($rawQuota, 'maxFiles', 128, 1, 4096),
         maxOperations: readClampedInt($rawQuota, 'maxOperations', 10000, 1, 1000000),
         maxPathLength: readClampedInt($rawQuota, 'maxPathLength', 255, 1, 1024),
@@ -901,7 +956,7 @@ function buildSandboxConfigFromPayload(
         vfsQuota: buildVfsQuotaFromPayload($payload),
         outputMode: $outputMode,
         outputCallback: $outputMode === OutputMode::Callback ? $outputCallback : null,
-        outputChunkBytes: readClampedInt($payload, 'outputChunkBytes', 8192, 1, 1048576),
+        outputChunkBytes: readClampedBytes($payload, 'outputChunkBytes', 8192, 1, 1048576),
         seed: $deterministic && is_numeric($rawSeed) ? (int) $rawSeed : null,
         deterministic: $deterministic,
         cacheCompiledChunks: readBool($payload, 'cacheCompiledChunks', false),
@@ -1796,6 +1851,7 @@ Loopback-only development tool. The <strong>Host classes</strong> panel evaluate
 <div class="actions">
     <button id="run-button" class="primary">Run</button>
     <button id="validate-button">Validate</button>
+    <button id="reset-defaults-button" title="Restore every panel — script, capabilities, limits, quota, options — to the shipped defaults">Reset to defaults</button>
     <span id="run-status"></span>
 </div>
 </section>
@@ -1864,7 +1920,7 @@ Loopback-only development tool. The <strong>Host classes</strong> panel evaluate
 <h2>Execution options</h2>
 <div class="field"><label for="output-mode">Output mode</label>
 <select id="output-mode"><option>Buffer</option><option>Callback</option><option>Discard</option></select></div>
-<div class="field"><label for="output-chunk-bytes">outputChunkBytes</label><input type="number" id="output-chunk-bytes" min="1"></div>
+<div class="field"><label for="output-chunk-bytes">outputChunkBytes</label><input type="text" id="output-chunk-bytes" placeholder="bytes, or e.g. 8KB"></div>
 <div class="checkbox-field"><input type="checkbox" id="profiler-enabled"><label for="profiler-enabled">Enable sampling profiler</label></div>
 <div class="field"><label for="profiler-period">Profiler period (s)</label><input type="number" id="profiler-period" step="0.001" min="0.0001"></div>
 <div class="field"><label for="profiler-unit">Profiler unit</label>
@@ -1934,25 +1990,25 @@ const capabilityDefinitions = [
 ];
 
 const limitDefinitions = [
-    { key: 'memoryBytes', defaultValue: 33554432, advanced: false },
+    { key: 'memoryBytes', defaultValue: 33554432, advanced: false, isBytes: true },
     { key: 'cpuSeconds', defaultValue: 1, advanced: false, isFloat: true },
     { key: 'wallClockSeconds', defaultValue: 5, advanced: false, isFloat: true },
-    { key: 'outputBytes', defaultValue: 1048576, advanced: false },
+    { key: 'outputBytes', defaultValue: 1048576, advanced: false, isBytes: true },
     { key: 'maxLiveCoroutines', defaultValue: 64, advanced: true },
     { key: 'maxCoroutineDepth', defaultValue: 16, advanced: true },
     { key: 'maxCallDepth', defaultValue: 200, advanced: true },
     { key: 'maxModules', defaultValue: 64, advanced: true },
     { key: 'maxRequireDepth', defaultValue: 16, advanced: true },
-    { key: 'maxStringLength', defaultValue: 67108864, advanced: true },
-    { key: 'maxSourceBytes', defaultValue: 1048576, advanced: true },
+    { key: 'maxStringLength', defaultValue: 67108864, advanced: true, isBytes: true },
+    { key: 'maxSourceBytes', defaultValue: 1048576, advanced: true, isBytes: true },
     { key: 'maxConversionDepth', defaultValue: 64, advanced: true },
     { key: 'maxCachedChunks', defaultValue: 64, advanced: true },
 ];
 
 const quotaDefinitions = [
     { key: 'maxOpenHandles', defaultValue: 16 },
-    { key: 'maxFileBytes', defaultValue: 1048576 },
-    { key: 'maxTotalBytes', defaultValue: 8388608 },
+    { key: 'maxFileBytes', defaultValue: 1048576, isBytes: true },
+    { key: 'maxTotalBytes', defaultValue: 8388608, isBytes: true },
     { key: 'maxFiles', defaultValue: 128 },
     { key: 'maxOperations', defaultValue: 10000 },
     { key: 'maxPathLength', defaultValue: 255 },
@@ -2046,7 +2102,10 @@ function buildConfigInputs() {
         label.htmlFor = 'limit-' + definition.key;
         label.textContent = definition.key;
         const numberInput = document.createElement('input');
-        numberInput.type = 'number';
+        // Byte fields take unit suffixes ("32MB"), which a number input
+        // rejects at the browser level before any script sees the keystroke.
+        numberInput.type = definition.isBytes ? 'text' : 'number';
+        if (definition.isBytes) numberInput.placeholder = 'bytes, or e.g. 32MB';
         numberInput.id = 'limit-' + definition.key;
         if (definition.isFloat) numberInput.step = '0.1';
         wrapper.append(label, numberInput);
@@ -2059,7 +2118,8 @@ function buildConfigInputs() {
         label.htmlFor = 'quota-' + definition.key;
         label.textContent = definition.key;
         const numberInput = document.createElement('input');
-        numberInput.type = 'number';
+        numberInput.type = definition.isBytes ? 'text' : 'number';
+        if (definition.isBytes) numberInput.placeholder = 'bytes, or e.g. 8MB';
         numberInput.id = 'quota-' + definition.key;
         wrapper.append(label, numberInput);
         byId('quota-grid').append(wrapper);
@@ -2074,15 +2134,17 @@ function applyStateToForm(state) {
     }
     byId('capability-osEnvAllowList').value = state.osEnvAllowList;
     for (const definition of limitDefinitions) {
-        byId('limit-' + definition.key).value = state.limits[definition.key];
+        const value = state.limits[definition.key];
+        byId('limit-' + definition.key).value = definition.isBytes ? formatByteSize(value) : value;
     }
     byId('limit-outputOverflow').value = state.outputOverflow;
     for (const definition of quotaDefinitions) {
-        byId('quota-' + definition.key).value = state.vfsQuota[definition.key];
+        const value = state.vfsQuota[definition.key];
+        byId('quota-' + definition.key).value = definition.isBytes ? formatByteSize(value) : value;
     }
     byId('quota-billWallTime').checked = state.billWallTime;
     byId('output-mode').value = state.outputMode;
-    byId('output-chunk-bytes').value = state.outputChunkBytes;
+    byId('output-chunk-bytes').value = formatByteSize(state.outputChunkBytes);
     byId('profiler-enabled').checked = state.profilerEnabled;
     byId('profiler-period').value = state.profilerPeriodSeconds;
     byId('profiler-unit').value = state.profilerUnit;
@@ -2101,6 +2163,28 @@ function numberOrNull(rawValue, isFloat) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
+// "32MB", "1 GB", "512kb", or plain bytes. Binary multiples (KB = 1024),
+// matching what every limit in the extension means by a kilobyte. The server
+// accepts the same forms, so the raw string could travel as-is; parsing here
+// keeps what localStorage remembers canonical.
+function parseByteSize(rawValue) {
+    const match = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$/i.exec(String(rawValue ?? ''));
+    if (!match) return null;
+    const multiplier = { b: 1, kb: 1024, mb: 1048576, gb: 1073741824 }[(match[2] || 'b').toLowerCase()];
+    return Math.round(parseFloat(match[1]) * multiplier);
+}
+
+// The inverse, for display: exact binary multiples render with their unit
+// ("32MB"), anything else stays a plain byte count rather than losing
+// precision to a rounded suffix.
+function formatByteSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '';
+    for (const [unit, size] of [['GB', 1073741824], ['MB', 1048576], ['KB', 1024]]) {
+        if (bytes >= size && bytes % size === 0) return (bytes / size) + unit;
+    }
+    return String(bytes);
+}
+
 function collectStateFromForm() {
     return {
         source: byId('source-editor').value,
@@ -2110,15 +2194,19 @@ function collectStateFromForm() {
         )),
         osEnvAllowList: byId('capability-osEnvAllowList').value,
         limits: Object.fromEntries(limitDefinitions.map(
-            (definition) => [definition.key, numberOrNull(byId('limit-' + definition.key).value, definition.isFloat)],
+            (definition) => [definition.key, definition.isBytes
+                ? parseByteSize(byId('limit-' + definition.key).value)
+                : numberOrNull(byId('limit-' + definition.key).value, definition.isFloat)],
         )),
         outputOverflow: byId('limit-outputOverflow').value,
         vfsQuota: Object.fromEntries(quotaDefinitions.map(
-            (definition) => [definition.key, numberOrNull(byId('quota-' + definition.key).value, false)],
+            (definition) => [definition.key, definition.isBytes
+                ? parseByteSize(byId('quota-' + definition.key).value)
+                : numberOrNull(byId('quota-' + definition.key).value, false)],
         )),
         billWallTime: byId('quota-billWallTime').checked,
         outputMode: byId('output-mode').value,
-        outputChunkBytes: numberOrNull(byId('output-chunk-bytes').value, false),
+        outputChunkBytes: parseByteSize(byId('output-chunk-bytes').value),
         profilerEnabled: byId('profiler-enabled').checked,
         profilerPeriodSeconds: numberOrNull(byId('profiler-period').value, true),
         profilerUnit: byId('profiler-unit').value,
@@ -2626,6 +2714,21 @@ function initializePlayground() {
         for (const definition of capabilityDefinitions) {
             byId('capability-' + definition.key).checked = definition.trustedValue;
         }
+        persistState();
+    });
+
+    // The escape hatch for a panel poisoned by stale localStorage -- a limit
+    // saved during an experiment survives every reload and quietly starves
+    // future runs, which is indistinguishable from a bug until the stats are
+    // read. This puts every panel back to the shipped defaults and persists
+    // that, so the next reload starts clean too. The session VFS is left
+    // alone; it has its own reset button.
+    byId('reset-defaults-button').addEventListener('click', () => {
+        if (!confirm('Reset the script, capabilities, limits, quota and options to the shipped defaults?')) {
+            return;
+        }
+        try { localStorage.removeItem(STORAGE_KEY); } catch (storageError) { /* fine */ }
+        applyStateToForm(defaultState());
         persistState();
     });
 
