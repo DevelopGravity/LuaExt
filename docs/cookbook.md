@@ -1,6 +1,6 @@
 # Cookbook
 
-Practical recipes for building a host around `Sandbox`. Each recipe assumes you've read the [capabilities/limits overview in the README](../README.md#capabilities-and-limits) and, for anything touching the filesystem or module loading, [docs/lua-api.md](lua-api.md).
+Practical recipes for building a host around `Sandbox`. Each recipe assumes you've read the [configuration reference](configuration.md) and, for anything touching the filesystem or module loading, [docs/lua-api.md](lua-api.md).
 
 > **Status: pre-1.0, no tagged release.** These recipes are written against the pinned public API in `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` — class, method, and parameter names, including on `SandboxStats` and `FileStat`, are accurate and will not drift.
 >
@@ -100,7 +100,7 @@ Object identity never crosses the boundary either direction — Lua gets bound c
 
 ## Implementing a `FileSystem` backend
 
-Granting the `vfs` capability gives a script a conventional-looking `io` library backed by a `FileSystem` implementation you provide. The interface is intentionally blob-oriented — no handles, no offsets, no quota checks — because all of that lives in the C VFS layer, which enforces `VfsQuota` (open handles, per-file/total byte caps, file count, operation count, path length/depth) *before* your backend ever sees a call. That's why backend implementations stay small: a backend author never re-implements quota logic, and a backend that has no built-in limits of its own is still fully protected by the extension.
+Granting the `vfs` capability gives a script a conventional-looking `io` library backed by a `FileSystem` implementation you provide. The interface is intentionally blob-oriented — no handles, no offsets, no quota checks — because all of that lives in the C VFS layer, which enforces `VfsQuota` (open handles, per-file/total byte caps, file count, operation count per sandbox call, path length/depth) *before* your backend ever sees a call — the full table is in [configuration.md](configuration.md#vfsquota). That's why backend implementations stay small: a backend author never re-implements quota logic, and a backend that has no built-in limits of its own is still fully protected by the extension.
 
 ```php
 <?php
@@ -411,8 +411,8 @@ final class MeteredLuaRunner
         // SandboxStats is JsonSerializable, so it can be logged or billed without
         // hand-mapping fields: memoryBytes, peakMemoryBytes, memoryLimitBytes,
         // cpuSeconds, wallClockSeconds, outputBytes, outputTruncated,
-        // liveCoroutines, peakCoroutineDepth, modulesLoaded, vfsOperations,
-        // vfsBytes, gcCollections, luaCallsIn, and phpCallsOut.
+        // liveCoroutines, peakCoroutineDepth, modulesLoaded, cachedChunks,
+        // vfsOperations, vfsBytes, gcCollections, luaCallsIn, and phpCallsOut.
         $this->metricsClient->record('lua.sandbox.usage', $usageSnapshot);
 
         return $returnValues;
