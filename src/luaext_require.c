@@ -5,6 +5,7 @@
 #include "luaext_require.h"
 
 #include "luaext_error.h"
+#include "luaext_timers.h"
 #include "luaext_vfs.h"
 #include "luaext_vfs_path.h"
 
@@ -410,7 +411,24 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 	ZVAL_STR(&args[1], zend_string_init(requested_by, strlen(requested_by), 0));
 
 	ZVAL_UNDEF(&result);
-	zend_call_known_instance_method(fn, Z_OBJ(sandbox->module_resolver_zv), &result, 2, args);
+
+	/* A resolver is a host crossing like any other, so Limits::$billHostTime
+	 * covers it; the VFS pattern, since no callback boundary follows here. */
+	{
+		uint8_t paused = 0;
+
+		if (!sandbox->policy.limits.bill_host_time) {
+			paused = luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL)
+						 ? (uint8_t)(LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL)
+						 : (uint8_t)0;
+		}
+
+		zend_call_known_instance_method(fn, Z_OBJ(sandbox->module_resolver_zv), &result, 2, args);
+
+		if (paused != 0) {
+			luaext_timers_resume(sandbox, paused);
+		}
+	}
 
 	zval_ptr_dtor(&args[0]);
 	zval_ptr_dtor(&args[1]);

@@ -61,6 +61,7 @@ DevelopGravity\LuaExt\Limits
   maxSourceBytes       1048576
   maxConversionDepth   64
   maxCachedChunks      64
+  billHostTime         false
 DevelopGravity\LuaExt\VfsQuota
   maxOpenHandles       16
   maxFileBytes         1048576

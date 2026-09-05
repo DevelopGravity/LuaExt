@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 6eff6befad8697f51592c3963f8a90b8b4279f79 */
+ * Stub hash: 4f8dae9db7a0aeb8531bd9fd263d795da784d276 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -49,6 +49,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Limits___construct, 0
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxSourceBytes, IS_LONG, 0, "1048576")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxConversionDepth, IS_LONG, 0, "64")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxCachedChunks, IS_LONG, 0, "64")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, billHostTime, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Limits_with, 0, 0, DevelopGravity\\LuaExt\\Limits, 0)
@@ -735,6 +736,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Limits(void)
 	zend_string *property_maxCachedChunks_name = zend_string_init("maxCachedChunks", sizeof("maxCachedChunks") - 1, 1);
 	zend_declare_typed_property(class_entry, property_maxCachedChunks_name, &property_maxCachedChunks_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_maxCachedChunks_name);
+
+	zval property_billHostTime_default_value;
+	ZVAL_UNDEF(&property_billHostTime_default_value);
+	zend_string *property_billHostTime_name = zend_string_init("billHostTime", sizeof("billHostTime") - 1, 1);
+	zend_declare_typed_property(class_entry, property_billHostTime_name, &property_billHostTime_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL));
+	zend_string_release(property_billHostTime_name);
 
 	return class_entry;
 }

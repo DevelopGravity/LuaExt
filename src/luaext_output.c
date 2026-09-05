@@ -42,6 +42,7 @@
 
 #include "luaext_alloc.h"
 #include "luaext_error.h"
+#include "luaext_timers.h"
 
 #include <string.h>
 
@@ -255,6 +256,7 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 {
 	zval callback_result;
 	zval args[2];
+	uint8_t paused = 0;
 	bool called;
 
 	ZVAL_UNDEF(&callback_result);
@@ -266,8 +268,22 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 	sandbox->php_calls_out++;
 	sandbox->in_php++;
 
+	/* An output callback is a host crossing like any other, so
+	 * Limits::$billHostTime covers it. Resumed here rather than left to a
+	 * boundary sweep, because this path also runs from flush() at teardown,
+	 * where no callback boundary follows. */
+	if (!sandbox->policy.limits.bill_host_time) {
+		paused = luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL)
+					 ? (uint8_t)(LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL)
+					 : (uint8_t)0;
+	}
+
 	called = call_user_function(NULL, NULL, &sandbox->out.callback, &callback_result, 2, args) ==
 			 SUCCESS;
+
+	if (paused != 0) {
+		luaext_timers_resume(sandbox, paused);
+	}
 
 	sandbox->in_php--;
 

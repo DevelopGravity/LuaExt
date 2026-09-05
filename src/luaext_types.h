@@ -280,6 +280,17 @@ typedef struct {
 	 * kept, because a full cache must never turn into a failed eval().
 	 */
 	uint32_t max_cached_chunks;
+
+	/*
+	 * Charge time spent in host code -- registered callables, the output
+	 * callback, a ModuleResolver -- against the CPU and wall budgets. Off by
+	 * default: each crossing pauses both clocks for exactly its own duration,
+	 * as pauseTimers() would, with the same nesting rules -- Lua re-entered
+	 * from a callback is always billed, and a callback that calls
+	 * resumeTimers() opts its own frame back in. The VFS has its own narrower
+	 * switch (luaext_vfs_quota.bill_wall_time) and keeps it.
+	 */
+	bool bill_host_time;
 } luaext_limits;
 
 typedef struct {

@@ -461,6 +461,9 @@ function row(string $label, string $path, string ...$args): void
 		limits: (new Limits())->with(
 			cpuSeconds: CPU_SECONDS,
 			wallClockSeconds: WALL_BACKSTOP_SECONDS,
+			// The matrix specifies the BILLED semantics and the pauseTimers()
+			// interplay, so it opts in; unbilled-by-default has its own file.
+			billHostTime: true,
 		),
 	));
 

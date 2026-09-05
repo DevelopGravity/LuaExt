@@ -324,6 +324,17 @@ static int luaext_phpcall_invoke(lua_State *L)
 		sandbox->php_calls_out++;
 		sandbox->in_php++;
 
+		/*
+		 * Limits::$billHostTime off means every crossing pauses both clocks,
+		 * the same pause the callback could take itself with pauseTimers() and
+		 * under the same rules. Nothing here resumes: luaext_timers_php_returned
+		 * below reopens whatever is paused, exactly as it already does for a
+		 * callback that paused and forgot.
+		 */
+		if (!sandbox->policy.limits.bill_host_time) {
+			(void)luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL);
+		}
+
 		/* One monotonic read, so the boundary below knows whether this call ran
 		 * long enough to have plausibly crossed a deadline inside it. */
 		call_started_ns = luaext_clock_monotonic_ns();
@@ -340,10 +351,10 @@ static int luaext_phpcall_invoke(lua_State *L)
 
 		/*
 		 * A callback that paused its own billing and forgot to resume does not
-		 * get to keep the pause. Note what this does NOT do: it does not pause
-		 * around the call. Time a host callback spends is the script's doing and
-		 * is billed by default; only an explicit pauseTimers() un-bills it, and
-		 * only when every enclosing frame paused too.
+		 * get to keep the pause. Whether the call was billed at all is
+		 * Limits::$billHostTime (off by default, paused above); when it is on,
+		 * only an explicit pauseTimers() un-bills a crossing, and only when
+		 * every enclosing frame paused too.
 		 *
 		 * A zend_bailout inside the callback longjmps past this, leaving the
 		 * pause outstanding as well as the in_php increment the same bailout

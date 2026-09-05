@@ -22,7 +22,7 @@ use DevelopGravity\LuaExt\SandboxConfig;
  */
 
 $sandbox = new Sandbox(new SandboxConfig(
-	limits: (new Limits())->with(cpuSeconds: 5.0, wallClockSeconds: 10.0),
+	limits: (new Limits())->with(cpuSeconds: 5.0, wallClockSeconds: 10.0, billHostTime: true),
 ));
 
 // A fresh sandbox has consumed nothing: construction happens before the first
@@ -61,7 +61,7 @@ $sandbox->close();
  * ---------------------------------------------------------------------- */
 
 $paused = new Sandbox(new SandboxConfig(
-	limits: (new Limits())->with(cpuSeconds: 5.0, wallClockSeconds: 10.0),
+	limits: (new Limits())->with(cpuSeconds: 5.0, wallClockSeconds: 10.0, billHostTime: true),
 ));
 
 $observed = [];

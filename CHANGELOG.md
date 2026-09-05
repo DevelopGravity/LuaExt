@@ -34,6 +34,8 @@ Nothing is released yet, so this section is a running record of what exists rath
 
 ### Changed
 
+- **Host time is no longer billed to the script by default.** `Limits::$billHostTime` (new, default `false`) pauses both timing clocks across every host crossing — registered callables, the output callback, a `ModuleResolver` — under the same nesting rules as `pauseTimers()`: Lua re-entered from a callback is still billed, and a callback that calls `resumeTimers()` opts back in. Set it `true` to restore the old behaviour, where a breach inside a callback is delivered the instant it returns. `VfsQuota::$billWallTime` keeps governing filesystem backends on its own.
+
 - **`Sandbox`'s usage and limit surface is smaller.** Six getters — `getMemoryUsage()`, `getPeakMemoryUsage()`, `getCpuUsage()`, `getWallClockUsage()`, `getOutputLength()`, `isOutputTruncated()` — are **removed**; each was a `stats()` field under another name, and `stats(): SandboxStats` is now the one way to read usage. The three limit setters are **replaced by `setLimits(Limits)`**, with `limits(): Limits` to read them back: the old three reached three of the fourteen limits a `Limits` carries, and the other eleven were always changeable but had no door. `$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: 2.0))` changes one field. This also ends an inconsistency where `cpuSeconds: 0.0` meant "no limit" through the constructor and was refused by the setter. See [docs/migrating-from-luasandbox.md](docs/migrating-from-luasandbox.md).
 
 ### Fixed

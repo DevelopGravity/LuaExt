@@ -49,6 +49,7 @@
 #define LUAEXT_DEFAULT_MAX_STRING_LENGTH ((size_t)67108864)
 #define LUAEXT_DEFAULT_MAX_SOURCE_BYTES ((size_t)1048576)
 #define LUAEXT_DEFAULT_MAX_CONVERSION_DEPTH 64
+#define LUAEXT_DEFAULT_BILL_HOST_TIME false
 
 #define LUAEXT_DEFAULT_MAX_OPEN_HANDLES 16
 #define LUAEXT_DEFAULT_MAX_FILE_BYTES ((size_t)1048576)
@@ -470,6 +471,7 @@ static void luaext_config_default_limits(luaext_limits *out)
 	out->max_source_bytes = LUAEXT_DEFAULT_MAX_SOURCE_BYTES;
 	out->max_conversion_depth = LUAEXT_DEFAULT_MAX_CONVERSION_DEPTH;
 	out->max_cached_chunks = LUAEXT_DEFAULT_MAX_CACHED_CHUNKS;
+	out->bill_host_time = LUAEXT_DEFAULT_BILL_HOST_TIME;
 }
 
 bool luaext_config_limits_read(zend_object *limits, luaext_limits *out)
@@ -480,6 +482,7 @@ bool luaext_config_limits_read(zend_object *limits, luaext_limits *out)
 	}
 
 	out->output_overflow = luaext_config_overflow(LUAEXT_GET(limits, "outputOverflow"));
+	out->bill_host_time = LUAEXT_GET_BOOL(limits, "billHostTime");
 
 	return luaext_config_size(LUAEXT_GET(limits, "memoryBytes"), "Limits::$memoryBytes",
 							  &out->memory_bytes) &&
@@ -1057,10 +1060,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	zend_long max_source_bytes = (zend_long)LUAEXT_DEFAULT_MAX_SOURCE_BYTES;
 	zend_long max_conversion_depth = LUAEXT_DEFAULT_MAX_CONVERSION_DEPTH;
 	zend_long max_cached_chunks = LUAEXT_DEFAULT_MAX_CACHED_CHUNKS;
+	bool bill_host_time = LUAEXT_DEFAULT_BILL_HOST_TIME;
 	zend_object *object;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 14)
+	ZEND_PARSE_PARAMETERS_START(0, 15)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_LONG_OR_NULL(memory_bytes, memory_bytes_is_null)
 	Z_PARAM_DOUBLE_OR_NULL(cpu_seconds, cpu_seconds_is_null)
@@ -1076,6 +1080,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	Z_PARAM_LONG(max_source_bytes)
 	Z_PARAM_LONG(max_conversion_depth)
 	Z_PARAM_LONG(max_cached_chunks)
+	Z_PARAM_BOOL(bill_host_time)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object = Z_OBJ_P(ZEND_THIS);
@@ -1137,6 +1142,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Limits, __construct)
 	LUAEXT_SET(object, "maxConversionDepth", &value);
 	ZVAL_LONG(&value, max_cached_chunks);
 	LUAEXT_SET(object, "maxCachedChunks", &value);
+	ZVAL_BOOL(&value, bill_host_time);
+	LUAEXT_SET(object, "billHostTime", &value);
 }
 
 LUAEXT_CONFIG_WITH_METHOD(DevelopGravity_LuaExt_Limits, luaext_ce_limits)
@@ -1550,6 +1557,8 @@ void luaext_config_limits_create(const luaext_limits *limits, zval *out)
 	LUAEXT_SET(object, "maxConversionDepth", &value);
 	ZVAL_LONG(&value, (zend_long)limits->max_cached_chunks);
 	LUAEXT_SET(object, "maxCachedChunks", &value);
+	ZVAL_BOOL(&value, limits->bill_host_time);
+	LUAEXT_SET(object, "billHostTime", &value);
 }
 
 /*

@@ -52,6 +52,7 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `maxSourceBytes` | 1 MiB |
 | `maxConversionDepth` | 64 |
 | `maxCachedChunks` | 64 |
+| `billHostTime` | `false` |
 
 ### Where the timing limits are actually checked
 
@@ -74,8 +75,16 @@ considered: it delivers a `zend_bailout` that ends the entire request rather tha
 script, cannot be scoped to one sandbox, and would fight the host over a setting the host
 owns. Every part of that is worse than letting trusted code finish.
 
-The time is still *billed*. With `wallClockSeconds: 0.5` and a callback that sleeps two
-seconds:
+**Whether host time is billed at all is `Limits::$billHostTime`, and it defaults to
+off.** By default every crossing — a registered callable, the output callback, a
+`ModuleResolver` — pauses both clocks for exactly its own duration: host code is the
+host's own, and its time is not the script's doing. `stats()` then reports only the time
+the script itself spent, and a slow callback cannot trip a limit the script never
+threatened. The nesting rules are `pauseTimers()`'s: Lua re-entered from a callback is
+always billed, and a callback that calls `resumeTimers()` opts its own frame back in.
+
+With `billHostTime: true`, host time is the script's time. Measured, with
+`wallClockSeconds: 0.5` and a callback that sleeps two seconds:
 
 ```
 outcome:        WallClockLimitError
@@ -83,19 +92,15 @@ actual elapsed: 2.00s        <- ran 4x its limit
 stats wall:     2.004s       <- the callback's time was counted
 ```
 
-So the limit is honoured but late: the breach is delivered the instant the callback
-returns, the script cannot run another instruction, and `stats()` reports the real elapsed
-time rather than the limit. The overshoot is bounded by a single callback's duration — the
-check at the return boundary means a breach can never span a chain of them.
+The limit is honoured but late: the breach is delivered the instant the callback returns,
+the script cannot run another instruction, and the overshoot is bounded by a single
+callback's duration — the check at the return boundary means a breach can never span a
+chain of them. `pauseTimers()` is then the per-call opt-out.
 
-**Bounding a callback's own duration is the host's job** — put timeouts on your own I/O,
-since only the host knows what its code can safely be interrupted by. `pauseTimers()` does
-the opposite and is for the case where callback time genuinely should not be billed to the
-script.
-
-CPU limits are less exposed by this: a sleeping callback burns no CPU, so `cpuSeconds` is
-unaffected by a blocked host. A callback that *spins* is billed and, like the wall clock,
-is stopped only on return.
+Either way, **bounding a callback's own duration is the host's job** — put timeouts on
+your own I/O, since only the host knows what its code can safely be interrupted by. With
+billing off that is the whole story: a blocked callback outlasts every timing limit, the
+same trade `VfsQuota::$billWallTime` makes for filesystem backends.
 
 ## VfsQuota
 

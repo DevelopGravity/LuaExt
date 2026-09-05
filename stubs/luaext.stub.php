@@ -297,6 +297,21 @@ final readonly class Limits
      */
     public int $maxCachedChunks;
 
+    /**
+     * Charge time spent in host code — registered callables, the output
+     * callback, a ModuleResolver — against $cpuSeconds and $wallClockSeconds.
+     *
+     * Off by default: host code is the host's own, and its time is not the
+     * script's doing. Each crossing pauses both clocks for exactly its own
+     * duration, as a callback calling Sandbox::pauseTimers() would, with the
+     * same nesting rules — Lua re-entered from a callback is always billed,
+     * and a callback that calls resumeTimers() opts its own frame back in.
+     * The trade is that a blocked callback outlasts every timing limit; bound
+     * your own I/O, or turn this on to bill crossings to the script. The VFS
+     * keeps its narrower switch (VfsQuota::$billWallTime) either way.
+     */
+    public bool $billHostTime;
+
     public function __construct(
         ?int $memoryBytes = 33554432,
         ?float $cpuSeconds = 1.0,
@@ -312,6 +327,7 @@ final readonly class Limits
         int $maxSourceBytes = 1048576,
         int $maxConversionDepth = 64,
         int $maxCachedChunks = 64,
+        bool $billHostTime = false,
     ) {}
 
     /**

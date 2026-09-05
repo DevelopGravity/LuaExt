@@ -36,7 +36,7 @@ $caught = 0;
 
 for ($i = 0; $i < 100; $i++) {
 	$sandbox = new Sandbox(new SandboxConfig(
-		limits: new Limits(cpuSeconds: 0.03, wallClockSeconds: 5.0),
+		limits: new Limits(cpuSeconds: 0.03, wallClockSeconds: 5.0, billHostTime: true),
 	));
 
 	$sandbox->registerLibrary('host', [

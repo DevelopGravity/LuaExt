@@ -38,6 +38,9 @@ $sandbox = new Sandbox(new SandboxConfig(
 		// No CPU limit at all, so nothing but the wall clock can stop this.
 		cpuSeconds: null,
 		wallClockSeconds: WALL_SECONDS,
+		// The subject here is the wall clock running THROUGH a host callback,
+		// which is exactly what billHostTime buys when it is on.
+		billHostTime: true,
 	),
 ));
 
