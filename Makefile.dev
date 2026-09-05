@@ -28,15 +28,29 @@ FUZZ_SECONDS ?= 30
 # Bare `make` builds, which is what it did before GNUmakefile existed.
 .DEFAULT_GOAL := build
 
-.PHONY: build build-debug test check dev leak-check format format-check vendor-verify gen-stubs gen-stubs-check docs-check fuzz clean clean-tests
+.PHONY: build reconfigure build-debug test check dev leak-check format format-check vendor-verify gen-stubs gen-stubs-check docs-check fuzz clean clean-tests
 
-## Configure + build a release extension build.
+## Build the extension, configuring only when no Makefile exists yet.
+##
+## The guard matters: bare `make` reaches this target through GNUmakefile, and
+## when it reconfigured unconditionally it threw away whatever configuration a
+## CI job had just set up -- the sanitizer legs lost their php-src prefix and
+## every debug leg silently built release. An already-configured tree is built
+## as-is; `make reconfigure` or `make build-debug` is how you start over. The
+## trade: a stale Makefile (say after editing config.m4) is reused, not
+## regenerated.
 build:
+	@test -f Makefile || (phpize && ./configure)
+	$(MAKE) -f Makefile -j$(JOBS)
+
+## Throw away the current configuration and configure + build release.
+reconfigure:
 	phpize
 	./configure
 	$(MAKE) -f Makefile -j$(JOBS)
 
-## Configure + build with --enable-luaext-debug.
+## Configure + build with --enable-luaext-debug. Unguarded on purpose: asking
+## for a debug build means replacing whatever configuration is on disk.
 build-debug:
 	phpize
 	./configure --enable-luaext-debug
