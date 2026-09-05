@@ -64,99 +64,30 @@ jobs:
   # there from a tagged release, so it cannot be exercised before one exists.
   # release.yml covers that path.
   # ---------------------------------------------------------------------
+  # Split by platform for the same reason `build` and `build-macos` are, and to
+  # fix the bug that split did not reach: this was one job with a four-runner
+  # matrix and `needs: build`, where `build` is the LINUX caller. The macOS legs
+  # hung off the Linux build and ran even when the macOS build had failed --
+  # install-testing a platform that had just failed to compile.
+  #
+  # `needs: [build, build-macos]` would fix the gating and reintroduce the
+  # hostage problem, so each caller depends on its own platform instead.
   pie-install:
-    name: "pie install / ${{ matrix.os }}"
+    name: PIE Linux
     needs: build
-    # A fork PR's head commit is not fetchable from this repository, so the
-    # VCS constraint below could not resolve it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
-    steps:
-      - name: Setup PHP ${{ env.LUAEXT_PHP_VERSION }}
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
-        with:
-          php-version: ${{ env.LUAEXT_PHP_VERSION }}
-          tools: none
-          # NOT "none". PIE is a Box-packaged phar and refuses to start without
-          # iconv (pulled in by symfony/polyfill-mbstring); zip is what it
-          # unpacks downloads with. Stripping PHP bare here would also be
-          # unrealistic -- the point of this job is to mirror what a user
-          # actually has when they run pie install.
-          extensions: iconv, mbstring, zip
+    uses: ./.github/workflows/pie-install.yml
+    with:
+      runners: '["ubuntu-latest", "ubuntu-24.04-arm"]'
+      php-version: '8.5'
 
-      - name: Install PIE
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          curl -fL --output /tmp/pie.phar \
-            https://github.com/php/pie/releases/latest/download/pie.phar
-          gh attestation verify --owner php /tmp/pie.phar
-          chmod +x /tmp/pie.phar
-          php /tmp/pie.phar --version
+  pie-install-macos:
+    name: PIE macOS
+    needs: build-macos
+    uses: ./.github/workflows/pie-install.yml
+    with:
+      runners: '["macos-latest", "macos-15-intel"]'
+      php-version: '8.5'
 
-      - name: pie install this exact commit
-        env:
-          LUAEXT_REF: ${{ github.head_ref || github.ref_name }}
-          LUAEXT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          php /tmp/pie.phar repository:add vcs \
-            "${{ github.server_url }}/${{ github.repository }}"
-
-          # PIE writes the extension into the PHP extension directory and adds
-          # it to php.ini, which on a Linux runner is root-owned. It refuses to
-          # prompt for a password without a terminal, so the elevation has to be
-          # granted up front. macOS runners keep their PHP under a user-owned
-          # Homebrew prefix and need no such thing.
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo -E "$(command -v php)" /tmp/pie.phar install \
-              "developgravity/lua-ext:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
-              --no-interaction
-          else
-            php /tmp/pie.phar install \
-              "developgravity/lua-ext:dev-${LUAEXT_REF}#${LUAEXT_SHA}" \
-              --no-interaction
-          fi
-
-      - name: Verify PIE installed a loadable extension
-        run: |
-          set -uo pipefail
-
-          # Report before asserting. PIE names the interpreter it targeted, and
-          # that is not necessarily the `php` first on PATH; when those differ
-          # the extension is genuinely installed and still invisible here, which
-          # is worth seeing rather than inferring from an exit code.
-          echo "php on PATH: $(command -v php)"
-          php -v | head -1
-          echo "extension_dir: $(php -r 'echo ini_get("extension_dir");')"
-          # Captured once, then matched. `php -m | grep -q` is a trap under
-          # pipefail: grep exits at the first match, php dies of SIGPIPE, and
-          # the pipeline reports failure even though the extension is present.
-          # It is a race, so it passed on Linux and failed on macOS.
-          modules="$(php -m)"
-
-          echo "--- loaded extensions matching lua ---"
-          printf '%s\n' "$modules" | grep -i lua || echo "(none)"
-
-          if ! printf '%s\n' "$modules" | grep -qi luaext; then
-            echo "::error::PIE reported a successful install, but luaext is not loaded in $(command -v php)." >&2
-            exit 1
-          fi
-
-          php -r 'if (!class_exists("DevelopGravity\\LuaExt\\Sandbox")) {
-            fwrite(STDERR, "luaext is loaded but its classes are missing\n");
-            exit(1);
-          }'
-
-          php -r 'printf("pie-installed luaext %s (%s)%s",
-            DevelopGravity\LuaExt\Sandbox::extensionVersion(),
-            DevelopGravity\LuaExt\Sandbox::luaVersion(),
-            PHP_EOL);'
 
   # ---------------------------------------------------------------------
   # Gating Linux sanitizer legs: extension + php-src built with a matching
@@ -438,7 +369,7 @@ jobs:
   ci-required:
     name: CI required checks
     if: always()
-    needs: [build, build-macos, pie-install, sanitize-linux, windows]
+    needs: [build, build-macos, pie-install, pie-install-macos, sanitize-linux, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs
