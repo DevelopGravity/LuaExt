@@ -15,7 +15,8 @@ use DevelopGravity\LuaExt\SandboxConfig;
 
 // Two tiers, split by whether the module exists at all.
 //
-// Tier 1 -- libraries that go WHOLLY absent (coroutine, utf8, require, debug):
+// Tier 1 -- libraries that go wholly absent (coroutine, utf8, require,
+// package, debug):
 // the global stays genuinely nil, so `if coroutine then` keeps taking the
 // absent branch, and the patched error path classifies the touch instead of
 // reporting a bare "attempt to index a nil value".
@@ -38,6 +39,7 @@ foreach ([
 	'coroutine arith' => 'return coroutine + 1',
 	'utf8 index     ' => 'return utf8.len("x")',
 	'require call   ' => 'return require("m")',
+	'package index  ' => 'return package.loaded',
 	'debug index    ' => 'return debug.traceback()',
 ] as $label => $script) {
 	try {
@@ -111,6 +113,7 @@ coroutine index => The script used coroutine, which needs the coroutines capabil
 coroutine arith => The script used coroutine, which needs the coroutines capability this sandbox was not granted (line 1)
 utf8 index      => The script used utf8, which needs the utf8 capability this sandbox was not granted (line 1)
 require call    => The script used require, which needs the require capability this sandbox was not granted (line 1)
+package index   => The script used package, which needs the require capability this sandbox was not granted (line 1)
 debug index     => The script used debug, which needs the debugTraceback capability this sandbox was not granted (line 1)
 bool(false)
 string(5) "table"

@@ -84,8 +84,8 @@ static const char *const luaext_openlibs_table_withheld[] = {NULL};
  * string.dump is the one member here that is a capability. It serialises a
  * function to bytecode, and Lua has no bytecode verifier: a sandbox that can
  * produce bytecode and a sandbox that can load it are one capability apart from
- * arbitrary native execution. It is reachable from every untrusted sandbox today
- * because the placeholder this file replaces opened the library wholesale.
+ * arbitrary native execution, which is why dump sits behind dumpBytecode while
+ * the rest of the library is open.
  * ---------------------------------------------------------------------- */
 
 static const luaext_member luaext_openlibs_string_allow[] = {
@@ -226,6 +226,11 @@ static const struct {
 	{"coroutine", LUAEXT_CAP_COROUTINES, "coroutines"},
 	{"utf8", LUAEXT_CAP_UTF8, "utf8"},
 	{"require", LUAEXT_CAP_REQUIRE, "require"},
+
+	/* package exists only alongside require -- luaext_require_install()
+	 * returns early without the capability -- so touching it is the same
+	 * policy decision under another name. */
+	{"package", LUAEXT_CAP_REQUIRE, "require"},
 
 	/*
 	 * debug goes wholly absent only when no debug capability at all is
