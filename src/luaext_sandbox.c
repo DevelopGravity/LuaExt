@@ -1423,6 +1423,18 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits)
 	 * unstartable watchdog refuses a CPU deadline -- and a refusal that lands
 	 * after the policy was replaced would leave the sandbox describing limits it
 	 * is not enforcing.
+	 *
+	 * WHAT THAT DOES AND DOES NOT BUY. The policy is all-or-nothing, but the two
+	 * timer calls are not atomic with each other, so one can apply and the next
+	 * refuse. Working through when: the wall setter refuses only for a zero slot
+	 * or an unenforceable sandbox, and the CPU setter demands both of those too
+	 * whenever its own limit is non-zero -- so the single surviving case is
+	 * cpuSeconds 0 on a sandbox that cannot enforce, where the slot's CPU
+	 * deadline is cleared while limits() still names the old one. That is a
+	 * sandbox already reporting it can enforce no timing limit at all, so the
+	 * divergence is between two descriptions of nothing. Left alone deliberately:
+	 * a pre-flight check would duplicate the setters' own refusal rules, and two
+	 * copies of that logic drifting apart is the more likely defect.
 	 */
 	if (!luaext_timers_set_cpu_limit(sandbox, limits.cpu_ns) ||
 		!luaext_timers_set_wall_limit(sandbox, limits.wall_ns)) {
