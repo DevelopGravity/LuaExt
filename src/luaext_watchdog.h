@@ -155,6 +155,14 @@ uint64_t luaext_watchdog_wall_ns(const luaext_watch_slot *slot);
  */
 bool luaext_watchdog_self_check(luaext_watch_slot *slot);
 
+/*
+ * The self-check without the stride, for the return boundary: sample once and
+ * raise the flag if a budget is spent, so a breach the watchdog thread was too
+ * late to service is still delivered before the call reports success. Same
+ * raise-after-return contract as the self-check.
+ */
+bool luaext_watchdog_final_check(luaext_watch_slot *slot);
+
 /* True when the watchdog thread is running. False means the wall limit
  * degrades to "trips when Lua next executes an instruction", which
  * Sandbox::features() must report rather than conceal. */

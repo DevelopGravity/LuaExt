@@ -354,9 +354,11 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 
 	/*
 	 * Asked BEFORE leaving, because leaving is where the sticky interrupt flag
-	 * is cleared. A call that came back with LUA_OK while a limit breach was
-	 * still raised did not succeed -- something inside it caught the breach and
-	 * carried on -- and its results are not results.
+	 * is cleared and the slot disarmed. A call that came back with LUA_OK while
+	 * in breach did not succeed -- whether something inside it caught the
+	 * breach and carried on, or the budget ran out too close to the end for the
+	 * watchdog thread to have delivered it yet -- and its results are not
+	 * results.
 	 */
 	/*
 	 * INSIDE the bracket, and BEFORE the interrupt is examined. Both halves of

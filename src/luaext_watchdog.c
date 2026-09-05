@@ -1304,3 +1304,30 @@ bool luaext_watchdog_self_check(luaext_watch_slot *slot)
 
 	return over;
 }
+
+/*
+ * The self-check without the stride, for the one place per call that must not
+ * sample lazily: the return boundary.
+ *
+ * Delivery through the watchdog thread is a race the thread can lose. A script
+ * that crosses its deadline shortly before returning can be back in PHP before
+ * the thread's next wakeup, and the boundary then disarms the slot -- so the
+ * wakeup finds nothing to service and a measured breach reports success. A
+ * contended macOS runner lost exactly that race, with the artifact to show for
+ * it: 0.151s of CPU billed against a 0.10s limit, no error. Sampling once at
+ * the boundary makes the verdict deterministic, whatever the thread's latency.
+ */
+bool luaext_watchdog_final_check(luaext_watch_slot *slot)
+{
+	bool over;
+
+	if (slot == NULL || !slot->has_limits || !slot->armed) {
+		return false;
+	}
+
+	luaext_mutex_lock(&slot->lock);
+	over = luaext_watch_evaluate(slot);
+	luaext_mutex_unlock(&slot->lock);
+
+	return over;
+}

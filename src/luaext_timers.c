@@ -542,6 +542,16 @@ bool luaext_timers_throw_if_interrupted(luaext_sandbox *sandbox)
 	zend_class_entry *ce;
 	const char *what;
 
+	/*
+	 * Sample before reading the flag, because the flag alone is a race the
+	 * watchdog thread can lose: a script that crosses its deadline just before
+	 * returning is back here before the thread's next wakeup, and the caller is
+	 * about to disarm the slot -- after which the wakeup finds nothing to
+	 * service and a measured breach reports success. One direct evaluation
+	 * makes the verdict depend on the clock, not on thread latency.
+	 */
+	(void)luaext_watchdog_final_check(sandbox->slot);
+
 	if (!atomic_load_explicit(&sandbox->irq.interrupted, memory_order_relaxed)) {
 		return false;
 	}
@@ -570,10 +580,16 @@ bool luaext_timers_throw_if_interrupted(luaext_sandbox *sandbox)
 		break;
 	}
 
+	/*
+	 * Two ways to arrive here, deliberately not distinguished: the script
+	 * caught a breach mid-run and carried on to the end, or the budget ran out
+	 * so close to the end that this boundary's own sample is what noticed.
+	 * Either way the call finished in breach and its result is not returned.
+	 */
 	zend_throw_exception_ex(ce, 0,
-							"The script returned while its %s was still raised, which means "
-							"something inside it caught the breach and carried on. The result is "
-							"discarded: a limit a script can survive is not a limit.",
+							"The script reached the end of the call with its %s exceeded. The "
+							"result is discarded: a limit a script can outrun or outlive is not "
+							"a limit.",
 							what);
 
 	return true;
