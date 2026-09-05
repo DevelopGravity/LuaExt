@@ -775,17 +775,20 @@ function fail(string $message): never
 }
 
 /**
- * Make the extension available, re-executing this script once if that is what
- * it takes. Returns false when it genuinely cannot be found.
+ * Make the checkout's extension available, re-executing this script once if
+ * that is what it takes. Returns false when it genuinely cannot be found.
+ *
+ * The checkout's build is preferred over a copy that is already loaded: a
+ * system-installed luaext (a PIE install, an ini) is whatever was last
+ * shipped, and auditing it produces golden files describing the wrong binary
+ * -- the same trap check-docs-api.php refuses by demanding `php -n`. When a
+ * local build exists the script re-execs against it with -n; a preloaded
+ * extension is only used when there is nothing local to describe.
  */
 function ensureExtensionLoaded(array $argv): bool
 {
-    if (extension_loaded('luaext')) {
-        return true;
-    }
-
     if (getenv(REEXEC_GUARD_VARIABLE) !== false) {
-        return false;
+        return extension_loaded('luaext');
     }
 
     foreach (['/modules/luaext.so', '/modules/luaext.dll', '/.libs/luaext.so'] as $candidate) {
@@ -796,7 +799,7 @@ function ensureExtensionLoaded(array $argv): bool
         }
 
         $command = array_merge(
-            [PHP_BINARY, '-d', 'extension=' . realpath($path), __FILE__],
+            [PHP_BINARY, '-n', '-d', 'extension=' . realpath($path), __FILE__],
             array_slice($argv, 1),
         );
 
@@ -808,7 +811,7 @@ function ensureExtensionLoaded(array $argv): bool
         exit($status);
     }
 
-    return false;
+    return extension_loaded('luaext');
 }
 
 /**
