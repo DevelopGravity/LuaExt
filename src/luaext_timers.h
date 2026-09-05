@@ -200,4 +200,12 @@ void luaext_timers_hook(lua_State *L, lua_Debug *ar);
  */
 bool luaext_timers_throw_if_interrupted(luaext_sandbox *sandbox);
 
+/*
+ * Sample the deadline once, raising the sticky flag if a budget is spent.
+ * For the boundaries that deliver into LUA rather than throwing into PHP --
+ * the callback return is the one today. True means a breach is now flagged;
+ * the caller delivers it with LUAEXT_CHECK or luaext_raise_interrupt.
+ */
+bool luaext_timers_final_check(luaext_sandbox *sandbox);
+
 #endif /* LUAEXT_TIMERS_H */

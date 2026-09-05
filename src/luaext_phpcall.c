@@ -28,6 +28,7 @@
 #include "luaext_convert.h"
 #include "luaext_defer.h"
 #include "luaext_error.h"
+#include "luaext_clock.h"
 #include "luaext_timers.h"
 
 #include <lauxlib.h>
@@ -50,6 +51,10 @@
 
 /* What an unnamed callable is called in a message. */
 #define LUAEXT_PHPCALL_ANONYMOUS "an anonymous host callback"
+
+/* How long a callback must have run before its boundary samples the deadline
+ * directly; see the comment at the check. One scheduler quantum, roughly. */
+#define LUAEXT_PHPCALL_SAMPLE_AFTER_NS ((uint64_t)1000000)
 
 /* -------------------------------------------------------------------------
  * Closure storage
@@ -216,6 +221,7 @@ static int luaext_phpcall_invoke(lua_State *L)
 	int index;
 	int status = LUA_OK;
 	bool converted = true;
+	uint64_t call_started_ns = 0;
 
 	/*
 	 * Everything up to the argument loop owns nothing, so it may raise freely.
@@ -317,6 +323,10 @@ static int luaext_phpcall_invoke(lua_State *L)
 		 */
 		sandbox->php_calls_out++;
 		sandbox->in_php++;
+
+		/* One monotonic read, so the boundary below knows whether this call ran
+		 * long enough to have plausibly crossed a deadline inside it. */
+		call_started_ns = luaext_clock_monotonic_ns();
 
 		/*
 		 * zend_call_known_fcc() rather than zend_call_function(): it copies a
@@ -420,7 +430,28 @@ static int luaext_phpcall_invoke(lua_State *L)
 	 * script to execute another instruction -- which matters most for the
 	 * callback that never returns to Lua at all because it is the last thing the
 	 * script does.
+	 *
+	 * Sampled as well as flag-checked, for the same reason the return boundary
+	 * is: the flag is set by the watchdog thread, whose wakeup can land after a
+	 * breach inside this callback has already been crossed. No back edge runs
+	 * inside PHP, so without the sample a breach here waits for the thread --
+	 * and the return boundary, if the thread never wakes in time.
+	 *
+	 * Gated on the call having run for a millisecond, because the sample is a
+	 * mutex and a clock syscall and this crossing is otherwise ~0.3us: sampling
+	 * unconditionally measured 2.9x on a trivial callback. A callback shorter
+	 * than the gate cannot have overshot by more than the gate, and a breach
+	 * crossed inside one is still delivered at the next back edge or the return
+	 * boundary -- the same bounded lateness every VM instruction already has.
+	 * Long callbacks, the only ones that can meaningfully overshoot, pay one
+	 * sample against work that dwarfs it.
 	 */
+	if (call_started_ns != 0 &&
+		luaext_clock_monotonic_ns() - call_started_ns >= LUAEXT_PHPCALL_SAMPLE_AFTER_NS &&
+		luaext_timers_final_check(sandbox)) {
+		luaext_raise_interrupt(L);
+	}
+
 	LUAEXT_CHECK(L);
 
 	if (EG(exception) != NULL) {

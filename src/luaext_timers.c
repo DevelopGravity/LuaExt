@@ -537,6 +537,11 @@ int luaext_hook_is_ours(lua_State *L)
  * substitute for it: the replacement stops the script AT the pcall, which is
  * both faster and gives the right traceback. This catches whatever gets past.
  */
+bool luaext_timers_final_check(luaext_sandbox *sandbox)
+{
+	return luaext_watchdog_final_check(sandbox->slot);
+}
+
 bool luaext_timers_throw_if_interrupted(luaext_sandbox *sandbox)
 {
 	zend_class_entry *ce;
