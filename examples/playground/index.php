@@ -2075,7 +2075,8 @@ const defaultHostClasses = [
 const statFieldOrder = [
     'memoryBytes', 'peakMemoryBytes', 'memoryLimitBytes', 'cpuSeconds', 'wallClockSeconds',
     'outputBytes', 'outputTruncated', 'liveCoroutines', 'peakCoroutineDepth', 'modulesLoaded',
-    'cachedChunks', 'vfsOperations', 'vfsBytes', 'gcCollections', 'luaCallsIn', 'phpCallsOut',
+    'cachedChunks', 'vfsOperations', 'vfsBytes', 'vfsWallClockSeconds', 'vfsCpuSeconds',
+    'gcCollections', 'luaCallsIn', 'phpCallsOut', 'phpWallClockSeconds', 'phpCpuSeconds',
 ];
 
 let hostClasses = [];

@@ -68,6 +68,15 @@ $surfaces = [
     'Capabilities' => DevelopGravity\LuaExt\Capabilities::class,
 ];
 
+// The stats table is the same drift in the other direction: renderStats()
+// walks statFieldOrder and silently skips anything not listed, so a new
+// SandboxStats field would appear in the raw JSON and nowhere else.
+foreach ((new ReflectionClass(DevelopGravity\LuaExt\SandboxStats::class))->getProperties() as $property) {
+    if (!str_contains($playground, sprintf("'%s'", $property->getName()))) {
+        $failures[] = sprintf('SandboxStats::$%s is missing from the playground stats table', $property->getName());
+    }
+}
+
 foreach ($surfaces as $label => $class) {
     foreach (constructorParameters($class) as $parameter) {
         if (isset(DELIBERATELY_ABSENT[$label][$parameter])) {

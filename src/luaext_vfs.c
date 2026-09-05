@@ -136,6 +136,7 @@ static luaext_vfs_result luaext_vfs_call_maybe_charged(lua_State *L, luaext_sand
 {
 	zend_function *fn;
 	uint8_t paused = 0;
+	luaext_host_span host_span;
 	bool billed_wall;
 
 	ZVAL_UNDEF(result);
@@ -207,7 +208,12 @@ static luaext_vfs_result luaext_vfs_call_maybe_charged(lua_State *L, luaext_sand
 		return LUAEXT_VFS_FAILED;
 	}
 
+	luaext_timers_span_begin(sandbox, &sandbox->vfs_span_depth, &host_span);
+
 	zend_call_known_instance_method(fn, Z_OBJ(sandbox->filesystem_zv), result, argc, args);
+
+	luaext_timers_span_end(sandbox, &sandbox->vfs_span_depth, &host_span,
+						   &sandbox->vfs_time_wall_ns, &sandbox->vfs_time_cpu_ns);
 
 	if (paused != 0) {
 		luaext_timers_resume(sandbox, paused);

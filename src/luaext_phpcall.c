@@ -222,6 +222,7 @@ static int luaext_phpcall_invoke(lua_State *L)
 	int status = LUA_OK;
 	bool converted = true;
 	uint64_t call_started_ns = 0;
+	luaext_host_span host_span;
 
 	/*
 	 * Everything up to the argument loop owns nothing, so it may raise freely.
@@ -339,6 +340,8 @@ static int luaext_phpcall_invoke(lua_State *L)
 		 * long enough to have plausibly crossed a deadline inside it. */
 		call_started_ns = luaext_clock_monotonic_ns();
 
+		luaext_timers_span_begin(sandbox, &sandbox->php_span_depth, &host_span);
+
 		/*
 		 * zend_call_known_fcc() rather than zend_call_function(): it copies a
 		 * trampoline before calling, because zend_call_function() frees the one
@@ -346,6 +349,9 @@ static int luaext_phpcall_invoke(lua_State *L)
 		 * long-lived copy.
 		 */
 		zend_call_known_fcc(&slot->fcc, &result, (uint32_t)argc, params, NULL);
+
+		luaext_timers_span_end(sandbox, &sandbox->php_span_depth, &host_span,
+							   &sandbox->php_time_wall_ns, &sandbox->php_time_cpu_ns);
 
 		sandbox->in_php--;
 

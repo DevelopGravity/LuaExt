@@ -537,6 +537,20 @@ struct luaext_sandbox {
 	uint64_t vfs_operations;
 	uint64_t vfs_bytes;
 
+	/*
+	 * Time inside host crossings, split the way the counters above split them:
+	 * php_* covers calls out to PHP (registered callables, the output callback,
+	 * the module resolver), vfs_* covers FileSystem backend calls. Outermost
+	 * spans only, which is what the depths guard: a crossing that re-enters Lua
+	 * and crosses again is already inside the first span's measurement.
+	 */
+	uint64_t php_time_wall_ns;
+	uint64_t php_time_cpu_ns;
+	uint64_t vfs_time_wall_ns;
+	uint64_t vfs_time_cpu_ns;
+	uint32_t php_span_depth;
+	uint32_t vfs_span_depth;
+
 	/* Per-thread live list in module globals, swept at RSHUTDOWN. */
 	luaext_sandbox *live_next;
 	luaext_sandbox *live_prev;

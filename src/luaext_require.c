@@ -416,6 +416,7 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 	 * covers it; the VFS pattern, since no callback boundary follows here. */
 	{
 		uint8_t paused = 0;
+		luaext_host_span host_span;
 
 		if (!sandbox->policy.limits.bill_host_time) {
 			paused = luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL)
@@ -423,7 +424,12 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 						 : (uint8_t)0;
 		}
 
+		luaext_timers_span_begin(sandbox, &sandbox->php_span_depth, &host_span);
+
 		zend_call_known_instance_method(fn, Z_OBJ(sandbox->module_resolver_zv), &result, 2, args);
+
+		luaext_timers_span_end(sandbox, &sandbox->php_span_depth, &host_span,
+							   &sandbox->php_time_wall_ns, &sandbox->php_time_cpu_ns);
 
 		if (paused != 0) {
 			luaext_timers_resume(sandbox, paused);

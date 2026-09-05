@@ -80,7 +80,10 @@ off.** By default every crossing — a registered callable, the output callback,
 `ModuleResolver` — pauses both clocks for exactly its own duration: host code is the
 host's own, and its time is not the script's doing. `stats()` then reports only the time
 the script itself spent, and a slow callback cannot trip a limit the script never
-threatened. The nesting rules are `pauseTimers()`'s: Lua re-entered from a callback is
+threatened. The host time is not invisible, though: `stats()` reports it separately in
+`phpWallClockSeconds`/`phpCpuSeconds` (and filesystem backends in
+`vfsWallClockSeconds`/`vfsCpuSeconds`), accumulated whether or not it was billed — so a
+slow callback still shows up in the numbers without becoming the script's problem. The nesting rules are `pauseTimers()`'s: Lua re-entered from a callback is
 always billed, and a callback that calls `resumeTimers()` opts its own frame back in.
 
 With `billHostTime: true`, host time is the script's time. Measured, with

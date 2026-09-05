@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 4f8dae9db7a0aeb8531bd9fd263d795da784d276 */
+ * Stub hash: 53a15637764d4466d31e46ea0919231b636aed83 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -992,6 +992,18 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxStats(zend_
 	zend_declare_typed_property(class_entry, property_vfsBytes_name, &property_vfsBytes_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_vfsBytes_name);
 
+	zval property_vfsWallClockSeconds_default_value;
+	ZVAL_UNDEF(&property_vfsWallClockSeconds_default_value);
+	zend_string *property_vfsWallClockSeconds_name = zend_string_init("vfsWallClockSeconds", sizeof("vfsWallClockSeconds") - 1, 1);
+	zend_declare_typed_property(class_entry, property_vfsWallClockSeconds_name, &property_vfsWallClockSeconds_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_DOUBLE));
+	zend_string_release(property_vfsWallClockSeconds_name);
+
+	zval property_vfsCpuSeconds_default_value;
+	ZVAL_UNDEF(&property_vfsCpuSeconds_default_value);
+	zend_string *property_vfsCpuSeconds_name = zend_string_init("vfsCpuSeconds", sizeof("vfsCpuSeconds") - 1, 1);
+	zend_declare_typed_property(class_entry, property_vfsCpuSeconds_name, &property_vfsCpuSeconds_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_DOUBLE));
+	zend_string_release(property_vfsCpuSeconds_name);
+
 	zval property_gcCollections_default_value;
 	ZVAL_UNDEF(&property_gcCollections_default_value);
 	zend_string *property_gcCollections_name = zend_string_init("gcCollections", sizeof("gcCollections") - 1, 1);
@@ -1009,6 +1021,18 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxStats(zend_
 	zend_string *property_phpCallsOut_name = zend_string_init("phpCallsOut", sizeof("phpCallsOut") - 1, 1);
 	zend_declare_typed_property(class_entry, property_phpCallsOut_name, &property_phpCallsOut_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_phpCallsOut_name);
+
+	zval property_phpWallClockSeconds_default_value;
+	ZVAL_UNDEF(&property_phpWallClockSeconds_default_value);
+	zend_string *property_phpWallClockSeconds_name = zend_string_init("phpWallClockSeconds", sizeof("phpWallClockSeconds") - 1, 1);
+	zend_declare_typed_property(class_entry, property_phpWallClockSeconds_name, &property_phpWallClockSeconds_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_DOUBLE));
+	zend_string_release(property_phpWallClockSeconds_name);
+
+	zval property_phpCpuSeconds_default_value;
+	ZVAL_UNDEF(&property_phpCpuSeconds_default_value);
+	zend_string *property_phpCpuSeconds_name = zend_string_init("phpCpuSeconds", sizeof("phpCpuSeconds") - 1, 1);
+	zend_declare_typed_property(class_entry, property_phpCpuSeconds_name, &property_phpCpuSeconds_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_DOUBLE));
+	zend_string_release(property_phpCpuSeconds_name);
 
 	return class_entry;
 }

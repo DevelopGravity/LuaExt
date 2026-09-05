@@ -1474,12 +1474,20 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "vfsOperations", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->vfs_bytes);
 	LUAEXT_SET(object, "vfsBytes", &value);
+	ZVAL_DOUBLE(&value, (double)sandbox->vfs_time_wall_ns / 1e9);
+	LUAEXT_SET(object, "vfsWallClockSeconds", &value);
+	ZVAL_DOUBLE(&value, (double)sandbox->vfs_time_cpu_ns / 1e9);
+	LUAEXT_SET(object, "vfsCpuSeconds", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->gc_collections);
 	LUAEXT_SET(object, "gcCollections", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->lua_calls_in);
 	LUAEXT_SET(object, "luaCallsIn", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->php_calls_out);
 	LUAEXT_SET(object, "phpCallsOut", &value);
+	ZVAL_DOUBLE(&value, (double)sandbox->php_time_wall_ns / 1e9);
+	LUAEXT_SET(object, "phpWallClockSeconds", &value);
+	ZVAL_DOUBLE(&value, (double)sandbox->php_time_cpu_ns / 1e9);
+	LUAEXT_SET(object, "phpCpuSeconds", &value);
 }
 
 void luaext_config_stats_create(const luaext_sandbox *sandbox, zval *out)

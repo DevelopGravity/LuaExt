@@ -152,6 +152,34 @@ void luaext_timers_resume(luaext_sandbox *sandbox, uint8_t mask);
 void luaext_timers_php_returned(luaext_sandbox *sandbox);
 
 /* -------------------------------------------------------------------------
+ * Timing a host crossing, for stats
+ * ---------------------------------------------------------------------- */
+
+/*
+ * One bracketed measurement of a call out of Lua, feeding the phpWallClock /
+ * vfsWallClock family in SandboxStats. This is measurement, not billing: it
+ * accumulates whether or not the limits counted the same interval, which is
+ * what lets a host with Limits::$billHostTime off still see what its callbacks
+ * cost.
+ *
+ * `depth` is the per-bucket nesting counter on the sandbox. Only the outermost
+ * span records: a crossing that re-enters Lua and crosses again is already
+ * inside the first span, and counting it twice would report more host time
+ * than elapsed. A zend_bailout inside the crossing skips the end exactly as it
+ * strands in_php; the span is then simply lost, erring towards under-reporting.
+ */
+typedef struct luaext_host_span {
+	uint64_t wall_start;
+	uint64_t cpu_start;
+	bool cpu_ok;
+	bool outermost;
+} luaext_host_span;
+
+void luaext_timers_span_begin(luaext_sandbox *sandbox, uint32_t *depth, luaext_host_span *span);
+void luaext_timers_span_end(luaext_sandbox *sandbox, uint32_t *depth, luaext_host_span *span,
+							uint64_t *wall_ns, uint64_t *cpu_ns);
+
+/* -------------------------------------------------------------------------
  * Usage. Owner thread; safe at any time, including mid-call.
  * ---------------------------------------------------------------------- */
 

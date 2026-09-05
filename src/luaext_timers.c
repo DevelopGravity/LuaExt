@@ -474,6 +474,43 @@ void luaext_timers_php_returned(luaext_sandbox *sandbox)
 }
 
 /* -------------------------------------------------------------------------
+ * Timing a host crossing, for stats
+ * ---------------------------------------------------------------------- */
+
+void luaext_timers_span_begin(luaext_sandbox *sandbox, uint32_t *depth, luaext_host_span *span)
+{
+	span->outermost = ((*depth)++ == 0);
+
+	if (!span->outermost) {
+		return;
+	}
+
+	span->wall_start = luaext_clock_monotonic_ns();
+	span->cpu_ok = luaext_watchdog_read_own_cpu(sandbox->slot, &span->cpu_start);
+}
+
+void luaext_timers_span_end(luaext_sandbox *sandbox, uint32_t *depth, luaext_host_span *span,
+							uint64_t *wall_ns, uint64_t *cpu_ns)
+{
+	uint64_t now;
+
+	if (*depth != 0) {
+		(*depth)--;
+	}
+
+	if (!span->outermost) {
+		return;
+	}
+
+	*wall_ns += luaext_clock_monotonic_ns() - span->wall_start;
+
+	if (span->cpu_ok && luaext_watchdog_read_own_cpu(sandbox->slot, &now) &&
+		now >= span->cpu_start) {
+		*cpu_ns += now - span->cpu_start;
+	}
+}
+
+/* -------------------------------------------------------------------------
  * Usage
  * ---------------------------------------------------------------------- */
 

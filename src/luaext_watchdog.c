@@ -1273,6 +1273,15 @@ uint64_t luaext_watchdog_wall_ns(const luaext_watch_slot *slot)
 	return wall;
 }
 
+bool luaext_watchdog_read_own_cpu(const luaext_watch_slot *slot, uint64_t *ns)
+{
+	if (slot == NULL || !slot->clock_ok) {
+		return false;
+	}
+
+	return luaext_clock_read(&slot->clock, ns);
+}
+
 /* -------------------------------------------------------------------------
  * The in-VM self-check
  * ---------------------------------------------------------------------- */

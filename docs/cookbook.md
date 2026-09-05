@@ -412,7 +412,9 @@ final class MeteredLuaRunner
         // hand-mapping fields: memoryBytes, peakMemoryBytes, memoryLimitBytes,
         // cpuSeconds, wallClockSeconds, outputBytes, outputTruncated,
         // liveCoroutines, peakCoroutineDepth, modulesLoaded, cachedChunks,
-        // vfsOperations, vfsBytes, gcCollections, luaCallsIn, and phpCallsOut.
+        // vfsOperations, vfsBytes, vfsWallClockSeconds, vfsCpuSeconds,
+        // gcCollections, luaCallsIn, phpCallsOut, phpWallClockSeconds, and
+        // phpCpuSeconds.
         $this->metricsClient->record('lua.sandbox.usage', $usageSnapshot);
 
         return $returnValues;

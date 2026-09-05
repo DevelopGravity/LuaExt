@@ -257,6 +257,7 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 	zval callback_result;
 	zval args[2];
 	uint8_t paused = 0;
+	luaext_host_span host_span;
 	bool called;
 
 	ZVAL_UNDEF(&callback_result);
@@ -278,8 +279,13 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 					 : (uint8_t)0;
 	}
 
+	luaext_timers_span_begin(sandbox, &sandbox->php_span_depth, &host_span);
+
 	called = call_user_function(NULL, NULL, &sandbox->out.callback, &callback_result, 2, args) ==
 			 SUCCESS;
+
+	luaext_timers_span_end(sandbox, &sandbox->php_span_depth, &host_span,
+						   &sandbox->php_time_wall_ns, &sandbox->php_time_cpu_ns);
 
 	if (paused != 0) {
 		luaext_timers_resume(sandbox, paused);

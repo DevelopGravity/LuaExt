@@ -545,6 +545,16 @@ final readonly class SandboxStats implements \JsonSerializable
     /** Bytes read and written through the virtual filesystem. */
     public int $vfsBytes;
 
+    /**
+     * Wall-clock seconds spent inside FileSystem backend calls -- the host
+     * side of the operations $vfsOperations counts. Measured whether or not
+     * VfsQuota::$billWallTime charged the same interval to the script.
+     */
+    public float $vfsWallClockSeconds;
+
+    /** CPU seconds the sandbox's thread spent inside FileSystem backend calls. */
+    public float $vfsCpuSeconds;
+
     public int $gcCollections;
 
     /** Calls from PHP into Lua. */
@@ -552,6 +562,20 @@ final readonly class SandboxStats implements \JsonSerializable
 
     /** Calls from Lua back into PHP. */
     public int $phpCallsOut;
+
+    /**
+     * Wall-clock seconds spent inside calls out to PHP: registered callables,
+     * the output callback, and the module resolver.
+     *
+     * Measured whether or not Limits::$billHostTime charged the same interval
+     * to the script, which is what lets a host with billing off still see what
+     * its callbacks cost. A callback that re-enters Lua and crosses again is
+     * inside the first crossing's span, so nothing is counted twice.
+     */
+    public float $phpWallClockSeconds;
+
+    /** CPU seconds the sandbox's thread spent inside those same calls. */
+    public float $phpCpuSeconds;
 
     private function __construct() {}
 

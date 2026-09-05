@@ -141,6 +141,15 @@ uint64_t luaext_watchdog_cpu_ns(const luaext_watch_slot *slot);
 uint64_t luaext_watchdog_wall_ns(const luaext_watch_slot *slot);
 
 /*
+ * Read the owning thread's CPU clock, from the owning thread, for the stats
+ * that time host crossings. False when the platform cannot measure per-thread
+ * CPU at all. Lock-free on purpose: the handle is written only at acquire and
+ * release, both of which run on the owning thread with no crossing in flight,
+ * and the watchdog side only ever reads it.
+ */
+bool luaext_watchdog_read_own_cpu(const luaext_watch_slot *slot, uint64_t *ns);
+
+/*
  * Evaluate this slot from the owning thread and trip it if it is over budget.
  *
  * Called from the count hook on every tick; the stride is applied INSIDE, since
