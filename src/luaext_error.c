@@ -367,6 +367,31 @@ ZEND_COLD ZEND_NORETURN void luaext_error_raise_from_exception(lua_State *L)
 
 	luaext_error_assert_may_raise(L);
 
+	/*
+	 * exit() IS A PENDING EXCEPTION THAT IS NOT A THROWABLE.
+	 *
+	 * When a host callback calls exit() or die() from inside an internal call,
+	 * PHP does not bail out through this frame -- it cannot, because an internal
+	 * function is on the stack. It sets EG(exception) to a sentinel built by
+	 * zend_create_unwind_exit(), whose only job is to unwind the VM, and which
+	 * implements nothing.
+	 *
+	 * Treating it as a host exception went wrong twice over: it was retained on
+	 * the Lua error value and then re-thrown, giving the caller "Cannot throw
+	 * objects that do not implement Throwable" -- and, worse, the
+	 * zend_clear_exception() below CANCELLED the exit. A host that called exit()
+	 * did not exit.
+	 *
+	 * So: unwind Lua, because the interpreter cannot be left mid-call, but leave
+	 * the sentinel exactly where it is. luaext_error_throw_from_lua() sees it
+	 * still pending and declines to convert it, Sandbox::eval() does
+	 * RETURN_THROWS(), and PHP finishes the exit it started.
+	 */
+	if (exception != NULL && (zend_is_unwind_exit(exception) || zend_is_graceful_exit(exception))) {
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s",
+						   "the host ended the request from inside a callback");
+	}
+
 	if (exception == NULL) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "%s",
 						   "a host callback failed without reporting an exception");
@@ -1031,6 +1056,22 @@ void luaext_error_throw_from_lua(luaext_sandbox *sandbox, lua_State *L, int stat
 	zval trace;
 
 	if (L == NULL) {
+		return;
+	}
+
+	/*
+	 * The request is already ending, and it is not ours to describe.
+	 *
+	 * A host callback that called exit() left PHP's unwind sentinel pending;
+	 * luaext_error_raise_from_exception() deliberately raised through Lua without
+	 * disturbing it, so that the interpreter unwinds and this frame is reached
+	 * with the sentinel still in flight. Throwing anything here would replace it
+	 * -- turning the host's exit into an exception it never asked for -- so the
+	 * only correct move is to leave it alone and let the caller's RETURN_THROWS()
+	 * carry it onward.
+	 */
+	if (EG(exception) != NULL &&
+		(zend_is_unwind_exit(EG(exception)) || zend_is_graceful_exit(EG(exception)))) {
 		return;
 	}
 
