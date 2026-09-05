@@ -61,9 +61,18 @@ all live in code this extension controls — the interpreter loop's backward jum
 calls, the patched loops inside the string and `utf8` libraries, and the boundary a host
 callback returns through.
 
-**Nothing reads it inside PHP.** A registered callable that blocks — `sleep()`, a slow
-query, an HTTP request without a timeout — runs to completion no matter what the deadline
-says, because there is no safe way to preempt arbitrary PHP from another thread.
+**Nothing reads it inside PHP, and that is a design decision rather than a gap.** A
+registered callable is the host's own trusted code, invited across the boundary by the
+host — the opposite of the untrusted Lua the sandbox exists to contain. Killing it
+mid-statement would mean interrupting a transaction half-committed, a lock held, a file
+handle open, in code that never agreed to being stopped. So a callable that blocks —
+`sleep()`, a slow query, an HTTP request without a timeout — always runs to completion,
+and the deadline is acted on at the first moment the sandbox is back in charge.
+
+PHP's own `max_execution_time` machinery *can* interrupt a blocking call, and it was
+considered: it delivers a `zend_bailout` that ends the entire request rather than the
+script, cannot be scoped to one sandbox, and would fight the host over a setting the host
+owns. Every part of that is worse than letting trusted code finish.
 
 The time is still *billed*. With `wallClockSeconds: 0.5` and a callback that sleeps two
 seconds:
@@ -76,9 +85,11 @@ stats wall:     2.004s       <- the callback's time was counted
 
 So the limit is honoured but late: the breach is delivered the instant the callback
 returns, the script cannot run another instruction, and `stats()` reports the real elapsed
-time rather than the limit. The overshoot is exactly how long the callback blocked.
+time rather than the limit. The overshoot is bounded by a single callback's duration — the
+check at the return boundary means a breach can never span a chain of them.
 
-**Bounding that is the host's job** — put timeouts on your own I/O. `pauseTimers()` does
+**Bounding a callback's own duration is the host's job** — put timeouts on your own I/O,
+since only the host knows what its code can safely be interrupted by. `pauseTimers()` does
 the opposite and is for the case where callback time genuinely should not be billed to the
 script.
 
@@ -113,9 +124,10 @@ call already running and does not get a fresh budget — otherwise a script coul
 own quota by bouncing through the host.
 
 **`billWallTime` defaults to off**, which means a backend that hangs will not trip
-`WallClockLimitError` on its own. That is a deliberate trade — the host, not the script, is
-doing that work — and it is the one place a slow backend can outlast a sandbox's limits.
-See [SECURITY.md](../SECURITY.md) on what that costs.
+`WallClockLimitError` on its own. That is the same trade the timing limits make for every
+host callback (see [Where the timing limits are actually checked](#where-the-timing-limits-are-actually-checked)):
+the host, not the script, is doing that work, and trusted code is allowed to finish. See
+[SECURITY.md](../SECURITY.md) on what that costs.
 
 The split between fatal and catchable follows what a refusal costs the host: reaching a
 *resource* bound (handles, bytes, files, operations) is fatal, because a script able to
