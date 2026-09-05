@@ -53,6 +53,39 @@ Trust is a single object, `Capabilities`, passed inside `SandboxConfig`. The def
 | `maxConversionDepth` | 64 |
 | `maxCachedChunks` | 64 |
 
+### Where the timing limits are actually checked
+
+`cpuSeconds` and `wallClockSeconds` are enforced by a watchdog thread that does one thing
+when a deadline passes: it sets a flag. Something has to *read* that flag, and the reads
+all live in code this extension controls — the interpreter loop's backward jumps and tail
+calls, the patched loops inside the string and `utf8` libraries, and the boundary a host
+callback returns through.
+
+**Nothing reads it inside PHP.** A registered callable that blocks — `sleep()`, a slow
+query, an HTTP request without a timeout — runs to completion no matter what the deadline
+says, because there is no safe way to preempt arbitrary PHP from another thread.
+
+The time is still *billed*. With `wallClockSeconds: 0.5` and a callback that sleeps two
+seconds:
+
+```
+outcome:        WallClockLimitError
+actual elapsed: 2.00s        <- ran 4x its limit
+stats wall:     2.004s       <- the callback's time was counted
+```
+
+So the limit is honoured but late: the breach is delivered the instant the callback
+returns, the script cannot run another instruction, and `stats()` reports the real elapsed
+time rather than the limit. The overshoot is exactly how long the callback blocked.
+
+**Bounding that is the host's job** — put timeouts on your own I/O. `pauseTimers()` does
+the opposite and is for the case where callback time genuinely should not be billed to the
+script.
+
+CPU limits are less exposed by this: a sleeping callback burns no CPU, so `cpuSeconds` is
+unaffected by a blocked host. A callback that *spins* is billed and, like the wall clock,
+is stopped only on return.
+
 ## VfsQuota
 
 Filesystem access has its own budget, independent of `Limits` and applied before a backend
