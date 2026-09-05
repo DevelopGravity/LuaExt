@@ -904,10 +904,9 @@ static bool luaext_convert_table(luaext_convert_to_ctx *ctx, int index, luaext_c
 		 */
 		if ((++ctx->elements & (LUAEXT_CONVERT_IRQ_STRIDE - 1u)) == 0u &&
 			luaext_interrupt_pending(L)) {
-			lua_pop(L, 2);
-
-			return luaext_convert_to_fail(
+			(void)luaext_convert_to_fail(
 				ctx, step, "Converting a Lua table to PHP was interrupted by a limit");
+			goto failed;
 		}
 
 		child.parent = step;
