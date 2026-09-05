@@ -249,6 +249,20 @@ class CoroutineLimitError extends FatalError
 }
 
 /**
+ * The script used a feature its sandbox was not granted.
+ *
+ * Raised at the moment of access: touching a withheld library's global
+ * (coroutine, utf8, require) or calling a gated member of a library that is
+ * always present (os.getenv, io.open, string.dump, load, warn, the gated
+ * debug functions). Fatal on purpose — the message names the capability, and
+ * a script is expected to be written for the capabilities its host grants
+ * rather than discovering them by probing calls.
+ */
+class FeatureNotGrantedError extends FatalError
+{
+}
+
+/**
  * The host called Sandbox::interrupt().
  */
 class HostAbortError extends FatalError

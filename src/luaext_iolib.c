@@ -23,6 +23,7 @@
 #include "luaext_iolib.h"
 
 #include "luaext_error.h"
+#include "luaext_openlibs.h"
 #include "luaext_output.h"
 #include "luaext_vfs.h"
 #include "luaext_vfs_path.h"
@@ -1052,10 +1053,11 @@ bool luaext_iolib_install(lua_State *L, luaext_sandbox *sandbox)
 	/*
 	 * The filesystem half, only when there is a filesystem behind it.
 	 *
-	 * Absent rather than present-and-failing: a script can test for io.open to
-	 * learn whether it has storage, which is the honest way to report a
-	 * capability it does not have. A stub that returned `nil, "no filesystem"`
-	 * would be indistinguishable from a backend that is merely down.
+	 * Gate stubs rather than gaps. These used to be simply absent so a script
+	 * could test io.open for storage; the classification decision reverses
+	 * that trade -- the stub is truthy but raises FeatureNotGrantedError
+	 * naming the capability, which cannot be confused with a backend that is
+	 * merely down (that is a catchable `nil, message` from a real io.open).
 	 */
 	if (luaext_vfs_available(sandbox)) {
 		luaext_iolib_install_file_mt(L);
@@ -1067,6 +1069,15 @@ bool luaext_iolib_install(lua_State *L, luaext_sandbox *sandbox)
 		lua_setfield(L, -2, "lines");
 
 		lua_pushcfunction(L, luaext_iolib_close);
+		lua_setfield(L, -2, "close");
+	} else {
+		luaext_openlibs_push_gate_stub(L, "io.open", "vfs");
+		lua_setfield(L, -2, "open");
+
+		luaext_openlibs_push_gate_stub(L, "io.lines", "vfs");
+		lua_setfield(L, -2, "lines");
+
+		luaext_openlibs_push_gate_stub(L, "io.close", "vfs");
 		lua_setfield(L, -2, "close");
 	}
 

@@ -1,0 +1,104 @@
+Subject: classify access to withheld features at the raise site
+
+A sandbox that withholds a capability leaves its library out entirely,
+so the first touch dies as "attempt to index a nil value (global
+'coroutine')" -- true, and useless: nothing says the failure is policy
+rather than a typo. This asks the extension, at the two places that
+still hold the failing value, its kind AND its name, whether that name
+is one the sandbox withholds; when it is, the raise diverts to the
+extension's own error, which names the capability and is fatal.
+
+The nil test is load-bearing: a script's own `coroutine = 5` followed
+by arithmetic keeps upstream's wrong-type message, because the value
+that failed is not nil. A NULL answer from the hook, a non-global kind,
+or a build with the hooks off leaves every byte of the upstream path
+untouched -- the check sits in the error path only, so successful
+execution never runs it.
+
+The divert happens before luaO_pushfstring allocates, and the raise
+longjmps exactly where luaG_runerror would a moment later, so nothing
+is stranded. Both externs live in luaext_lua_hooks.h with the others;
+their definitions are src/luaext_openlibs.c (the lookup) and
+src/luaext_error.c (the raise).
+
+--- a/src/ldebug.c
++++ b/src/ldebug.c
+@@ -712,6 +712,31 @@ static const char *getupvalname (CallInfo *ci, const TValue *o,
+ }
+ 
+ 
++#if LUAEXT_LUA_HOOKS
++/*
++** luaext: a nil global whose name the sandbox recognises as a withheld
++** feature is not a typo, and the error should say which capability is
++** missing rather than only that the value is nil. Checked at the two places
++** that still hold the variable's name, its kind AND the failing value -- the
++** nil test is what keeps a script's own `coroutine = 5; coroutine + 1` on
++** the upstream wrong-type path. When the hook answers, the raise diverts to
++** the extension's own error, which longjmps exactly where luaG_runerror
++** would a moment later, before any message string has been built, so
++** nothing is stranded. A NULL answer, a non-global kind, a non-nil value,
++** or a build with the hooks off leaves every byte of the upstream path
++** untouched.
++*/
++static void luaext_check_withheld (lua_State *L, const TValue *o,
++                                   const char *kind, const char *name) {
++  if (ttisnil(o) && kind != NULL && strcmp(kind, "global") == 0) {
++    const char *capability = luaext_withheld_capability(L, name);
++    if (capability != NULL)
++      luaext_raise_withheld(L, name, capability);  /* does not return */
++  }
++}
++#endif
++
++
+ static const char *formatvarinfo (lua_State *L, const char *kind,
+                                                 const char *name) {
+   if (kind == NULL)
+@@ -736,6 +761,9 @@ static const char *varinfo (lua_State *L, const TValue *o) {
+         kind = getobjname(ci_func(ci)->p, currentpc(ci), reg, &name);
+     }
+   }
++#if LUAEXT_LUA_HOOKS
++  luaext_check_withheld(L, o, kind, name);
++#endif
+   return formatvarinfo(L, kind, name);
+ }
+ 
+@@ -768,8 +796,15 @@ l_noret luaG_callerror (lua_State *L, const TValue *o) {
+   CallInfo *ci = L->ci;
+   const char *name = NULL;  /* to avoid warnings */
+   const char *kind = funcnamefromcall(L, ci, &name);
+-  const char *extra = kind ? formatvarinfo(L, kind, name) : varinfo(L, o);
+-  typeerror(L, o, "call", extra);
++#if LUAEXT_LUA_HOOKS
++  /* The call shape: `require("x")` faults here with kind "global" before
++     varinfo ever runs, so it needs its own check. */
++  luaext_check_withheld(L, o, kind, name);
++#endif
++  {
++    const char *extra = kind ? formatvarinfo(L, kind, name) : varinfo(L, o);
++    typeerror(L, o, "call", extra);
++  }
+ }
+ 
+ 
+--- a/src/luaext_lua_hooks.h
++++ b/src/luaext_lua_hooks.h
+@@ -18,6 +18,16 @@ extern void luaext_raise_interrupt(struct lua_State *L);
+    yield or re-enter the collector, and ours -- a C function that allocates
+    nothing and either returns or raises -- does none of those. */
+ extern int luaext_hook_is_ours(struct lua_State *L);
++/* The capability whose absence explains why the named GLOBAL is nil, or NULL
++   when the name is not one this sandbox withholds. Defined by the extension
++   (src/luaext_openlibs.c). 'ldebug.c' asks while formatting an
++   attempt-to-index/call error; NULL keeps upstream's message byte-for-byte. */
++extern const char *luaext_withheld_capability(struct lua_State *L, const char *name);
++/* Raise the extension's own error for an access luaext_withheld_capability()
++   classified. Longjmps exactly where luaG_runerror() would two lines later;
++   does not return. Defined by the extension (src/luaext_error.c). */
++extern void luaext_raise_withheld(struct lua_State *L, const char *name,
++                                  const char *capability);
+ #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
+ /* The hot-path load is relaxed: it only answers "is anything pending?", and
+    costs nothing when nothing is. Ordering is established on the slow path

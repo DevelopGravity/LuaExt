@@ -1,5 +1,5 @@
 --TEST--
-The os table is built, not filtered: time and environment only, and nothing else
+The os table is built, not filtered: real functions where granted, gate stubs where not
 --EXTENSIONS--
 luaext
 --FILE--
@@ -8,38 +8,53 @@ luaext
 declare(strict_types=1);
 
 use DevelopGravity\LuaExt\Capabilities;
+use DevelopGravity\LuaExt\Exception\FeatureNotGrantedError;
 use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
 
 // loslib.c is not compiled, so this table has no upstream ancestor to filter --
-// every member is one we wrote or ported. That is why the absence checks below
-// are not paranoia about a deny-list: they assert that nothing crept back in.
+// every member is one we wrote or ported. The table's NAMES no longer vary
+// with capabilities: a withheld member is a gate stub that raises
+// FeatureNotGrantedError when called, so the question a preset answers is not
+// "what exists" but "what runs". Classified by calling, which is the only
+// probe that tells a stub from the real thing.
 
-/** The os table's members, sorted. */
-function osMembers(Capabilities $capabilities): string
+/** works / gate(<capability>) for each os member, under the given caps. */
+function osBehaviour(Capabilities $capabilities): string
 {
 	$sandbox = new Sandbox(new SandboxConfig(capabilities: $capabilities));
 
-	return $sandbox->eval(<<<'LUA'
-		if os == nil then return "<nil>" end
+	$calls = [
+		'clock' => 'return os.clock()',
+		'time' => 'return os.time()',
+		'date' => 'return os.date("!%Y")',
+		'difftime' => 'return os.difftime(2, 1)',
+		'getenv' => 'return os.getenv("PATH")',
+	];
 
-		local names = {}
-		for name in next, os do names[#names + 1] = name end
-		table.sort(names)
+	$report = [];
 
-		return table.concat(names, " ")
-		LUA, '=os-members')[0];
+	foreach ($calls as $name => $script) {
+		try {
+			(void) $sandbox->eval($script, '=probe');
+			$report[] = $name;
+		} catch (FeatureNotGrantedError $error) {
+			preg_match('/needs the (\w+) capability/', $error->getMessage(), $match);
+			$report[] = sprintf('%s=gate(%s)', $name, $match[1] ?? '?');
+		}
+	}
+
+	$sandbox->close();
+
+	return implode(' ', $report);
 }
 
 $untrusted = Capabilities::untrusted();
 
-// The table always exists, with at least os.clock, so a script never has to nil
-// check it. os.clock is unconditional because it reports the sandbox's own
-// billed CPU -- the quantity its own limit enforces.
-printf("baseline   : %s\n", osMembers($untrusted));
-printf("no osTime  : %s\n", osMembers($untrusted->with(osTime: false)));
-printf("osEnv      : %s\n", osMembers($untrusted->with(osEnv: true)));
-printf("neither    : %s\n", osMembers($untrusted->with(osTime: false, osEnv: false)));
+printf("baseline   : %s\n", osBehaviour($untrusted));
+printf("no osTime  : %s\n", osBehaviour($untrusted->with(osTime: false)));
+printf("osEnv      : %s\n", osBehaviour($untrusted->with(osEnv: true)));
+printf("neither    : %s\n", osBehaviour($untrusted->with(osTime: false, osEnv: false)));
 
 $sandbox = new Sandbox();
 
@@ -80,11 +95,12 @@ var_dump($sandbox->eval('return os.time({year = 2000, month = 1, day = 1}) > 0',
 var_dump($sandbox->eval(
 	'return select(2, pcall(os.date, "%Q"))', '=os-date-bad')[0]);
 
-// Everything that reaches outside the sandbox, or belongs to a wave that has not
-// landed. os.execute, os.exit, os.tmpname and os.setlocale never arrive at all;
-// os.remove and os.rename belong to the VFS.
+// The functions that reach outside the sandbox never arrive at all -- not even
+// as gates, because no capability could ever grant them. os.remove, os.rename
+// and os.getenv are deliberately NOT in this list any more: they exist as gate
+// stubs so a call can say which capability is missing.
 $absent = $sandbox->eval(<<<'LUA'
-	local names = {"execute", "exit", "tmpname", "setlocale", "remove", "rename", "getenv"}
+	local names = {"execute", "exit", "tmpname", "setlocale"}
 	local present = {}
 
 	for i = 1, #names do
@@ -96,12 +112,19 @@ $absent = $sandbox->eval(<<<'LUA'
 
 var_dump($absent);
 
+// The gates are truthy functions -- the accepted trade for classification --
+// so member-level truthiness is NOT a feature probe. Pinned so it cannot
+// drift silently in either direction.
+var_dump($sandbox->eval('return type(os.getenv)', '=os-gate-type')[0]);
+
+$sandbox->close();
+
 ?>
 --EXPECT--
-baseline   : clock date difftime time
-no osTime  : clock
-osEnv      : clock date difftime getenv time
-neither    : clock
+baseline   : clock time date difftime getenv=gate(osEnv)
+no osTime  : clock time=gate(osTime) date=gate(osTime) difftime=gate(osTime) getenv=gate(osEnv)
+osEnv      : clock time date difftime getenv
+neither    : clock time=gate(osTime) date=gate(osTime) difftime=gate(osTime) getenv=gate(osEnv)
 clock nondecreasing=true advanced=true samples=4
 bool(true)
 string(6) "number"
@@ -109,3 +132,4 @@ float(600)
 bool(true)
 string(58) "bad argument #1 to '?' (invalid conversion specifier '%Q')"
 string(12) "none present"
+string(8) "function"

@@ -94,6 +94,7 @@ extern zend_class_entry *luaext_ce_cpu_limit_error;
 extern zend_class_entry *luaext_ce_wall_clock_limit_error;
 extern zend_class_entry *luaext_ce_output_limit_error;
 extern zend_class_entry *luaext_ce_coroutine_limit_error;
+extern zend_class_entry *luaext_ce_feature_not_granted_error;
 extern zend_class_entry *luaext_ce_host_abort_error;
 extern zend_class_entry *luaext_ce_error_handler_error;
 extern zend_class_entry *luaext_ce_panic_error;

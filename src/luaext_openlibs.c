@@ -207,6 +207,122 @@ static const luaext_openlibs_entry luaext_openlibs_registry[] = {
 	(sizeof(luaext_openlibs_registry) / sizeof(luaext_openlibs_registry[0]))
 
 /* -------------------------------------------------------------------------
+ * Withheld-feature classification (the tier-1 half)
+ *
+ * The patched ldebug.c asks this when an attempt-to-index/call error names a
+ * GLOBAL that is nil: if the name is a library this sandbox withholds, the
+ * error becomes a FeatureNotGrantedError naming the capability instead of the
+ * stock "attempt to index a nil value". Only the libraries that go wholly
+ * absent belong here -- os and io always exist, so their gated members are
+ * handled by the stub installer below, and a name missing from this list
+ * keeps upstream's message byte for byte.
+ * ---------------------------------------------------------------------- */
+
+static const struct {
+	const char *global;
+	uint32_t cap;
+	const char *capability;
+} luaext_openlibs_withheld_globals[] = {
+	{"coroutine", LUAEXT_CAP_COROUTINES, "coroutines"},
+	{"utf8", LUAEXT_CAP_UTF8, "utf8"},
+	{"require", LUAEXT_CAP_REQUIRE, "require"},
+
+	/*
+	 * debug goes wholly absent only when no debug capability at all is
+	 * granted; debugTraceback is the entry-level one, so it is what the
+	 * message suggests. With any debug capability the table exists and its
+	 * withheld members are gate stubs, which name their own capability.
+	 */
+	{"debug", LUAEXT_CAP_DEBUG_TRACEBACK, "debugTraceback"},
+};
+
+/*
+ * The Capabilities property name for each gate bit, so a stub's message can
+ * tell the host exactly which flag to grant. First missing bit wins when a
+ * member needs several.
+ */
+static const struct {
+	uint32_t bit;
+	const char *name;
+} luaext_openlibs_capability_names[] = {
+	{LUAEXT_CAP_LOAD_BYTECODE, "loadBytecode"},
+	{LUAEXT_CAP_COMPILE_AT_RUNTIME, "compileAtRuntime"},
+	{LUAEXT_CAP_DUMP_BYTECODE, "dumpBytecode"},
+	{LUAEXT_CAP_REQUIRE, "require"},
+	{LUAEXT_CAP_VFS, "vfs"},
+	{LUAEXT_CAP_VFS_WRITE, "vfsWrite"},
+	{LUAEXT_CAP_COROUTINES, "coroutines"},
+	{LUAEXT_CAP_OS_TIME, "osTime"},
+	{LUAEXT_CAP_OS_ENV, "osEnv"},
+	{LUAEXT_CAP_DEBUG_TRACEBACK, "debugTraceback"},
+	{LUAEXT_CAP_DEBUG_INTROSPECT, "debugIntrospect"},
+	{LUAEXT_CAP_DEBUG_MUTATE, "debugMutate"},
+	{LUAEXT_CAP_DEBUG_HOOKS, "debugHooks"},
+	{LUAEXT_CAP_UTF8, "utf8"},
+	{LUAEXT_CAP_GC_CONTROL, "gcControl"},
+	{LUAEXT_CAP_WARN, "warn"},
+};
+
+const char *luaext_openlibs_capability_name(uint32_t missing)
+{
+	size_t index;
+
+	for (index = 0; index < sizeof(luaext_openlibs_capability_names) /
+								sizeof(luaext_openlibs_capability_names[0]);
+		 index++) {
+		if ((missing & luaext_openlibs_capability_names[index].bit) != 0) {
+			return luaext_openlibs_capability_names[index].name;
+		}
+	}
+
+	return "requested";
+}
+
+/*
+ * The tier-2 gate: a real function occupying a withheld member's slot, whose
+ * only behaviour is to raise FeatureNotGrantedError naming the member and the
+ * capability. Truthy on purpose -- the accepted trade for classifying access
+ * to members of libraries that exist regardless -- and fatal on purpose, so a
+ * script cannot pcall its way into probing policy.
+ */
+static int luaext_openlibs_gate_stub(lua_State *L)
+{
+	luaext_error_raise(L, LUAEXT_ERR_FEATURE, true,
+					   "The script called %s, which needs the %s capability this sandbox was not "
+					   "granted",
+					   lua_tostring(L, lua_upvalueindex(1)), lua_tostring(L, lua_upvalueindex(2)));
+}
+
+void luaext_openlibs_push_gate_stub(lua_State *L, const char *feature, const char *capability)
+{
+	lua_pushstring(L, feature);
+	lua_pushstring(L, capability);
+	lua_pushcclosure(L, luaext_openlibs_gate_stub, 2);
+}
+
+const char *luaext_withheld_capability(lua_State *L, const char *name)
+{
+	const luaext_sandbox *sandbox = LUAEXT_SB(L);
+	size_t index;
+
+	if (sandbox == NULL || name == NULL) {
+		return NULL;
+	}
+
+	for (index = 0; index < sizeof(luaext_openlibs_withheld_globals) /
+								sizeof(luaext_openlibs_withheld_globals[0]);
+		 index++) {
+		if (strcmp(name, luaext_openlibs_withheld_globals[index].global) == 0) {
+			return (sandbox->policy.caps & luaext_openlibs_withheld_globals[index].cap) == 0
+					   ? luaext_openlibs_withheld_globals[index].capability
+					   : NULL;
+		}
+	}
+
+	return NULL;
+}
+
+/* -------------------------------------------------------------------------
  * Helpers
  * ---------------------------------------------------------------------- */
 
@@ -272,7 +388,7 @@ void luaext_openlibs_scratch(lua_State *L, lua_CFunction opener, const char *nam
 }
 
 int luaext_openlibs_select(lua_State *L, luaext_sandbox *sandbox, int scratch_index,
-						   const luaext_member *allow)
+						   const luaext_member *allow, const char *library_global)
 {
 	int listed = 0;
 	int selected = 0;
@@ -309,7 +425,26 @@ int luaext_openlibs_select(lua_State *L, luaext_sandbox *sandbox, int scratch_in
 
 		if (member->require_caps != 0 &&
 			(sandbox->policy.caps & member->require_caps) != member->require_caps) {
+			/*
+			 * The withheld slot gets a gate stub instead of staying empty: the
+			 * library exists either way, so an absent member reads as a typo
+			 * while a stub can say which capability is missing. The upstream
+			 * function it displaces is dropped here, exactly as before.
+			 */
+			uint32_t missing = member->require_caps & ~sandbox->policy.caps;
+			char feature[64];
+
+			if (library_global == NULL || strcmp(library_global, LUA_GNAME) == 0) {
+				snprintf(feature, sizeof(feature), "%s", member->name);
+			} else {
+				snprintf(feature, sizeof(feature), "%s.%s", library_global, member->name);
+			}
+
 			lua_pop(L, 1);
+			lua_pushstring(L, member->name);
+			luaext_openlibs_push_gate_stub(L, feature, luaext_openlibs_capability_name(missing));
+			lua_rawset(L, -3);
+			selected++;
 			continue;
 		}
 
@@ -464,7 +599,9 @@ static int luaext_openlibs_build(lua_State *L)
 		luaext_openlibs_check_drift(L, -1, library->allow, library->withheld,
 									library->global != NULL ? library->global : LUA_GNAME);
 
-		selected = luaext_openlibs_select(L, sandbox, -1, library->allow);
+		selected =
+			luaext_openlibs_select(L, sandbox, -1, library->allow,
+								   library->global != NULL ? library->global : entry->modname);
 
 		/*
 		 * Nothing survived selection, so there is nothing to publish. An empty

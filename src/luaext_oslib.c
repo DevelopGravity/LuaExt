@@ -694,11 +694,23 @@ bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox)
 
 		lua_pushcfunction(L, luaext_oslib_difftime);
 		lua_setfield(L, -2, "difftime");
+	} else {
+		/* Gate stubs, not gaps: os exists regardless, so an absent member reads
+		 * as a typo while a stub names the missing capability when called. */
+		luaext_openlibs_push_gate_stub(L, "os.time", "osTime");
+		lua_setfield(L, -2, "time");
+		luaext_openlibs_push_gate_stub(L, "os.date", "osTime");
+		lua_setfield(L, -2, "date");
+		luaext_openlibs_push_gate_stub(L, "os.difftime", "osTime");
+		lua_setfield(L, -2, "difftime");
 	}
 
 	if (luaext_has_cap(&sandbox->policy, LUAEXT_CAP_OS_ENV)) {
 		luaext_oslib_push_env_allow_list(L, sandbox);
 		lua_pushcclosure(L, luaext_oslib_getenv, 1);
+		lua_setfield(L, -2, "getenv");
+	} else {
+		luaext_openlibs_push_gate_stub(L, "os.getenv", "osEnv");
 		lua_setfield(L, -2, "getenv");
 	}
 
@@ -710,6 +722,14 @@ bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox)
 		lua_setfield(L, -2, "remove");
 
 		lua_pushcfunction(L, luaext_oslib_rename);
+		lua_setfield(L, -2, "rename");
+	} else {
+		const char *capability = luaext_openlibs_capability_name(
+			(LUAEXT_CAP_VFS | LUAEXT_CAP_VFS_WRITE) & ~sandbox->policy.caps);
+
+		luaext_openlibs_push_gate_stub(L, "os.remove", capability);
+		lua_setfield(L, -2, "remove");
+		luaext_openlibs_push_gate_stub(L, "os.rename", capability);
 		lua_setfield(L, -2, "rename");
 	}
 

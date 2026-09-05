@@ -40,9 +40,40 @@ These are not filtered or wrapped — they simply do not exist in a LuaExt sandb
 
 - Upstream **`io`**, **`os`**, and **`package`** as shipped by stock Lua. All three are present only as LuaExt's own hand-written tables, never as restricted views of upstream's — which is why `package` carries no `cpath`, `searchers` or `loadlib` to restrict in the first place.
 - **`io.read`** and **`io.stdin`**, at every trust level and regardless of capability. A sandbox has no console to read from, and a stub that always returned `nil` would be a surface that looks like it might one day do something.
-- **`load`**, **`loadfile`**, **`dofile`** for untrusted scripts. `load` returns under `Trusted` (text mode only, per the table above); `loadfile`/`dofile` are not reintroduced under any preset — module loading goes through `require()` instead (see below).
-- **`string.dump`** for untrusted scripts (returns under `Trusted` behind `dumpBytecode`).
+- **`loadfile`** and **`dofile`** — not reintroduced under any preset; module loading goes through `require()` instead (see below).
 - **`string.format("%p")`** — rejected as an error at every trust level; it cannot be selectively filtered the way a whole library member can, since the format string itself is otherwise a normal, needed feature.
+
+## Withheld features, and how to detect them
+
+Withholding comes in two granularities, and they answer probes differently.
+
+**Whole libraries** a sandbox lacks — `coroutine`, `utf8`, `require`, and `debug` when no
+debug capability is granted — are genuinely absent: the global is `nil`. Touching one
+raises a fatal `FeatureNotGrantedError` naming the capability, so the supported probe is
+the one that never touches the nil:
+
+```lua
+local coroutines_enabled = (type(coroutine) == "table" and type(coroutine.create) == "function")
+
+if coroutines_enabled then
+    print("Coroutines are enabled.")
+else
+    print("Coroutines are not available.")
+end
+```
+
+The `and` short-circuit is what makes this safe: when `type(coroutine)` is `"nil"`, the
+second operand is never evaluated. The unguarded form — `type(coroutine.create)` on its
+own — indexes the nil and dies.
+
+**Withheld members of libraries that always exist** — `load`, `warn`, `string.dump`,
+`os.time`/`os.date`/`os.difftime`/`os.getenv`/`os.remove`/`os.rename`, `io.open`/
+`io.lines`/`io.close`, and the gated `debug.*` — are **gate stubs**: truthy functions
+whose only behaviour is to raise the same fatal error, naming the member and the
+capability. `type(os.getenv)` therefore answers `"function"` whether or not `osEnv` is
+granted, and `pcall` cannot turn the raise into data — member presence is deliberately
+not probeable in-script. Write the script for the capabilities its host grants; the host
+knows them from its own configuration.
 
 ## io/os emulation
 

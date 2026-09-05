@@ -71,6 +71,7 @@ zend_class_entry *luaext_ce_cpu_limit_error;
 zend_class_entry *luaext_ce_wall_clock_limit_error;
 zend_class_entry *luaext_ce_output_limit_error;
 zend_class_entry *luaext_ce_coroutine_limit_error;
+zend_class_entry *luaext_ce_feature_not_granted_error;
 zend_class_entry *luaext_ce_host_abort_error;
 zend_class_entry *luaext_ce_error_handler_error;
 zend_class_entry *luaext_ce_panic_error;
@@ -233,6 +234,9 @@ static void luaext_register_exceptions(void)
 		register_class_DevelopGravity_LuaExt_Exception_OutputLimitError(luaext_ce_fatal_error);
 	luaext_ce_coroutine_limit_error =
 		register_class_DevelopGravity_LuaExt_Exception_CoroutineLimitError(luaext_ce_fatal_error);
+	luaext_ce_feature_not_granted_error =
+		register_class_DevelopGravity_LuaExt_Exception_FeatureNotGrantedError(
+			luaext_ce_fatal_error);
 	luaext_ce_host_abort_error =
 		register_class_DevelopGravity_LuaExt_Exception_HostAbortError(luaext_ce_fatal_error);
 	luaext_ce_error_handler_error =

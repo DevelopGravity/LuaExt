@@ -221,7 +221,7 @@ bool luaext_debuglib_install(lua_State *L, luaext_sandbox *sandbox)
 	luaext_openlibs_check_drift(L, scratch, luaext_debuglib_allow, luaext_debuglib_withheld,
 								LUA_DBLIBNAME);
 
-	if (luaext_openlibs_select(L, sandbox, scratch, luaext_debuglib_allow) == 0) {
+	if (luaext_openlibs_select(L, sandbox, scratch, luaext_debuglib_allow, "debug") == 0) {
 		/* Every granted capability selected nothing, which can only mean the
 		 * allow list and the capability set have drifted apart. Publishing {}
 		 * would be worse than publishing nothing. */

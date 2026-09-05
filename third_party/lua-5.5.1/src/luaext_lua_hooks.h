@@ -18,6 +18,16 @@ extern void luaext_raise_interrupt(struct lua_State *L);
    yield or re-enter the collector, and ours -- a C function that allocates
    nothing and either returns or raises -- does none of those. */
 extern int luaext_hook_is_ours(struct lua_State *L);
+/* The capability whose absence explains why the named GLOBAL is nil, or NULL
+   when the name is not one this sandbox withholds. Defined by the extension
+   (src/luaext_openlibs.c). 'ldebug.c' asks while formatting an
+   attempt-to-index/call error; NULL keeps upstream's message byte-for-byte. */
+extern const char *luaext_withheld_capability(struct lua_State *L, const char *name);
+/* Raise the extension's own error for an access luaext_withheld_capability()
+   classified. Longjmps exactly where luaG_runerror() would two lines later;
+   does not return. Defined by the extension (src/luaext_error.c). */
+extern void luaext_raise_withheld(struct lua_State *L, const char *name,
+                                  const char *capability);
 #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
 /* The hot-path load is relaxed: it only answers "is anything pending?", and
    costs nothing when nothing is. Ordering is established on the slow path

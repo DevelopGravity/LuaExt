@@ -433,6 +433,25 @@ ZEND_COLD ZEND_NORETURN void luaext_error_raise_from_exception(lua_State *L)
 	ZEND_UNREACHABLE();
 }
 
+/*
+ * The raise behind the patched ldebug.c's withheld-feature classification.
+ *
+ * Fatal on purpose: a script cannot pcall its way into discovering policy by
+ * probing calls, exactly as it cannot pcall past a limit. Kept here rather
+ * than in the patch so the vendored tree stays free of the error subsystem's
+ * internals; the longjmp discipline is luaG_runerror's own -- the caller was
+ * about to raise anyway and owns nothing.
+ */
+ZEND_COLD ZEND_NORETURN void luaext_raise_withheld(lua_State *L, const char *name,
+												   const char *capability)
+{
+	luaext_error_raise(L, LUAEXT_ERR_FEATURE, true,
+					   "The script used %s, which needs the %s capability this sandbox was not "
+					   "granted",
+					   name, capability);
+	ZEND_UNREACHABLE();
+}
+
 /* -------------------------------------------------------------------------
  * Identifying our errors
  * ---------------------------------------------------------------------- */
@@ -998,6 +1017,9 @@ static zend_class_entry *luaext_error_class_for(const luaext_error_ud *error, in
 		break;
 	case LUAEXT_ERR_MODULE:
 		ce = luaext_ce_module_not_found_error;
+		break;
+	case LUAEXT_ERR_FEATURE:
+		ce = luaext_ce_feature_not_granted_error;
 		break;
 	case LUAEXT_ERR_RUNTIME:
 	default:

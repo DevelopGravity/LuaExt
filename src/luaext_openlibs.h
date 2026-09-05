@@ -122,8 +122,18 @@ void luaext_openlibs_scratch(lua_State *L, lua_CFunction opener, const char *nam
  *
  * Raises if a named member is absent from scratch.
  */
+/*
+ * A withheld member's stand-in: a truthy function whose only behaviour is to
+ * raise FeatureNotGrantedError naming `feature` and `capability`. Shared by
+ * the select pass and the hand-built os/io/debug installers.
+ */
+void luaext_openlibs_push_gate_stub(lua_State *L, const char *feature, const char *capability);
+
+/* The Capabilities property name for the first bit set in `missing`. */
+const char *luaext_openlibs_capability_name(uint32_t missing);
+
 int luaext_openlibs_select(lua_State *L, luaext_sandbox *sandbox, int scratch_index,
-						   const luaext_member *allow);
+						   const luaext_member *allow, const char *library_global);
 
 /*
  * Verify every string key in the scratch table at `scratch_index` is accounted

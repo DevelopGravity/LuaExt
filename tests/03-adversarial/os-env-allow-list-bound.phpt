@@ -49,8 +49,21 @@ probe($sandbox, 'select(2, pcall(os.getenv, "LUAEXT_TEST_VISIBLE\0PATH"))');
 probe($sandbox, 'select(2, pcall(os.getenv, "PATH=x"))');
 
 // Nothing about the allow list is reachable as a value: it lives in an upvalue
-// of a C closure, and debug is not granted here anyway.
-probe($sandbox, 'debug == nil or debug.getupvalue == nil');
+// of a C closure, and this sandbox holds only debugTraceback -- so getupvalue
+// is a gate stub, truthy but unable to run. The gate is fatal, so it escapes
+// even an in-script pcall; the assertion is host-side.
+try {
+	// A Lua closure, not print: the upvalue guard wrapper refuses C-function
+	// targets with its own catchable error before the gate is ever consulted.
+	(void) $sandbox->eval(
+		'local u = 1 local f = function() return u end return pcall(debug.getupvalue, f, 1)',
+		'=upvalue-gate');
+	echo "debug.getupvalue RAN
+";
+} catch (DevelopGravity\LuaExt\Exception\FeatureNotGrantedError) {
+	echo "debug.getupvalue is a gate, past pcall               => true
+";
+}
 
 // Changing the environment after construction changes nothing about what the
 // sandbox may see -- the SET is fixed, though the VALUES are read live.
@@ -60,12 +73,20 @@ putenv('LUAEXT_TEST_ABSENT=now set');
 probe($sandbox, 'os.getenv("LUAEXT_TEST_HIDDEN")');
 probe($sandbox, 'os.getenv("LUAEXT_TEST_ABSENT")');
 
-// Without the capability there is no getenv at all, allow list or not.
+// Without the capability getenv is a gate stub: truthy, and unable to read a
+// single variable -- the allow list never even materialises.
 $without = new Sandbox(new SandboxConfig(
 	capabilities: Capabilities::untrusted()->with(osEnvAllowList: ['LUAEXT_TEST_VISIBLE']),
 ));
 
-probe($without, 'os.getenv == nil');
+try {
+	(void) $without->eval('return os.getenv("LUAEXT_TEST_VISIBLE")', '=no-cap');
+	echo "os.getenv RAN WITHOUT THE CAPABILITY
+";
+} catch (DevelopGravity\LuaExt\Exception\FeatureNotGrantedError) {
+	echo "os.getenv without osEnv is a gate                    => true
+";
+}
 
 ?>
 --EXPECT--
@@ -76,7 +97,7 @@ os.getenv("LUAEXT_TEST_NEVER_LISTED")        => NULL
 os.getenv("PATH")                            => NULL
 select(2, pcall(os.getenv, "LUAEXT_TEST_VISIBLE\0PATH")) => 'bad argument #1 to \'?\' (an environment variable name cannot contain \'\\0\' or \'=\')'
 select(2, pcall(os.getenv, "PATH=x"))        => 'bad argument #1 to \'?\' (an environment variable name cannot contain \'\\0\' or \'=\')'
-debug == nil or debug.getupvalue == nil      => true
+debug.getupvalue is a gate, past pcall               => true
 os.getenv("LUAEXT_TEST_HIDDEN")              => NULL
 os.getenv("LUAEXT_TEST_ABSENT")              => 'now set'
-os.getenv == nil                             => true
+os.getenv without osEnv is a gate                    => true

@@ -34,6 +34,12 @@ Throwable
     │       ├── CpuLimitError            Limits::$cpuSeconds
     │       ├── WallClockLimitError      Limits::$wallClockSeconds
     │       ├── OutputLimitError         Limits::$outputBytes under Fail
+    │       ├── FeatureNotGrantedError   a script touched a withheld feature: a wholly
+    │       │                            absent library's global (coroutine, utf8,
+    │       │                            require, debug) or a gate-stubbed member of a
+    │       │                            present one (os.getenv, io.open, string.dump,
+    │       │                            load, warn, the gated debug functions). Fatal
+    │       │                            on purpose — policy is not probeable by call.
     │       ├── CoroutineLimitError      maxLiveCoroutines / maxCoroutineDepth
     │       ├── HostAbortError           Sandbox::interrupt(), or a VfsQuota
     │       ├── ErrorHandlerError        the error handler itself failed

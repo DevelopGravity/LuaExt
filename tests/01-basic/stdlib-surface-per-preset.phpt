@@ -31,9 +31,10 @@ $sandbox = new Sandbox();
 // and io's output half are unconditional), so leaving them out would let a
 // member appear in every untrusted sandbox without this test noticing.
 //
-// io is the one to watch. Its output half needs no capability, but its
-// filesystem half must never join it without vfs -- so an io.open appearing on
-// this line is the signal that the two halves have been conflated.
+// io is the one to watch. Its output half needs no capability, and its
+// filesystem half appears as GATE STUBS without vfs -- so the conflation
+// signal is no longer io.open's name on this line (it is always there) but an
+// io.open that RUNS: the classification rows below are what catch that.
 foreach (['_G', 'string', 'table', 'math', 'utf8', 'debug', 'os', 'io'] as $table) {
 	printf("%s: %s\n", $table, $members($sandbox, $table));
 }
@@ -50,13 +51,34 @@ $presets = [
 	'both' => (new Capabilities())->with(compileAtRuntime: true, warn: true),
 ];
 
+// type() stopped distinguishing a grant from a gate stub, so each member is
+// classified by CALLING it: "works", "gate", or "nil" (dofile/loadfile stay
+// wholly absent -- no capability could ever grant them).
+$classify = static function (Sandbox $sandbox, string $call): string {
+	try {
+		$kind = $sandbox->eval(
+			sprintf('if %s == nil then return "nil" end %s return "works"', explode('(', $call)[0], $call),
+			'=classify',
+		)[0];
+
+		return $kind;
+	} catch (DevelopGravity\LuaExt\Exception\FeatureNotGrantedError) {
+		return 'gate';
+	} catch (Throwable) {
+		return 'works';
+	}
+};
+
 foreach ($presets as $label => $capabilities) {
 	$sandbox = new Sandbox(new SandboxConfig(capabilities: $capabilities));
 
 	printf(
 		"%-16s load=%s warn=%s dofile=%s loadfile=%s\n",
 		$label,
-		...$sandbox->eval('return type(load), type(warn), type(dofile), type(loadfile)'),
+		$classify($sandbox, 'load("return 1")'),
+		$classify($sandbox, 'warn("x")'),
+		$classify($sandbox, 'dofile("/x")'),
+		$classify($sandbox, 'loadfile("/x")'),
 	);
 
 	$sandbox->close();
@@ -83,18 +105,18 @@ $sandbox->close();
 
 ?>
 --EXPECT--
-_G: _G _VERSION assert collectgarbage coroutine debug error getmetatable io ipairs math next os pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 xpcall
-string: byte char find format gmatch gsub len lower match pack packsize rep reverse sub unpack upper
+_G: _G _VERSION assert collectgarbage coroutine debug error getmetatable io ipairs load math next os pairs pcall print rawequal rawget rawlen rawset select setmetatable string table tonumber tostring type utf8 warn xpcall
+string: byte char dump find format gmatch gsub len lower match pack packsize rep reverse sub unpack upper
 table: concat create insert move pack remove sort unpack
 math: abs acos asin atan ceil cos deg exp floor fmod frexp huge ldexp log max maxinteger min mininteger modf pi rad random randomseed sin sqrt tan tointeger type ult
 utf8: char charpattern codepoint codes len offset
-debug: traceback
-os: clock date difftime time
-io: stderr stdout write
-untrusted        load=nil warn=nil dofile=nil loadfile=nil
-compileAtRuntime load=function warn=nil dofile=nil loadfile=nil
-warn             load=nil warn=function dofile=nil loadfile=nil
-both             load=function warn=function dofile=nil loadfile=nil
+debug: gethook getinfo getlocal getmetatable getregistry getupvalue getuservalue sethook setlocal setmetatable setupvalue setuservalue traceback upvalueid upvaluejoin
+os: clock date difftime getenv remove rename time
+io: close lines open stderr stdout write
+untrusted        load=gate warn=gate dofile=nil loadfile=nil
+compileAtRuntime load=works warn=gate dofile=nil loadfile=nil
+warn             load=gate warn=works dofile=nil loadfile=nil
+both             load=works warn=works dofile=nil loadfile=nil
 array(1) {
   [0]=>
   int(0)

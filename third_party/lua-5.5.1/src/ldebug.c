@@ -712,6 +712,31 @@ static const char *getupvalname (CallInfo *ci, const TValue *o,
 }
 
 
+#if LUAEXT_LUA_HOOKS
+/*
+** luaext: a nil global whose name the sandbox recognises as a withheld
+** feature is not a typo, and the error should say which capability is
+** missing rather than only that the value is nil. Checked at the two places
+** that still hold the variable's name, its kind AND the failing value -- the
+** nil test is what keeps a script's own `coroutine = 5; coroutine + 1` on
+** the upstream wrong-type path. When the hook answers, the raise diverts to
+** the extension's own error, which longjmps exactly where luaG_runerror
+** would a moment later, before any message string has been built, so
+** nothing is stranded. A NULL answer, a non-global kind, a non-nil value,
+** or a build with the hooks off leaves every byte of the upstream path
+** untouched.
+*/
+static void luaext_check_withheld (lua_State *L, const TValue *o,
+                                   const char *kind, const char *name) {
+  if (ttisnil(o) && kind != NULL && strcmp(kind, "global") == 0) {
+    const char *capability = luaext_withheld_capability(L, name);
+    if (capability != NULL)
+      luaext_raise_withheld(L, name, capability);  /* does not return */
+  }
+}
+#endif
+
+
 static const char *formatvarinfo (lua_State *L, const char *kind,
                                                 const char *name) {
   if (kind == NULL)
@@ -736,6 +761,9 @@ static const char *varinfo (lua_State *L, const TValue *o) {
         kind = getobjname(ci_func(ci)->p, currentpc(ci), reg, &name);
     }
   }
+#if LUAEXT_LUA_HOOKS
+  luaext_check_withheld(L, o, kind, name);
+#endif
   return formatvarinfo(L, kind, name);
 }
 
@@ -768,8 +796,15 @@ l_noret luaG_callerror (lua_State *L, const TValue *o) {
   CallInfo *ci = L->ci;
   const char *name = NULL;  /* to avoid warnings */
   const char *kind = funcnamefromcall(L, ci, &name);
-  const char *extra = kind ? formatvarinfo(L, kind, name) : varinfo(L, o);
-  typeerror(L, o, "call", extra);
+#if LUAEXT_LUA_HOOKS
+  /* The call shape: `require("x")` faults here with kind "global" before
+     varinfo ever runs, so it needs its own check. */
+  luaext_check_withheld(L, o, kind, name);
+#endif
+  {
+    const char *extra = kind ? formatvarinfo(L, kind, name) : varinfo(L, o);
+    typeerror(L, o, "call", extra);
+  }
 }
 
 
