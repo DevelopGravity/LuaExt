@@ -8,7 +8,9 @@ luaext
 declare(strict_types=1);
 
 use DevelopGravity\LuaExt\Exception\ConversionError;
+use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
 
 /** Build an array nested exactly $levels containers deep. */
 function nest(int $levels): array
@@ -71,6 +73,36 @@ try {
 // written was never partially written either.
 var_dump($sandbox->eval('return deeper == nil, type(deep)'));
 
+// A HOST CANNOT CONFIGURE ITS WAY TO A C STACK OVERFLOW.
+//
+// Both conversion directions recurse on the C stack, so maxConversionDepth is
+// clamped to an internal ceiling however large a host sets it. Without that
+// clamp, `maxConversionDepth: 100000` would be an ordinary-looking setting that
+// hands a script a segfault, and no Lua-level limit counts C frames.
+//
+// The table below is built with a LOOP rather than a literal on purpose: a
+// deeply nested literal is refused by the parser's own C-stack guard long
+// before the converter sees it, which would test the wrong thing entirely.
+$build = 'local root = {} local c = root for i = 1, 5000 do c.n = {} c = c.n end return root';
+
+foreach ([64, 100000] as $configured) {
+	$wide = new Sandbox(new SandboxConfig(
+		limits: new Limits(memoryBytes: 268435456, maxConversionDepth: $configured),
+	));
+
+	try {
+		(void) $wide->eval($build, '=deep');
+		printf("configured %-6d NOT REFUSED\n", $configured);
+	} catch (ConversionError $error) {
+		// The message names the depth actually enforced, which is the clamp made
+		// visible: ask for 100000 and it says 512.
+		preg_match('/deeper than (\d+) levels/', $error->getMessage(), $matches);
+		printf("configured %-6d enforced %s\n", $configured, $matches[1] ?? '?');
+	}
+
+	$wide->close();
+}
+
 ?>
 --EXPECT--
 array(1) {
@@ -87,3 +119,5 @@ array(2) {
   [1]=>
   string(5) "table"
 }
+configured 64     enforced 64
+configured 100000 enforced 512
