@@ -181,26 +181,25 @@ function measureCpuEfficiency(): float
  * the burn and printed "no/short" on every macOS leg.
  *
  * A measurement taken while idle cannot be allowed to produce a ceiling with no
- * headroom in it, so the floor stands independently of what was measured: at
- * 3.0s a burn needing 0.15s of CPU survives down to 5% sustained efficiency,
- * and the row only has to reach CPU_SECONDS rather than the full target for the
- * limit to fire, which is 3.3%. The cap keeps one wedged row failing inside the
- * harness timeout, and both stay under WALL_BACKSTOP_SECONDS so a slow burn is
- * an ordinary outcome rather than a backstop trip reported as the wrong
- * exception class.
+ * headroom in it, so the floor stands independently of what was measured -- and
+ * the floor, not the cap, is what binds. Calibration runs once at process
+ * start; an idle instant there measures efficiency near 1.0 and the derived
+ * ceiling collapses to the floor, so contention arriving mid-run meets the
+ * floor no matter how generous the cap is. The macOS runners demonstrated this
+ * directly: with a floor of 3.0 a whole leg failed with even the plain Lua
+ * burn reporting `no/short`, because 3.0s of ceiling demands 5% sustained
+ * efficiency and the runner was delivering less. At 6.0 the burn survives down
+ * to 2.5% sustained, and the limit still fires at 1.7%. Both stay under
+ * WALL_BACKSTOP_SECONDS so a slow burn is an ordinary outcome rather than a
+ * backstop trip reported as the wrong exception class.
  *
  * These numbers come from CI, not local runs -- this file passes here in both
- * release and debug. The shared macOS runners have failed it twice, both times
- * with the same shape in the artifacts: only the deepest billed chains, always
- * `no/short` (billed, but the budget never ran out). The extension itself was
- * ruled out before the numbers moved again: callback CPU bills at ratio 1.00
- * to Lua CPU, the counter advances live mid-callback, and the clock resolves
- * at 1us. Starvation, so headroom: first 2.0/4.0 became 3.0/5.0, then the burn
- * came down to 0.15 (still 1.5x the limit) and the cap up to 7.0, at which a
- * starved row needs ~2.1% sustained efficiency to finish its burn and ~1.4% to
- * trip the limit. The macOS TEST_TIMEOUT rose alongside, because several
- * starved rows waiting out a 7s ceiling can pass 20s of wall doing nothing
- * wrong.
+ * release and debug. The extension itself was ruled out before any numbers
+ * moved: callback CPU bills at ratio 1.00 to Lua CPU, the counter advances
+ * live mid-callback, and the clock resolves at 1us. Every macOS failure so far
+ * has been starvation, and every failing row now prints its measured CPU and
+ * wall figures so the next artifact carries data rather than a shape to guess
+ * from.
  *
  * If a leg still prints "no/short" after this, the answer is more headroom or a
  * shorter burn -- never a smaller assertion. The rows are the specification.
@@ -211,7 +210,7 @@ function measureCpuEfficiency(): float
  */
 define(
 	'BURN_CEILING_SECONDS',
-	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 3.0), 7.0),
+	min(max(BURN_SECONDS / max(measureCpuEfficiency(), 0.05) * 2.0, 6.0), 7.0),
 );
 
 function burn(float $seconds): void
@@ -470,6 +469,7 @@ function row(string $label, string $path, string ...$args): void
 
 	$outcome = 'no';
 	$before = $sandbox->stats()->cpuSeconds;
+	$startedAt = microtime(true);
 
 	try {
 		(void) $sandbox->call($path, ...$args);
@@ -478,6 +478,8 @@ function row(string $label, string $path, string ...$args): void
 	} catch (Throwable $error) {
 		$outcome = 'WRONG CLASS ' . $error::class;
 	}
+
+	$rowWallSeconds = microtime(true) - $startedAt;
 
 	/*
 	 * Separates the two ways a row can fail to trip, which otherwise print
@@ -495,7 +497,14 @@ function row(string $label, string $path, string ...$args): void
 	 * artifact download and a guess.
 	 */
 	if ($outcome === 'no' && $sandbox->stats()->cpuSeconds - $before >= CPU_SECONDS * 0.25) {
-		$outcome = 'no/short';
+		// The figures only appear on a failing line, where the diff already
+		// differs -- so the starvation report costs the passing output nothing.
+		$outcome = sprintf(
+			'no/short (%.3fs cpu over %.1fs wall, ceiling %.1fs)',
+			$sandbox->stats()->cpuSeconds - $before,
+			$rowWallSeconds,
+			BURN_CEILING_SECONDS,
+		);
 	}
 
 	printf(
