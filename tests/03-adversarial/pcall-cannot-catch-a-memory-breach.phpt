@@ -7,6 +7,7 @@ luaext
 
 declare(strict_types=1);
 
+use DevelopGravity\LuaExt\Capabilities;
 use DevelopGravity\LuaExt\Exception\FatalError;
 use DevelopGravity\LuaExt\Exception\MemoryLimitError;
 use DevelopGravity\LuaExt\Limits;
@@ -42,6 +43,42 @@ $attacks = [
 		return "swallowed"',
 ];
 
+// A FOURTH ROUTE, THROUGH THE PARSER RATHER THAN THE ALLOCATOR'S CALLERS.
+//
+// load() reports a failed parse as `fail, message` -- an ordinary return value,
+// not a raise -- so a refusal that happens INSIDE the parser is the one shape
+// where a memory breach could arrive as something a script may simply ignore.
+// luaext_baselib.c names this as the case its status check cannot see, because
+// no status survives load()'s return.
+//
+// It does not currently escape: the allocator's refusal unwinds as a fatal
+// before load() can turn it into a return value. This pins that, so a change to
+// the error path cannot quietly turn a limit breach back into a value.
+//
+// It needs compileAtRuntime, which the other three deliberately lack, so it runs
+// against its own sandbox.
+$parserAttack = 'local source = "return \"" .. string.rep("x", 3 * 1024 * 1024) .. "\""
+	local ballast = string.rep("b", 3 * 1024 * 1024)
+	local chunk, message = load(source)
+	return "swallowed: " .. tostring(message)';
+
+$parserSandbox = new Sandbox(new SandboxConfig(
+	capabilities: (new Capabilities())->with(compileAtRuntime: true),
+	limits: new Limits(memoryBytes: 8 * 1024 * 1024, maxSourceBytes: 0),
+));
+
+try {
+	$result = $parserSandbox->eval($parserAttack, '=memory');
+	printf("%-13s LIMIT ESCAPED: %s\n", 'load', var_export($result, true));
+} catch (MemoryLimitError $error) {
+	printf("%-13s stopped, and it is a FatalError: %s\n", 'load',
+		var_export($error instanceof FatalError, true));
+} catch (Throwable $error) {
+	printf("%-13s WRONG CLASS: %s\n", 'load', $error::class);
+}
+
+$parserSandbox->close();
+
 foreach ($attacks as $label => $code) {
 	$sandbox = new Sandbox($config);
 
@@ -60,6 +97,7 @@ foreach ($attacks as $label => $code) {
 
 ?>
 --EXPECT--
+load          stopped, and it is a FatalError: true
 pcall         stopped, and it is a FatalError: true
 nested pcall  stopped, and it is a FatalError: true
 xpcall        stopped, and it is a FatalError: true
