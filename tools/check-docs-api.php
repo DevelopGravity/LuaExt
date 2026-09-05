@@ -41,13 +41,46 @@ const DEFAULT_DOCS = [
 ];
 
 /**
- * Load the stub declarations so the real API can be inspected by reflection.
+ * Make the API inspectable by reflection, from whichever source has it.
  *
- * The stubs declare method bodies as empty, which is fine: nothing here calls
- * them, it only reads signatures.
+ * Normally that means requiring the stubs: they declare every class with empty
+ * method bodies, which is all this needs since it only reads signatures.
+ *
+ * BUT THE EXTENSION MAY ALREADY BE LOADED, and for anyone developing it that is
+ * the normal state -- a conf.d/*.ini pointing at an installed luaext.so.
+ * Requiring the stubs on top of that is a fatal "cannot redeclare".
+ *
+ * Falling back to the loaded extension would be worse than failing. What is
+ * installed system-wide is whatever was last `make install`ed, which is not
+ * necessarily this checkout: the copy loaded here was several waves behind and
+ * would have reported the CURRENT documentation as wrong, naming methods this
+ * checkout adds. The stubs are what the repository declares, so the stubs are
+ * what the documentation is checked against.
+ *
+ * So: refuse, and say exactly how to fix it. `make check` passes -n already.
+ *
+ * This hid for a long time because CI runs on a clean PHP with no luaext, and
+ * locally the check only ever ran while the module happened to be missing --
+ * `make clean` deletes modules/luaext.so, so the load silently failed and the
+ * stubs went in unopposed.
  */
 function loadStubbedApi(): void
 {
+    if (extension_loaded('luaext')) {
+        fwrite(STDERR, <<<'MESSAGE'
+            check-docs-api: the luaext extension is loaded, so the stubs cannot be
+            declared alongside it -- and the loaded copy is whatever was last
+            installed, which may not be this checkout.
+
+            Re-run without the ini that loads it:
+
+                php -n tools/check-docs-api.php
+
+            MESSAGE);
+
+        exit(2);
+    }
+
     foreach (STUB_FILES as $stubFile) {
         require_once $stubFile;
     }

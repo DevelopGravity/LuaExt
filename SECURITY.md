@@ -106,7 +106,10 @@ Limits (`Limits`, `VfsQuota`) are configured independently of trust — a truste
 
 ## Reporting a vulnerability
 
-**Email <security@developgravity.com>. Please do not open a public issue.**
+**Two private channels. Please do not open a public issue.**
+
+- **GitHub** — [private vulnerability reporting](https://github.com/DevelopGravity/LuaExt/security/advisories/new) is enabled on this repository (Security → Report a vulnerability). Preferred: it threads the conversation, tracks whether it has been answered, and produces an advisory when it is fixed.
+- **Email** — <security@developgravity.com>, if you would rather not use GitHub.
 
 Encrypted reports are welcome. The key for that address is committed to this repository as [`security-disclosure.asc`](security-disclosure.asc), so you can encrypt without trusting a keyserver lookup:
 
@@ -120,9 +123,14 @@ Verify it against the fingerprint above before use — a key file in a repositor
 
 **What to include.** The version or commit, the platform, and something that reproduces it — a `.phpt`, a script, or a description precise enough to write one. A reproduction is worth more than a severity rating; the classification is our job and the reproduction is the part only you have.
 
-### There is no bounty
+### Best effort, and no bounty
 
-This is an MIT-licensed open-source project with no funding attached to it. **No reward, bounty, or payment is offered for any report**, and none will be. Saying so plainly is fairer than leaving it to be inferred: if you are looking for paid work, this is not that. Credit in the changelog and in the fix's commit is offered gladly to anyone who wants it.
+LuaExt is **open source, maintained by Develop Gravity LLC on a best-effort basis**. It is not a commercial product, there is no support contract behind it, and nobody is paid to be on call for it. That is the honest frame for everything in this section.
+
+Two things follow from it, and both are better said than inferred:
+
+- **No reward, bounty, or payment is offered for any report**, and none will be. If you are looking for paid work, this is not that. Credit in the changelog and in the fix's commit is offered gladly to anyone who wants it.
+- **Response is best effort**, in the ordinary sense of the phrase: reports are taken seriously and acted on, but by people doing it around other work rather than to a contracted schedule.
 
 ### Scope
 
@@ -134,7 +142,7 @@ Also out of scope: the failure modes documented under [what this does not defend
 
 ### What to expect
 
-This is a **single-maintainer project, pre-1.0, with no external audit**. Rather than promise a response time nobody is staffed to honour: reports are read as soon as they are seen, and you will get an acknowledgement telling you whether it is being worked on. If a report goes unanswered for two weeks, assume it was missed and send it again — that is a likelier explanation than it being ignored.
+This is a **pre-1.0 project with no external audit**, maintained on a best-effort basis. Rather than promise a response time nobody is staffed to honour: reports are read as soon as they are seen, and you will get an acknowledgement telling you whether it is being worked on. If a report goes unanswered for two weeks, assume it was missed and send it again — that is a likelier explanation than it being ignored. A GitHub advisory is the surer of the two channels for exactly that reason: it shows you its own state.
 
 Disclosure timing is yours to set; say what you want in the report. Absent anything else, the intent is to fix first and publish the fix with the reproduction, because the adversarial suite below is append-only and a finding that lands there stays covered forever.
 

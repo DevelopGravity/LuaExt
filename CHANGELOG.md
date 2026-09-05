@@ -28,6 +28,25 @@ Nothing is released yet, so this section is a running record of what exists rath
 - Project documentation: `README.md`, `SECURITY.md`, and `docs/` — configuration,
   cookbook, exceptions, the Lua-side API, migration, performance and platform support.
 - CI across Linux and macOS (x64 and arm64, NTS and ZTS, debug and release), plus valgrind, sanitizer and lint jobs.
+- **Lua language conformance suite** (`tests/10-lua/`): roughly 400 assertions over the language itself — arithmetic and the integer/float split, metatables, the pattern matcher, `string.pack`, the table and math libraries, `utf8`, coroutines, error semantics, `<close>`, and the replaced `io`/`os`. The rest of the suite proves the sandbox holds and that the expected stdlib *names* exist; this proves the patched interpreter still computes Lua's answers. It is platform-neutral by construction and is the first part of the suite Windows runs.
+- **`make check` and `make dev`**: one command that runs every gate CI runs, and one that runs the build, the suite and the gates together. A gate that cannot run reports `SKIPPED` and exits non-zero, because a check that did not run is not a check that passed.
+- **`CONTRIBUTING.md`**: how to build (including the debug PHP, which is the only build whose allocator reports leaks), what each gate catches, where a new test belongs, and the C conventions — chiefly that `lua_error()` longjmps, so a frame holding an allocation across anything that can raise leaks it.
+
+### Changed
+
+- **`Sandbox`'s usage and limit surface is smaller.** Six getters — `getMemoryUsage()`, `getPeakMemoryUsage()`, `getCpuUsage()`, `getWallClockUsage()`, `getOutputLength()`, `isOutputTruncated()` — are **removed**; each was a `stats()` field under another name, and `stats(): SandboxStats` is now the one way to read usage. The three limit setters are **replaced by `setLimits(Limits)`**, with `limits(): Limits` to read them back: the old three reached three of the fourteen limits a `Limits` carries, and the other eleven were always changeable but had no door. `$sandbox->setLimits($sandbox->limits()->with(cpuSeconds: 2.0))` changes one field. This also ends an inconsistency where `cpuSeconds: 0.0` meant "no limit" through the constructor and was refused by the setter. See [docs/migrating-from-luasandbox.md](docs/migrating-from-luasandbox.md).
+
+### Fixed
+
+Nothing has been tagged, so none of these ever shipped — but each is recorded because each came with a regression test and, where the mistake was mechanically detectable, a new rule that refuses it.
+
+- **`VfsQuota::$maxOperations` was never reset.** Documented and implemented as a budget *per sandbox call*, it was in practice per sandbox *lifetime*: the function whose only job is resetting the counter was written, declared, and called from nowhere. A long-lived sandbox eventually refused every filesystem call it was asked for.
+- **Three leaks on the paths that only run when something has already gone wrong.** `io.open`, `os.remove` and `os.rename` leaked their canonical path on every quota refusal, and a ranged `file:write()` leaked its whole payload — script-sized, so a loop writing 1 MB chunks leaked a megabyte per refusal. All four are the same cause: `lua_error()` longjmps past the frame's cleanup. Ownership now sits with Lua's collector.
+- **`io.lines` read its path after freeing it** — a use-after-free on every "no such file".
+- **`coroutine.resume` answered `message, false`** instead of `false, message` when a coroutine resumed itself: `lua_xmove` is a no-op when its source and destination are the same stack, so the `false` landed on top of the message rather than beneath it.
+- **`coroutine.close` accepted a running or normal coroutine**, resetting the stack it was executing on and returning `true`. Upstream refuses both; now so does this.
+- **`io.lines` and `file:lines` ignored their format argument.** `f:lines("L")` silently dropped the newline it was specifically asked to keep — no error, just the wrong bytes. Both now route through the same code `:read()` uses, and accept multiple formats and byte counts as Lua does.
+- **The PHP 8.5 floor was unenforced at build time.** Declared in `composer.json` and honoured by PIE, but a plain `phpize && make` against 8.4 failed somewhere deep in a translation unit rather than saying so.
 
 ### Known gaps
 

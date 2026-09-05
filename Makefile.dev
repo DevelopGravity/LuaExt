@@ -105,7 +105,9 @@ check:
 	    actionlint; \
 	run workflow-php-version  "" "" tools/check-workflow-php-version.sh; \
 	run generated-artifacts   "" "" tools/check-generated.sh; \
-	run docs-api              "" "" $(PHP) tools/check-docs-api.php; \
+	: "-n so the stubs can be declared: a developer of this extension normally has"; \
+	: "it loaded system-wide, and that copy is whatever was last installed."; \
+	run docs-api              "" "" $(PHP) -n tools/check-docs-api.php; \
 	run watchdog-purity       "" "" tools/check-watchdog-purity.sh; \
 	run banned-idioms         "" "" tools/check-banned-idioms.sh; \
 	run linkage               "" "" tools/check-linkage.sh; \
@@ -176,8 +178,10 @@ gen-stubs-check:
 
 ## Verify documentation samples only reference API that exists. Catches
 ## wrong named arguments, which a syntax check cannot see.
+## -n for the same reason `check` uses it: the stubs cannot be declared while a
+## system-installed luaext is loaded, and that copy may not be this checkout.
 docs-check:
-	php tools/check-docs-api.php
+	$(PHP) -n tools/check-docs-api.php
 
 ## Build and run every fuzz/fuzz_*.c target for FUZZ_SECONDS each (default
 ## 30s; CI's fuzz.yml uses a longer default).
