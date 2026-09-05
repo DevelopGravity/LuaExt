@@ -267,7 +267,33 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	sandbox->L = NULL;
 	sandbox->running_L = NULL;
 
-	if (L != NULL) {
+	/*
+	 * A STATE THAT IS STILL EXECUTING IS NOT CLOSED. It is abandoned.
+	 *
+	 * in_lua counts entries into the interpreter and is decremented by the
+	 * bracket that incremented it -- so reaching here with it above zero means
+	 * that bracket never ran, which means something longjmp'd straight over it.
+	 * PHP does exactly that: a fatal error, PHP's own memory_limit, and
+	 * max_execution_time all zend_bailout, and a bailout runs no C cleanup, so
+	 * it leaves the Lua VM frames on the C stack and this sandbox's bookkeeping
+	 * describing a call that is still notionally in progress.
+	 *
+	 * lua_close() on such a state walks a CallInfo chain whose C frames are gone
+	 * and runs every pending __gc finaliser -- which is untrusted Lua -- against
+	 * it. That is undefined behaviour reachable from ordinary host code, and no
+	 * amount of it happening to work on a simple case makes it defined.
+	 *
+	 * So the heap is deliberately leaked, for exactly the reason the panic path
+	 * above leaks it: it is malloc'd rather than emalloc'd, so PHP's allocator
+	 * will not reclaim it, and the process pays for the life of the request.
+	 * That is the price of a condition that should not occur, and it is a much
+	 * better price than a use-after-free. A debug build WILL report this as a
+	 * leak in that case; that report is correct and must not be "fixed".
+	 *
+	 * The ordinary paths are unaffected: by the time a destructor or the
+	 * RSHUTDOWN sweep runs normally, no call is in progress and in_lua is zero.
+	 */
+	if (L != NULL && sandbox->in_lua == 0) {
 		lua_close(L);
 	}
 
