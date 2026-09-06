@@ -321,14 +321,28 @@ static int luaext_iolib_read_line(lua_State *L, luaext_sandbox *sandbox, luaext_
 		return 1;
 	}
 
+	/*
+	 * Each chunk arrives as a Lua string on the stack, and once the buffer
+	 * outgrows its inline array it keeps a box there too -- so the two
+	 * interleave, and only luaL_addvalue() knows how. Adding with
+	 * luaL_addlstring() and popping "the chunk" popped whichever was on top,
+	 * which after the first growth is the box: the buffer's own storage,
+	 * released while B->b still pointed into it.
+	 */
 	luaL_buffinit(L, &line);
 
 	for (;;) {
 		const char *chunk;
 		size_t chunk_len;
 		const char *newline;
+		size_t take;
+		bool last = false;
 
 		if (luaext_iolib_read_bytes(L, sandbox, handle, LUAEXT_IOLIB_LINE_CHUNK, refusal) < 0) {
+			/* Hand the box back before leaving, rather than stranding it on the
+			 * stack of a call that is about to report failure. */
+			luaL_pushresult(&line);
+			lua_pop(L, 1);
 			return -1;
 		}
 
@@ -341,6 +355,7 @@ static int luaext_iolib_read_line(lua_State *L, luaext_sandbox *sandbox, luaext_
 
 		any = true;
 		newline = memchr(chunk, '\n', chunk_len);
+		take = chunk_len;
 
 		if (newline != NULL) {
 			size_t upto = (size_t)(newline - chunk) + 1;
@@ -349,13 +364,22 @@ static int luaext_iolib_read_line(lua_State *L, luaext_sandbox *sandbox, luaext_
 			 * ranged handle has nowhere to keep it. */
 			handle->offset -= (uint64_t)(chunk_len - upto);
 
-			luaL_addlstring(&line, chunk, keep_newline ? upto : upto - 1);
-			lua_pop(L, 1);
-			break;
+			take = keep_newline ? upto : upto - 1;
+			last = true;
 		}
 
-		luaL_addlstring(&line, chunk, chunk_len);
-		lua_pop(L, 1);
+		/* addvalue takes whole values, so a partial take is copied first and
+		 * the chunk it came from dropped. */
+		if (take != chunk_len) {
+			lua_pushlstring(L, chunk, take);
+			lua_remove(L, -2);
+		}
+
+		luaL_addvalue(&line);
+
+		if (last) {
+			break;
+		}
 	}
 
 	luaL_pushresult(&line);
@@ -840,10 +864,18 @@ static int luaext_iolib_lines_iter(lua_State *L)
 		return 0;
 	}
 
-	/* The formats go back onto a cleared stack at 1..formats, so read_one()
-	 * finds them where it expects an argument, and its results land above. */
+	/*
+	 * The formats go back onto a cleared stack at 1..formats, so read_one()
+	 * finds them where it expects an argument, and its results land above.
+	 *
+	 * Room for both, therefore: the peak is the formats plus one result each,
+	 * not the formats alone. Reserving only the inputs left read_one() pushing
+	 * past the allocation once more than two formats were given, and nothing
+	 * objects in a release build -- api_check needs LUA_USE_APICHECK, which only
+	 * the debug configuration defines. LUAEXT_IOLIB_MAX_LINE_FORMATS bounds it.
+	 */
 	lua_settop(L, 0);
-	luaL_checkstack(L, formats + 2, "too many formats for one lines() iterator");
+	luaL_checkstack(L, 2 * formats + 2, "too many formats for one lines() iterator");
 
 	for (index = 0; index < formats; index++) {
 		lua_pushvalue(L, lua_upvalueindex(4 + index));

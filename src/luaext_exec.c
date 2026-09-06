@@ -285,7 +285,8 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	 */
 	if (func_index < 1) {
 		zend_throw_exception(luaext_ce_runtime_error,
-							 "Cannot call a Lua function: it is not on this interpreter's stack", 0);
+							 "Cannot call a Lua function: it is not on this interpreter's stack",
+							 0);
 		return false;
 	}
 
