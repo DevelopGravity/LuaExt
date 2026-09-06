@@ -31,6 +31,16 @@ fuzz_vfs_path: fuzz_vfs_path.c $(SRC)/luaext_vfs_path.c $(SRC)/luaext_vfs_path.h
 		echo "fuzz: $(CC) is not clang; libFuzzer needs clang. Set CC=clang."; \
 		exit 1; \
 	fi
+	@# Apple's clang answers "clang" and ships no libFuzzer runtime, so the
+	@# version check alone sends a macOS contributor into a linker error about
+	@# a missing libclang_rt.fuzzer_osx.a. Compiling the flag is the only
+	@# honest test for it.
+	@if ! printf 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long s){(void)d;(void)s;return 0;}\n' \
+		| $(CC) -fsanitize=fuzzer -x c - -o /dev/null 2>/dev/null; then \
+		echo "fuzz: $(CC) has no libFuzzer runtime (Apple's clang ships none)."; \
+		echo "      brew install llvm, then: make -f Makefile.dev fuzz CC=/opt/homebrew/opt/llvm/bin/clang"; \
+		exit 1; \
+	fi
 	$(CC) $(CFLAGS) -o $@ fuzz_vfs_path.c $(SRC)/luaext_vfs_path.c
 
 clean:
