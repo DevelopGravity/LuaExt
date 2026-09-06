@@ -13,11 +13,49 @@ Package: `developgravity/lua-ext` · extension name `luaext` · namespace `Devel
 
 ## Why this exists
 
-MediaWiki's `luasandbox` has three problems this project exists to fix.
+### Credit first
 
-1. **Its CPU limit is a no-op outside Linux.** `setCPULimit()` is built on Linux-only POSIX timers; on macOS and Windows it silently compiles to a stub. The call succeeds, the limit is never enforced, and nothing tells you. `Sandbox::features()` reports the real, per-platform enforcement level, so a host can never be silently unprotected — see [platform support](docs/platform-support.md).
-2. **It targets an old Lua.** `luasandbox` targets Lua 5.1. LuaExt vendors and patches **Lua 5.5.1** directly — never the system `liblua` — so the sandboxing checks live in the interpreter's hot loops instead of being bolted on from outside, which is why they cost [0–5% rather than +55%](docs/performance.md).
-3. **It has no filesystem concept and no coroutines.** `luasandbox` removed coroutines entirely because its timeout hook could not span them. LuaExt exposes them by default, capped and strictly call-scoped — the interrupt follows whichever coroutine is running, so work cannot be hidden in one. It also adds a host-implemented virtual filesystem so scripts can do `io`-style work against storage the host controls, with every path canonicalised and every quota enforced before a backend is called.
+[`LuaSandbox`](https://www.mediawiki.org/wiki/LuaSandbox) has been running untrusted,
+user-submitted Lua in front of one of the busiest sites on the internet since 2012. Every
+Wikipedia infobox, citation and navbox is a Scribunto module executing inside it. That is
+a decade of adversarial exposure at a scale no new project can claim, and the ideas it
+proved are the ones this extension is built on: that the sandbox belongs *inside* the
+interpreter rather than wrapped around it, that limits have to be enforced where the
+instructions actually execute, and that a host has to assemble the standard library it
+wants rather than subtract from the one it got. LuaExt is downstream of that thinking in
+every way that matters. Its authors solved the hard part first, and they solved it in
+public.
+
+### So why not contribute this there?
+
+Two reasons, and neither is a criticism of the work.
+
+**These changes would not be good for that project's users.** Moving Lua 5.1 → 5.5 changes
+the language under every Scribunto module on every wiki running it. Adding a virtual
+filesystem hands a capability to an environment that has deliberately spent a decade
+having none. What is a feature here would be a compatibility event and a wider attack
+surface there. A project is allowed to have a narrower mandate than the thing you want to
+build, and LuaSandbox's mandate is MediaWiki — correctly so.
+
+**And the contribution path is built for a different kind of change.** LuaSandbox is
+developed on [Wikimedia Gerrit](https://gerrit.wikimedia.org/r/admin/repos/mediawiki/php/luasandbox),
+not GitHub; the GitHub presence is a read-only mirror. Contributing means a Wikimedia
+developer account, the Gerrit patchset workflow, and review by maintainers whose priority
+is — rightly — what serves the wikis. That is a reasonable amount of process for a bug
+fix. For a rewrite that swaps the vendored interpreter, replaces the limit architecture
+and changes the entire public API, it is the wrong shape of contribution, aimed at the
+wrong project, sent through a pipeline meant for something else. The realistic outcome of
+proposing it upstream is a long conversation ending in "this is a different extension" —
+so it starts as one.
+
+Hence: a separate extension, MIT-licensed, developed on GitHub, owing no wiki a
+compatibility promise.
+
+### What that freedom bought
+
+1. **Limits that are enforced on every platform, or say they aren't.** `LuaSandbox`'s `setCPULimit()` is built on Linux-only POSIX timers; on macOS and Windows it compiles to a stub, so the call succeeds and the limit is never enforced. That is a defensible trade for an extension whose production target is Linux, and a trap for anyone else. LuaExt enforces CPU and wall-clock budgets on all three platforms, and `Sandbox::features()` reports the real per-platform enforcement level and clock resolution, so a host is never silently unprotected — see [platform support](docs/platform-support.md).
+2. **A current Lua, vendored and patched in-tree.** `LuaSandbox` targets Lua 5.1. LuaExt vendors and patches **Lua 5.5.1** directly — never the system `liblua` — so the sandboxing checks live in the interpreter's hot loops instead of being bolted on from outside, which is why they cost [0–5% rather than +55%](docs/performance.md).
+3. **Coroutines and a filesystem, because the interrupt can follow them.** `LuaSandbox` removed coroutines entirely because its timeout hook could not span them. LuaExt exposes them by default, capped and strictly call-scoped — the interrupt follows whichever coroutine is running, so work cannot be hidden in one. It also adds a host-implemented virtual filesystem so scripts can do `io`-style work against storage the host controls, with every path canonicalised and every quota enforced before a backend is called.
 
 This is a from-scratch rewrite, not a fork, and there is no compatibility shim — see [migrating from LuaSandbox](docs/migrating-from-luasandbox.md).
 

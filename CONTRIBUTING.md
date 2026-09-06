@@ -211,8 +211,8 @@ Formatting is `clang-format`'s job — `make format` before you commit.
 
 ## Commits
 
-**Conventional commits, subject line only.** No body, no bullet list, no co-author
-trailer, and no module or file names in the subject.
+**Conventional commits, subject line only.** No body, no bullet list, and no module or
+file names in the subject.
 
 ```
 fix: keep a canonical path alive through the error that unwinds past it
