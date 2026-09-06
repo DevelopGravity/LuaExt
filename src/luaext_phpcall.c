@@ -611,10 +611,9 @@ static bool luaext_phpcall_resolve(zval *callable, const char *name, zend_fcall_
 	return callable_ok;
 }
 
-bool luaext_phpcall_push(luaext_sandbox *sandbox, zval *callable, const char *name)
+bool luaext_phpcall_push(luaext_sandbox *sandbox, lua_State *L, zval *callable, const char *name)
 {
 	luaext_phpcall_build build;
-	lua_State *L;
 
 	if (!luaext_phpcall_usable(sandbox)) {
 		return false;
@@ -632,8 +631,6 @@ bool luaext_phpcall_push(luaext_sandbox *sandbox, zval *callable, const char *na
 
 	build.name = name;
 	build.name_len = name != NULL ? strlen(name) : 0;
-
-	L = sandbox->L;
 
 	if (!lua_checkstack(L, LUAEXT_PHPCALL_SLOTS)) {
 		zend_throw_exception(
@@ -700,7 +697,9 @@ static int luaext_phpcall_build_table(lua_State *L)
 
 	ZEND_HASH_FOREACH_STR_KEY_VAL(build->functions, key, entry)
 	{
-		if (!luaext_phpcall_push(build->sandbox, entry, ZSTR_VAL(key))) {
+		/* This frame's own state: the closure is rawset into the table below,
+		 * so it has to land on the stack this function is building on. */
+		if (!luaext_phpcall_push(build->sandbox, L, entry, ZSTR_VAL(key))) {
 			/* The global is assigned last, so abandoning here leaves the
 			 * interpreter without a half-built library in it. */
 			build->failed = true;

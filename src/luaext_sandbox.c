@@ -1209,7 +1209,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 		RETURN_THROWS();
 	}
 
-	if (!luaext_phpcall_push(sandbox, callback, name != NULL ? ZSTR_VAL(name) : NULL)) {
+	if (!luaext_phpcall_push(sandbox, luaext_exec_state(sandbox), callback,
+							 name != NULL ? ZSTR_VAL(name) : NULL)) {
 		RETURN_THROWS();
 	}
 
@@ -1310,7 +1311,10 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 		RETURN_THROWS();
 	}
 
-	L = sandbox->L;
+	/* One state for the push and for luaext_require_preload() below, and the
+	 * running one at that -- see luaext_phpcall_push() on why the two can
+	 * differ and what reading the wrong one costs. */
+	L = luaext_exec_state(sandbox);
 
 	if (!lua_checkstack(L, 4)) {
 		zend_throw_exception(luaext_ce_memory_limit_error,
@@ -1362,7 +1366,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 								 "That LuaFunction no longer references a Lua function", 0);
 			RETURN_THROWS();
 		}
-	} else if (!luaext_phpcall_push(sandbox, loader, ZSTR_VAL(name))) {
+	} else if (!luaext_phpcall_push(sandbox, L, loader, ZSTR_VAL(name))) {
 		RETURN_THROWS();
 	}
 

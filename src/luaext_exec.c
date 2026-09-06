@@ -276,6 +276,19 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 	L = luaext_exec_state(sandbox);
 	func_index = lua_absindex(L, func_index);
 
+	/*
+	 * A relative index that resolves below the stack means the caller pushed
+	 * the function onto a different state than this one -- the two differ
+	 * whenever a coroutine is running. Refusing here is what keeps that a
+	 * reported error rather than a call through whatever the slot happens to
+	 * hold, since api_check is compiled out of a release build.
+	 */
+	if (func_index < 1) {
+		zend_throw_exception(luaext_ce_runtime_error,
+							 "Cannot call a Lua function: it is not on this interpreter's stack", 0);
+		return false;
+	}
+
 	/* Everything at or above the function belongs to this call and goes with
 	 * it, which is what "leaving nothing on the stack" means. */
 	base = func_index - 1;

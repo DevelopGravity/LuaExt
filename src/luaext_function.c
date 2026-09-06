@@ -135,7 +135,13 @@ static void luaext_function_invoke(zval *this_zv, zval *return_value, zval *args
 		RETURN_THROWS();
 	}
 
-	L = sandbox->L;
+	/*
+	 * The state luaext_exec_pcall() will resolve for itself, not sandbox->L.
+	 * Those differ while a coroutine is running, and a host callback invoked
+	 * from inside one can reach here: pushing the function on the main thread
+	 * and resolving its index on the coroutine reads a slot that never held it.
+	 */
+	L = luaext_exec_state(sandbox);
 
 	if (!lua_checkstack(L, 2)) {
 		zend_throw_exception(luaext_ce_runtime_error,
