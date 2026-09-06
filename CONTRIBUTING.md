@@ -171,6 +171,30 @@ Three rules that are not obvious:
 build. The default is 10s because `03-adversarial/` is full of scripts that loop forever
 on purpose.
 
+### Fuzzing
+
+```bash
+make fuzz                    # every fuzz/fuzz_*.c, FUZZ_SECONDS each (default 30)
+make fuzz FUZZ_SECONDS=240
+```
+
+Only **pure** modules are fuzzable — no `php.h`, no `lua.h`, no request — which today
+means the path canonicaliser. Targets are built with `-fsanitize=fuzzer,address,undefined`,
+so a miscalculation stops the run instead of returning a wrong answer quietly.
+
+**On macOS this needs Homebrew's LLVM.** Apple's clang answers to `clang` and ships no
+libFuzzer runtime, so the build refuses it by name rather than failing at the link:
+
+```bash
+brew install llvm
+make fuzz CC=/opt/homebrew/opt/llvm/bin/clang
+```
+
+Corpora and crashes land under `fuzz/corpus/` and `fuzz/crashes/`, both gitignored.
+`fuzz.yml` runs a short pass on any PR touching `src/`, `third_party/` or `fuzz/`, and
+uploads whatever crashed as an artifact. A crash goes to `03-adversarial/` as a regression
+test before its fix, like any other finding.
+
 ## C conventions
 
 ### The rule that has cost the most bugs

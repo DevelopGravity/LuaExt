@@ -1,12 +1,15 @@
 name: Fuzz
 
 # Short libFuzzer regression pass on PRs touching src/ or third_party/ (the
-# code the fuzz targets actually exercise). fuzz/ itself (fuzz_vfs_path.c,
-# fuzz_conversion.c, fuzz_run_lua.c + a standalone Makefile) is a Phase-8
-# deliverable of a different workstream — this workflow is written now, per
-# the project plan, but must skip cleanly rather than fail until fuzz/
-# lands. A 24h fuzzing pass is a separate, later concern (pre-1.0, not this
-# file).
+# code the fuzz targets actually exercise).
+#
+# Only pure modules are fuzzable -- no php.h, no lua.h, no request -- so the
+# target list is currently the path canonicaliser alone. The probe below keeps
+# the job green rather than red on a checkout with no targets, which also means
+# deleting the last one is a silent pass; that trade is deliberate, since a
+# missing-target failure would fire on every unrelated PR.
+#
+# A long-running fuzzing pass is a separate concern and not this file.
 
 on:
   pull_request:
@@ -47,9 +50,9 @@ jobs:
             echo "has_targets=true" >>"$GITHUB_OUTPUT"
           fi
 
-      - name: No fuzz targets yet
+      - name: No fuzz targets to run
         if: steps.probe.outputs.has_targets == 'false'
-        run: echo "::notice::fuzz/ targets haven't landed yet (a later project phase) — skipping cleanly."
+        run: echo "::notice::no fuzz/fuzz_*.c targets in this checkout — nothing to run."
 
       - name: Install clang toolchain
         if: steps.probe.outputs.has_targets == 'true'
