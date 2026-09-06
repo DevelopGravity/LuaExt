@@ -26,6 +26,7 @@
 #include <lua.h>
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -50,6 +51,26 @@
  * turned into a second denial of service on the way out of the first.
  */
 #define LUAEXT_ERROR_TRACE_FRAMES 64
+
+/*
+ * Headroom granted while an error is being described, and the ceiling on how
+ * much of a script-supplied message is kept.
+ *
+ * Reporting that a script ran out of memory must not itself fail for want of
+ * memory, so the message handler needs room the script has already spent. It
+ * used to get that as an unlimited ceiling, which handed a script the primitive
+ * it was being stopped for: luaL_tolstring() runs the error value's __tostring,
+ * that is script code, and under no ceiling it can allocate without bound --
+ * from a default sandbox, since error() and setmetatable() need no capability.
+ * The result was then copied into a persistent zend_string with no length
+ * bound, so the allocation outlived the sandbox's accounting entirely.
+ *
+ * Both are bounded now. The headroom covers what describing an error actually
+ * costs -- at most LUAEXT_ERROR_TRACE_FRAMES frames of short strings plus one
+ * clamped message -- with a wide margin, and nothing beyond it.
+ */
+#define LUAEXT_ERROR_REPORT_HEADROOM ((size_t)256 * 1024)
+#define LUAEXT_ERROR_SCRIPT_MESSAGE_MAX ((size_t)8 * 1024)
 
 /*
  * Where the Lua context lives on a thrown exception.
@@ -627,6 +648,16 @@ static int luaext_error_capture(lua_State *L)
 		 */
 		message = luaL_tolstring(L, 1, &length);
 
+		/*
+		 * Whatever __tostring returned is the script's, and luaext_error_push()
+		 * copies it into a persistent allocation that the sandbox's accounting
+		 * never sees. Keeping a bounded prefix is what stops one error from
+		 * parking megabytes outside every budget the host set.
+		 */
+		if (length > LUAEXT_ERROR_SCRIPT_MESSAGE_MAX) {
+			length = LUAEXT_ERROR_SCRIPT_MESSAGE_MAX;
+		}
+
 		if (luaext_error_push(L, LUAEXT_ERR_RUNTIME, false, message, length) == NULL) {
 			return 1;
 		}
@@ -651,16 +682,24 @@ int luaext_error_traceback_handler(lua_State *L)
 
 	/*
 	 * Reporting that a script ran out of memory must not itself fail for want
-	 * of memory, so the ceiling comes off for the duration.
+	 * of memory, so the ceiling is raised by a fixed headroom for the duration
+	 * -- raised, not removed: luaL_tolstring() below runs the error value's own
+	 * __tostring, and that is script code. See LUAEXT_ERROR_REPORT_HEADROOM.
+	 *
+	 * A sandbox that is already unlimited stays unlimited; there is nothing to
+	 * grant and nothing to restore.
 	 *
 	 * The allocator subsystem owns luaext_alloc.c; this deliberately writes the
 	 * field rather than calling luaext_alloc_set_limit(), because that call is
 	 * also where GC re-tuning lives and re-tuning the collector in the middle of
 	 * an unwind is not something this path should be doing.
 	 */
-	if (sandbox != NULL) {
+	if (sandbox != NULL && sandbox->alloc.limit != 0) {
 		saved_limit = sandbox->alloc.limit;
-		sandbox->alloc.limit = 0;
+
+		sandbox->alloc.limit = saved_limit > SIZE_MAX - LUAEXT_ERROR_REPORT_HEADROOM
+								   ? SIZE_MAX
+								   : saved_limit + LUAEXT_ERROR_REPORT_HEADROOM;
 		lifted = true;
 	}
 
