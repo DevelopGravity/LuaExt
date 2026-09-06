@@ -98,3 +98,6 @@ fuzz/fuzz_*
 
 # Local maintenance scripts (history sweeps, signing shims). Not shipped.
 .tools/
+
+# Page snapshots left by browser tooling driving examples/playground.
+.playwright-mcp/
