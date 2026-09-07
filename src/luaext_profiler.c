@@ -31,8 +31,12 @@
  * A bound is needed because the key is built from the chunk name, and a script
  * that loads generated chunks in a loop would otherwise grow this table for as
  * long as it ran -- turning a diagnostic into a memory leak the memory limit
- * does not see, since this lives outside the Lua heap. */
-#define LUAEXT_PROFILER_MAX_FUNCTIONS 4096u
+ * does not see, since this lives outside the Lua heap.
+ *
+ * No `u` suffix, deliberately: ZEND_TOSTR() stringifies the macro's literal
+ * replacement into the truncation entry getProfile() reports, and a suffixed
+ * constant put "4096u" in front of the host. */
+#define LUAEXT_PROFILER_MAX_FUNCTIONS 4096
 
 struct luaext_profiler {
 	HashTable counts; /* identity -> sample count */
