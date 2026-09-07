@@ -67,18 +67,22 @@
 #define LUAEXT_ERROR_SCRIPT_MESSAGE_MAX ((size_t)8 * 1024)
 
 /*
- * Where the Lua context lives on a thrown exception.
+ * Where the Lua context lives on a thrown exception: two DECLARED private
+ * properties on LuaException and LuaLogicException, addressed by property
+ * offset.
  *
- * The names are mangled the way the engine mangles a private property
- * ("\0<class>\0<name>") naming a class that does not exist, so PHP has no
- * syntax that reads or writes them. A host cannot forge a Lua traceback onto an
- * exception it constructed itself, and cannot strip one off an exception the
- * sandbox threw. The stub declares no properties, so this is also the only way
- * to carry the context without editing a shared file.
+ * Declared, because declared is what the engine's access control actually
+ * covers. The previous scheme stored these under hand-mangled dynamic keys
+ * naming a class that does not exist -- and zend_check_property_access()
+ * short-circuits to SUCCESS for a dynamic property whose name starts with
+ * NUL, so get_object_vars() from any scope returned both entries, live
+ * Sandbox included, with NUL bytes embedded in the array keys. A real
+ * private property is invisible outside its class, and PHP still has no
+ * syntax that lets a host forge or strip one on these final classes.
  */
-#define LUAEXT_KEY_TRACE "\0luaext\0luaTrace"
+#define LUAEXT_KEY_TRACE "luaTrace"
 #define LUAEXT_KEY_TRACE_LEN (sizeof(LUAEXT_KEY_TRACE) - 1)
-#define LUAEXT_KEY_SANDBOX "\0luaext\0sandbox"
+#define LUAEXT_KEY_SANDBOX "luaSandbox"
 #define LUAEXT_KEY_SANDBOX_LEN (sizeof(LUAEXT_KEY_SANDBOX) - 1)
 
 static int luaext_error_capture(lua_State *L);
@@ -843,20 +847,59 @@ void luaext_error_trace_to_zval(lua_State *L, int index, zval *out)
  * Throwing into PHP
  * ---------------------------------------------------------------------- */
 
+/*
+ * The property slot behind one of the two context keys, or NULL for an
+ * exception class that does not carry them. Private properties live in their
+ * DECLARING class's properties_info under their plain name; every concrete
+ * exception descends from exactly one of the two roots, so the root decides
+ * the offset.
+ */
+static zval *luaext_error_context_slot(zend_object *exception, const char *key, size_t key_len)
+{
+	zend_class_entry *base;
+	const zend_property_info *info;
+
+	if (instanceof_function(exception->ce, luaext_ce_lua_exception)) {
+		base = luaext_ce_lua_exception;
+	} else if (instanceof_function(exception->ce, luaext_ce_lua_logic_exception)) {
+		base = luaext_ce_lua_logic_exception;
+	} else {
+		return NULL;
+	}
+
+	info = zend_hash_str_find_ptr(&base->properties_info, key, key_len);
+
+	if (info == NULL) {
+		return NULL;
+	}
+
+	return OBJ_PROP(exception, info->offset);
+}
+
+/* Consumes `value`, exactly as the hash update it replaced did. */
 static void luaext_error_store(zend_object *exception, const char *key, size_t key_len, zval *value)
 {
-	zend_hash_str_update(zend_std_get_properties_ex(exception), key, key_len, value);
+	zval *slot = luaext_error_context_slot(exception, key, key_len);
+
+	if (slot == NULL) {
+		zval_ptr_dtor(value);
+		return;
+	}
+
+	zval_ptr_dtor(slot);
+	ZVAL_COPY_VALUE(slot, value);
 }
 
 static zval *luaext_error_fetch(zend_object *exception, const char *key, size_t key_len)
 {
-	/* Never builds the table just to read it: an exception the sandbox did not
-	 * throw has no properties table at all, and should not gain one. */
-	if (exception->properties == NULL) {
+	zval *slot = luaext_error_context_slot(exception, key, key_len);
+
+	/* The declared default is null, so null IS "never attached". */
+	if (slot == NULL || Z_ISUNDEF_P(slot) || Z_TYPE_P(slot) == IS_NULL) {
 		return NULL;
 	}
 
-	return zend_hash_str_find(exception->properties, key, key_len);
+	return slot;
 }
 
 /*

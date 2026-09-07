@@ -82,6 +82,7 @@ extern zend_class_entry *luaext_ce_seal_mode;
  */
 extern zend_class_entry *luaext_ce_lua_throwable;
 extern zend_class_entry *luaext_ce_lua_exception;
+extern zend_class_entry *luaext_ce_lua_logic_exception;
 extern zend_class_entry *luaext_ce_runtime_error;
 extern zend_class_entry *luaext_ce_vfs_error;
 extern zend_class_entry *luaext_ce_module_not_found_error;

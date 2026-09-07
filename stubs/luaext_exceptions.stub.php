@@ -67,6 +67,19 @@ interface LuaThrowable extends \Throwable
 abstract class LuaException extends \RuntimeException implements LuaThrowable
 {
     /**
+     * @var list<array<string, mixed>>|null Backs getLuaTrace(). Written only
+     * by the extension; declared so property access control applies to it —
+     * get_object_vars() from foreign scope must not see it.
+     */
+    private $luaTrace = null;
+
+    /**
+     * @var \DevelopGravity\LuaExt\Sandbox|null Backs getSandbox(). Written
+     * only by the extension and dropped by __serialize().
+     */
+    private $luaSandbox = null;
+
+    /**
      * Serialize without the sandbox.
      *
      * A sandbox wraps a live `lua_State`, so it cannot cross a process boundary
@@ -120,6 +133,18 @@ abstract class LuaException extends \RuntimeException implements LuaThrowable
  */
 abstract class LuaLogicException extends \LogicException implements LuaThrowable
 {
+    /**
+     * @var list<array<string, mixed>>|null Backs getLuaTrace(); see
+     * LuaException::$luaTrace.
+     */
+    private $luaTrace = null;
+
+    /**
+     * @var \DevelopGravity\LuaExt\Sandbox|null Backs getSandbox(); see
+     * LuaException::$luaSandbox.
+     */
+    private $luaSandbox = null;
+
     /** @inheritDoc */
     public function getLuaTrace(): ?array {}
 

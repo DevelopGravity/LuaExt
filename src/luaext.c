@@ -85,11 +85,12 @@ zend_class_entry *luaext_ce_closed_sandbox_error;
 zend_class_entry *luaext_ce_thread_affinity_error;
 
 /*
- * LuaLogicException is the shared base of the host-misuse exceptions. It is not
- * in php_luaext.h because nothing outside this file needs it: the extension
- * always throws one of its concrete subclasses.
+ * LuaLogicException is the shared base of the host-misuse exceptions. The
+ * extension always throws one of its concrete subclasses, but the error
+ * subsystem needs the base itself: the Lua-context properties are declared on
+ * it, and their offsets resolve through this entry.
  */
-static zend_class_entry *luaext_ce_lua_logic_exception;
+zend_class_entry *luaext_ce_lua_logic_exception;
 
 /* -------------------------------------------------------------------------
  * INI
