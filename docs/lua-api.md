@@ -12,7 +12,7 @@ Everything here applies per-sandbox, gated by that sandbox's `Capabilities`. Two
 
 | Library | Untrusted | Trusted |
 |---|---|---|
-| `base` (globals) | Filtered, with replacements — see below | Adds `load` (text-only; `mode = "b"` additionally requires the `loadBytecode` capability, which stays off even here) |
+| `base` (globals) | Filtered, with replacements — see below | Adds `load` (text-only; `mode = "b"` additionally requires the `loadBytecode` capability, which stays off even here). A function reader is metered against `maxSourceBytes` for everything it feeds the parser — numbers are billed at their coerced string form — and observes the timing limits between chunks |
 | `coroutine` | LuaExt's own wrapper around upstream, gated by the `coroutines` capability (on by default), capped and call-scoped — see [Coroutines](#coroutines) | Same |
 | `string` | Open; `string.dump` removed; `string.format("%p")` rejected | `string.dump` restored behind the `dumpBytecode` capability |
 | `table` | **All members**, including `table.move` (its loops are patched to be interruptible) and `table.create` (no loop to patch — bounded by its own arguments) | Same |

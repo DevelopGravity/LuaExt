@@ -536,11 +536,26 @@ static int luaext_baselib_load_reader(lua_State *L)
 	size_t max_source = luaext_baselib_max_source(sandbox);
 	size_t length = 0;
 
+	/*
+	 * The parser consumes this reader from a C loop with no back edge of its
+	 * own, so this call is the only point where a CPU or wall breach can land
+	 * while a reader-driven chunk is being lexed. Without it an endless reader
+	 * parses forever and no limit ever fires.
+	 */
+	LUAEXT_CHECK(L);
+
 	lua_settop(L, 0);
 	lua_pushvalue(L, lua_upvalueindex(1));
 	lua_call(L, 0, 1);
 
-	if (lua_type(L, -1) != LUA_TSTRING || consumed == NULL || max_source == 0) {
+	/*
+	 * Anything upstream's reader protocol coerces counts, and numbers are the
+	 * case that matters: lua_tolstring converts one in place, its string form
+	 * is what the parser sees, so its string form is what gets billed. Testing
+	 * for LUA_TSTRING alone let a reader returning numbers feed the parser
+	 * unmetered.
+	 */
+	if (!lua_isstring(L, -1) || consumed == NULL || max_source == 0) {
 		return 1;
 	}
 
@@ -635,7 +650,12 @@ static int luaext_baselib_load(lua_State *L)
 							(lua_Integer)length, (lua_Integer)max_source);
 			return 2;
 		}
-	} else if (max_source != 0 && lua_type(L, 1) == LUA_TFUNCTION) {
+	} else if (lua_type(L, 1) == LUA_TFUNCTION) {
+		/*
+		 * Wrapped unconditionally, not only when a byte ceiling exists: the
+		 * wrapper is also the parse's only interrupt observation point, and a
+		 * sandbox with maxSourceBytes lifted still keeps its timing limits.
+		 */
 		size_t *consumed;
 
 		lua_pushvalue(L, 1);
