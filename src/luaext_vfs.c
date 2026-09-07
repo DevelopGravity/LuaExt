@@ -1061,8 +1061,8 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
  * write() (which instanceof refused at configuration).
  */
 static bool luaext_vfs_handle_close_maybe_charged(lua_State *L, luaext_sandbox *sandbox,
-												  luaext_vfs_handle *handle,
-												  zend_string **refusal, bool charge)
+												  luaext_vfs_handle *handle, zend_string **refusal,
+												  bool charge)
 {
 	*refusal = NULL;
 
@@ -1077,8 +1077,8 @@ static bool luaext_vfs_handle_close_maybe_charged(lua_State *L, luaext_sandbox *
 		ZVAL_STR(&args[0], handle->path);
 		ZVAL_STR(&args[1], handle->buffer);
 
-		if (luaext_vfs_call_maybe_charged(L, sandbox, "write", 2, args, &result, refusal,
-										  charge) != LUAEXT_VFS_OK) {
+		if (luaext_vfs_call_maybe_charged(L, sandbox, "write", 2, args, &result, refusal, charge) !=
+			LUAEXT_VFS_OK) {
 			/*
 			 * Released even so. The bytes are gone either way -- there is nowhere
 			 * else to put them -- and keeping the handle open would leak the
