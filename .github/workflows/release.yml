@@ -163,11 +163,10 @@ jobs:
         with:
           release: ${{ env.LUAEXT_TAG }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          # draft: false (default) — the release already exists as our draft;
-          # TODO(verify): confirm this action attaches to an *existing* draft
-          # release by tag_name without needing `draft: true`, since the
-          # README only documents `draft` as "create a draft release if the
-          # release does not exist" and doesn't say what happens when it does.
+          # draft: false (default). Confirmed by a real run: the action finds
+          # an existing draft by tag_name and uploads onto it, no `draft: true`
+          # needed. The README only documents `draft` as "create a draft
+          # release if the release does not exist", which left this open.
 
   # -------------------------------------------------------------------
   # Pre-publish smoke test, part 1: source build via PIE on Unix.
@@ -189,7 +188,10 @@ jobs:
         with:
           php-version: '8.5'
           tools: none
-          extensions: none
+          # NOT "none": PIE is a Box-packaged phar that refuses to start
+          # without iconv, and unpacks its downloads with zip. pie-install.yml
+          # carries the same line for the same reason.
+          extensions: iconv, mbstring, zip
 
       - name: Install PIE
         run: |
@@ -236,16 +238,16 @@ jobs:
         with:
           php-version: '8.5'
           tools: none
-          extensions: none
+          # NOT "none": PIE is a Box-packaged phar that refuses to start
+          # without iconv, and unpacks its downloads with zip. pie-install.yml
+          # carries the same line for the same reason.
+          extensions: iconv, mbstring, zip
         env:
           phpts: ${{ matrix.ts }}
 
-      # TODO(verify): confirm the exact asset filename convention produced
-      # by php/php-windows-builder/release once a real release has been run
-      # — the plan's `php_luaext-{tag}-{php}-{ts|nts}-{vs}-x64.zip` shape is
-      # unverified against the action's actual output. This step downloads
-      # every zip asset and filters by substring rather than assuming one
-      # exact name.
+      # Downloads every zip and filters by substring rather than assuming a
+      # name -- which is what caught the convention differing from the shape
+      # this file originally guessed. See the extract step below.
       - name: Download release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -258,9 +260,15 @@ jobs:
       - name: Extract matching (${{ matrix.ts }}, x64) zip
         shell: pwsh
         run: |
+          # The builder names assets php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip
+          # -- observed, not assumed. Two things differ from what this job
+          # originally guessed: the arch reads "x86_64" rather than "x64", and
+          # the first field is the ref the build ran from, not the tag. Both
+          # spellings are matched so a change on either side does not silently
+          # select nothing.
           $ts = "${{ matrix.ts }}"
           $zips = Get-ChildItem dll-assets -Filter *.zip | Where-Object {
-            $_.Name -match "x64" -and (
+            $_.Name -match "x86_64|x64" -and (
               ($ts -eq "ts"  -and $_.Name -match "(?<!n)ts") -or
               ($ts -eq "nts" -and $_.Name -match "nts")
             )
@@ -308,7 +316,10 @@ jobs:
         with:
           php-version: '8.5'
           tools: none
-          extensions: none
+          # NOT "none": PIE is a Box-packaged phar that refuses to start
+          # without iconv, and unpacks its downloads with zip. pie-install.yml
+          # carries the same line for the same reason.
+          extensions: iconv, mbstring, zip
 
       - name: Install PIE
         shell: bash
