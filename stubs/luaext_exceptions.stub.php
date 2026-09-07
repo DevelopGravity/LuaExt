@@ -128,8 +128,11 @@ abstract class LuaException extends \RuntimeException implements LuaThrowable
  * Base class for host misuse of the API.
  *
  * These report a mistake in the calling PHP code rather than a failure of the
- * script, are raised before or around execution, and never cross into Lua.
- * Catch this to separate "I configured it wrong" from "the script failed".
+ * script. Most are raised before or around execution, but one thrown from
+ * inside a host callback crosses the Lua boundary like any other host
+ * exception — picking up the Lua context this interface exposes on its way
+ * out. Catch this to separate "I configured it wrong" from "the script
+ * failed".
  */
 abstract class LuaLogicException extends \LogicException implements LuaThrowable
 {
@@ -144,6 +147,24 @@ abstract class LuaLogicException extends \LogicException implements LuaThrowable
      * LuaException::$luaSandbox.
      */
     private $luaSandbox = null;
+
+    /**
+     * Serialize without the sandbox — the same redaction, for the same
+     * reasons, as {@see LuaException::__serialize()}: one of these thrown
+     * from a host callback carries the sandbox too, and it cannot cross a
+     * process boundary.
+     *
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array {}
+
+    /**
+     * Restore from {@see self::__serialize()}; hostile input handled as in
+     * {@see LuaException::__unserialize()}.
+     *
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void {}
 
     /** @inheritDoc */
     public function getLuaTrace(): ?array {}

@@ -1729,31 +1729,33 @@ static void luaext_error_unserialize(zval *this_zv, HashTable *data)
 	{                                                                                              \
 		ZEND_PARSE_PARAMETERS_NONE();                                                              \
 		luaext_return_lua_line(ZEND_THIS, return_value);                                           \
+	}                                                                                              \
+                                                                                                   \
+	ZEND_METHOD(base_class, __serialize)                                                           \
+	{                                                                                              \
+		ZEND_PARSE_PARAMETERS_NONE();                                                              \
+                                                                                                   \
+		luaext_error_serialize(ZEND_THIS, return_value);                                           \
+	}                                                                                              \
+                                                                                                   \
+	ZEND_METHOD(base_class, __unserialize)                                                         \
+	{                                                                                              \
+		HashTable *data;                                                                           \
+                                                                                                   \
+		ZEND_PARSE_PARAMETERS_START(1, 1)                                                          \
+		Z_PARAM_ARRAY_HT(data)                                                                     \
+		ZEND_PARSE_PARAMETERS_END();                                                               \
+                                                                                                   \
+		luaext_error_unserialize(ZEND_THIS, data);                                                 \
 	}
 
+/*
+ * BOTH roots, through one macro, so they cannot drift. An earlier revision gave
+ * only LuaException the serialize pair, reasoning that logic exceptions "never
+ * carry a traceback or a sandbox" -- but one thrown from inside a host callback
+ * crosses the Lua boundary like any other host exception and picks up both, at
+ * which point the non-serializable Sandbox in $luaSandbox made serialize()
+ * throw. The same redaction now applies to whichever root the exception has.
+ */
 LUAEXT_DEFINE_TRACE_ACCESSORS(DevelopGravity_LuaExt_Exception_LuaException)
 LUAEXT_DEFINE_TRACE_ACCESSORS(DevelopGravity_LuaExt_Exception_LuaLogicException)
-
-/*
- * Only LuaException gets these. LuaLogicException reports host misuse, is raised
- * before or around execution, never carries a traceback or a sandbox, and
- * already round-trips under PHP's default serialization -- so there is nothing
- * to strip and nothing to validate.
- */
-ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __serialize)
-{
-	ZEND_PARSE_PARAMETERS_NONE();
-
-	luaext_error_serialize(ZEND_THIS, return_value);
-}
-
-ZEND_METHOD(DevelopGravity_LuaExt_Exception_LuaException, __unserialize)
-{
-	HashTable *data;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-	Z_PARAM_ARRAY_HT(data)
-	ZEND_PARSE_PARAMETERS_END();
-
-	luaext_error_unserialize(ZEND_THIS, data);
-}
