@@ -649,8 +649,14 @@ static int luaext_openlibs_build(lua_State *L)
 		luaL_error(L, "luaext: the \"io\" library could not be assembled");
 	}
 
+	/*
+	 * luaL_error like the four above, NOT `return false`: this is a
+	 * lua_CFunction, whose return value is a result count. `false` is 0 --
+	 * "no results, success" -- so the pcall around this build reported a
+	 * sandbox whose require/package surface was never installed as built.
+	 */
 	if (!luaext_require_install(L, sandbox)) {
-		return false;
+		luaL_error(L, "luaext: the \"package\" library could not be assembled");
 	}
 
 	/*
