@@ -774,6 +774,15 @@ static int luaext_iolib_file_flush(lua_State *L)
 			return refusal != NULL ? luaext_iolib_refused(L, refusal) : luaext_iolib_failed(L);
 		}
 
+		/*
+		 * These bytes reached the backend HERE, so they are counted here --
+		 * exactly as the close path counts its own flush. Clearing `dirty`
+		 * below means close() will not write (or count) them again, so
+		 * skipping this line left every flushed byte out of
+		 * stats()->vfsBytes.
+		 */
+		luaext_vfs_note_bytes(sandbox, ZSTR_LEN(handle->buffer));
+
 		zval_ptr_dtor(&result);
 		handle->dirty = false;
 	}
