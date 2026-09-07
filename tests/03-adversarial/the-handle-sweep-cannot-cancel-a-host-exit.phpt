@@ -44,10 +44,12 @@ $script = sprintf(<<<'PHP'
 $file = tempnam(sys_get_temp_dir(), 'luaext-sweep-exit-') . '.php';
 file_put_contents($file, "<?php\n" . $script);
 
+// The bare name, so PHP applies the platform prefix and suffix itself; see
+// host-exit-is-not-cancelled-by-the-sandbox.phpt.
 $command = sprintf(
-	'%s -n -d extension=%s %s 2>&1',
+	'%s -n -d extension_dir=%s -d extension=luaext %s 2>&1',
 	escapeshellarg(PHP_BINARY),
-	escapeshellarg(ini_get('extension_dir') . '/luaext.so'),
+	escapeshellarg(ini_get('extension_dir')),
 	escapeshellarg($file),
 );
 

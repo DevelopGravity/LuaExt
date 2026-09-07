@@ -46,10 +46,13 @@ $script = <<<'PHP'
 $file = tempnam(sys_get_temp_dir(), 'luaext-exit-') . '.php';
 file_put_contents($file, "<?php\n" . $script);
 
+// The bare name, not a file: PHP itself applies the platform prefix and
+// suffix (luaext.so here, php_luaext.dll on the Windows build CI tests), so
+// this command works wherever the parent process does.
 $command = sprintf(
-    '%s -n -d extension=%s %s 2>&1',
+    '%s -n -d extension_dir=%s -d extension=luaext %s 2>&1',
     escapeshellarg(PHP_BINARY),
-    escapeshellarg(ini_get('extension_dir') . '/luaext.so'),
+    escapeshellarg(ini_get('extension_dir')),
     escapeshellarg($file),
 );
 
