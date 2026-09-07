@@ -219,7 +219,21 @@ jobs:
         run: |
           set -euo pipefail
           php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
-          php /tmp/pie.phar install "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" --no-interaction
+
+          # PIE writes the extension into the PHP extension directory, which is
+          # root-owned on a Linux runner, and it refuses to prompt for a
+          # password without a terminal. macOS keeps PHP under a user-owned
+          # Homebrew prefix and needs none of this. Same split as
+          # pie-install.yml, which met it first.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo -E "$(command -v php)" /tmp/pie.phar install \
+              "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" \
+              --no-interaction
+          else
+            php /tmp/pie.phar install \
+              "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" \
+              --no-interaction
+          fi
 
       - name: Verify extension loaded
         run: php -m | grep -qi luaext
@@ -255,41 +269,60 @@ jobs:
       # Downloads every zip and filters by substring rather than assuming a
       # name -- which is what caught the convention differing from the shape
       # this file originally guessed. See the extract step below.
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release download "$env:LUAEXT_TAG" `
-            --repo "${{ github.repository }}" `
-            --pattern "*.zip" `
-            --dir dll-assets
+      # Taken from this run's own artifacts, not from the release. A draft has
+      # no git tag, and `gh release download` resolves by tag -- so against the
+      # draft this is meant to validate it answers "release not found". The
+      # artifacts carry the same names as the assets and are the same bytes
+      # that were just uploaded, so this checks what actually ships.
+      - name: Download the built DLLs
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: dll-assets
+          merge-multiple: true
 
-      - name: Extract matching (${{ matrix.ts }}, x64) zip
+      - name: Find the (${{ matrix.ts }}, x64) DLL
         shell: pwsh
         run: |
-          # The builder names assets php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip
-          # -- observed, not assumed. Two things differ from what this job
+          # Assets are named php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip --
+          # observed, not assumed. Two things differ from what this job
           # originally guessed: the arch reads "x86_64" rather than "x64", and
           # the first field is the ref the build ran from, not the tag. Both
-          # spellings are matched so a change on either side does not silently
-          # select nothing.
+          # arch spellings are matched so a change on either side does not
+          # silently select nothing.
+          #
+          # Whether a downloaded artifact hands back the zip or its unpacked
+          # contents is the action's business, so both shapes are handled
+          # rather than guessed at a second time.
           $ts = "${{ matrix.ts }}"
-          $zips = Get-ChildItem dll-assets -Filter *.zip | Where-Object {
-            $_.Name -match "x86_64|x64" -and (
-              ($ts -eq "ts"  -and $_.Name -match "(?<!n)ts") -or
-              ($ts -eq "nts" -and $_.Name -match "nts")
+          $wanted = {
+            param($name)
+            $name -match "x86_64|x64" -and (
+              ($ts -eq "ts"  -and $name -match "(?<!n)ts") -or
+              ($ts -eq "nts" -and $name -match "nts")
             )
           }
-          if ($zips.Count -eq 0) {
-            Write-Error "No release asset matched ts=$ts, arch=x64. Assets found: $(Get-ChildItem dll-assets -Filter *.zip | Select-Object -ExpandProperty Name)"
-            exit 1
+
+          $zips = Get-ChildItem dll-assets -Recurse -Filter *.zip |
+                  Where-Object { & $wanted $_.Name }
+
+          foreach ($zip in $zips) {
+            Expand-Archive -Path $zip.FullName -DestinationPath dll-extracted -Force
           }
-          Expand-Archive -Path $zips[0].FullName -DestinationPath dll-extracted -Force
-          $dll = Get-ChildItem dll-extracted -Recurse -Filter php_luaext.dll | Select-Object -First 1
+
+          # Already-unpacked artifacts: keep only DLLs whose own directory
+          # names the build we are testing.
+          $loose = Get-ChildItem dll-assets -Recurse -Filter php_luaext.dll |
+                   Where-Object { & $wanted $_.FullName }
+
+          $dll = @(Get-ChildItem dll-extracted -Recurse -Filter php_luaext.dll -ErrorAction SilentlyContinue) +
+                 @($loose) | Select-Object -First 1
+
           if (-not $dll) {
-            Write-Error "php_luaext.dll not found in $($zips[0].Name)"
+            $found = (Get-ChildItem dll-assets -Recurse | Select-Object -ExpandProperty Name) -join ", "
+            Write-Error "No php_luaext.dll for ts=$ts, arch=x64. Downloaded: $found"
             exit 1
           }
+
           echo "LUAEXT_DLL_PATH=$($dll.FullName)" >> $env:GITHUB_ENV
 
       - name: Load the DLL and verify the extension registers
