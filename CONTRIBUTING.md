@@ -260,3 +260,32 @@ Three steps, and the third is the one that makes this project what it is:
 
 The same instinct applies to documentation: `tools/check-docs-api.php` exists because a
 doc naming a method that no longer exists is a bug with no compiler to catch it.
+
+## Cutting a release
+
+Maintainers only. Pushing the tag is the trigger; there is nothing to click first.
+
+1. Bump `PHP_LUAEXT_VERSION` in `src/php_luaext.h`, update `CHANGELOG.md`, and merge that
+   to `main`.
+2. Tag the merged commit with the plain-semver version — no `v` prefix — and push it:
+
+   ```
+   git tag 1.2.0 && git push origin 1.2.0
+   ```
+
+3. `release.yml` does the rest. It rechecks that the tag and the header agree, builds the
+   Windows DLLs at the tag, installs from source on Linux and macOS, loads the built DLL
+   on Windows, and only then creates a **draft** release carrying those assets. A failed
+   build leaves no release behind at all.
+4. Review the draft's notes and assets, then publish it by hand. Publishing is what runs
+   `post-publish-verify` — the literal `pie install developgravity/lua-ext:<tag>` on all
+   three platforms — and it only fires for a human publish, because GitHub raises no
+   workflow events for anything `GITHUB_TOKEN` does.
+
+Pre-releases follow the same path with an `-rc.N` suffix and the pre-release checkbox.
+
+The tag is live from step 2, so Composer can resolve the version for the few minutes
+before the assets are attached. Linux and macOS build from source and are unaffected; a
+Windows `pie install` inside that window fails and works on retry. If a run dies on an
+infrastructure flake, re-dispatch it against the tag itself — `gh workflow run
+release.yml --ref 1.2.0` — rather than moving or reusing the tag.

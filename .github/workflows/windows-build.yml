@@ -9,15 +9,15 @@ name: Windows build
 #
 # Called by:
 #   - ci.yml (PR validation): builds and runs tests, discards the DLLs.
-#   - release.yml: builds, then a caller step attaches the DLLs to the
-#     draft GitHub Release with php/php-windows-builder/release.
+#   - release.yml: builds, then a caller job attaches the DLLs to a draft
+#     GitHub Release with php/php-windows-builder/release.
 #
 # Because this runs as a `workflow_call` job inside the caller's own
 # workflow run, `actions/checkout` steps below (inside the composite
 # php-windows-builder actions, and inside get-extension-matrix) resolve
 # `github.sha`/`github.ref` from the *caller's* triggering event — a PR
-# merge ref for ci.yml, or the release's target_commitish/sha for
-# release.yml. No explicit ref needs to be threaded through.
+# merge ref for ci.yml, the pushed tag for release.yml. No explicit ref
+# needs to be threaded through, and the tag is also what names the assets.
 
 on:
   workflow_call:

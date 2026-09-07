@@ -1,37 +1,29 @@
 name: Release
 
 # --------------------------------------------------------------------------
-# DRAFT-FIRST RELEASE PROCESS — read this before cutting a release.
+# Tag-driven release process — read this before cutting a release.
 #
-# Packagist/Composer resolve versions from git *tags*, not from the GitHub
-# "Releases" feature — completely independently of whether a Release object
-# exists, is a draft, or is published. Meanwhile GitHub does NOT create the
-# underlying git tag for a brand-new tag name until a release referencing it
-# is *published* (a draft release just stores the intended tag_name/
-# target_commitish; verified against GitHub's release-drafting behavior).
-# Those two facts together are what make the draft-first flow work:
+# Pushing the version tag is the whole trigger. Everything downstream builds
+# from that tag, and the draft release is created here only once the smoke
+# tests have passed:
 #
-#   1. Bump PHP_LUAEXT_VERSION in src/php_luaext.h on the commit/branch you
-#      intend to release (normally the tip of `main`), and merge that.
-#   2. Create a DRAFT release pointing at that commit, with tag_name set to
-#      the plain-semver version (NO "v" prefix, e.g. "1.2.0") and
-#      target_commitish set to that commit/branch:
-#        gh release create 1.2.0 --draft --target main \
-#          --title 1.2.0 --generate-notes
-#      Do NOT `git tag`/`git push` the version yourself — that would create
-#      the tag immediately and let Packagist see it before Windows DLLs
-#      exist, defeating the entire point of this workflow.
-#   3. Dispatch this workflow by hand — a draft fires no events at all, so
-#      nothing starts on its own:
-#        gh workflow run release.yml --ref main -f tag=1.2.0
-#      It runs everything up to and including a smoke test against the
-#      dispatched commit. No git tag exists yet, and nothing here needs one.
-#   4. Once "attach-release-assets" and the smoke tests are green, a
-#      maintainer clicks "Publish release" (or `gh release edit --draft=false`).
-#      Publishing is the moment GitHub actually creates the git tag — which
-#      is also the moment Packagist's webhook (if configured on this repo)
-#      first sees the version. `post-publish-verify` then runs a real
-#      `pie install developgravity/lua-ext:<tag>` end-to-end.
+#   1. Bump PHP_LUAEXT_VERSION in src/php_luaext.h and merge it.
+#   2. Tag that commit with the plain-semver version (no "v" prefix) and push:
+#        git tag 1.2.0 && git push origin 1.2.0
+#   3. This workflow builds the Windows DLLs at the tag, smoke-tests a source
+#      install on Linux/macOS and the DLLs on Windows, then creates a draft
+#      release carrying those assets.
+#   4. A maintainer publishes the draft. `post-publish-verify` then runs the
+#      real `pie install developgravity/lua-ext:<tag>` on all three OSes.
+#
+# Packagist resolves versions from git tags, so the version is visible from
+# step 2 — a few minutes before the Windows assets are attached. Linux and
+# macOS build from source and are unaffected; a Windows `pie install` inside
+# that window fails and succeeds on retry. The alternative, keeping the tag
+# from existing until publish, is what the earlier flow did: it bought that
+# window back and cost a hand-dispatch step plus a ref expression that could
+# not tell a branch from a tag, which silently built the wrong commit.
+# xdebug — a PIE extension that ships Windows DLLs — tags first as well.
 #
 # RC/pre-releases use the same flow with a `-rc.N` suffix (still no "v"
 # prefix) and the GitHub "set as a pre-release" checkbox.
@@ -42,17 +34,18 @@ name: Release
 # --------------------------------------------------------------------------
 
 on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
   release:
     types: [published]
+  # Rebuilding a tag after an infrastructure flake. Dispatch it against the
+  # tag itself -- `gh workflow run release.yml --ref 1.2.0` -- so this path
+  # resolves through the same `github.ref` as a push and cannot be pointed at
+  # one commit while claiming to release another. A dispatch against a branch
+  # fails the version gate on the tag-shape check.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: >-
-          The release's version string. It need not exist as a tag — on the
-          pre-publish path it will not. The build comes from the commit this
-          dispatch runs against, so set --ref to the branch the draft targets.
-          Publishes nothing.
-        required: true
 
 permissions:
   contents: read
@@ -60,7 +53,7 @@ permissions:
 env:
   LUAEXT_PACKAGE_NAME: developgravity/lua-ext
   LUAEXT_VERSION_HEADER: src/php_luaext.h
-  LUAEXT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  LUAEXT_TAG: ${{ github.event.release.tag_name || github.ref_name }}
 
 jobs:
   # -------------------------------------------------------------------
@@ -70,24 +63,23 @@ jobs:
   # -------------------------------------------------------------------
   version-gate:
     name: Version consistency gate
-    # Dispatch is the intended pre-publish path; `published` is the backstop
-    # for a release cut without the draft step, which still gets its DLLs.
-    if: github.event_name == 'workflow_dispatch' || github.event.action == 'published'
+    # Publishing the draft needs nothing built: the whole pipeline already ran
+    # when the tag was pushed, and only post-publish-verify should fire.
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The tag on a published release; the dispatched commit otherwise,
-          # where no tag exists yet. Deliberately not `target_commitish`: it
-          # holds a branch name, so a release would build whatever that branch
-          # points at now rather than the commit it was cut from. `inputs.tag`
-          # is a version string to validate against, never a ref.
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          # refs/tags/<version> on both paths that reach here. Deliberately
+          # not `target_commitish`: it holds a branch name, so a release would
+          # build whatever that branch points at now rather than the commit it
+          # was cut from.
+          ref: ${{ github.ref }}
 
       - name: Validate tag shape and header version match
         env:
-          LUAEXT_RELEASE_REF: ${{ github.event.release.tag_name || github.sha }}
+          LUAEXT_RELEASE_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           TAG="${LUAEXT_TAG}"
@@ -129,8 +121,9 @@ jobs:
           echo "Version gate OK: $TAG"
 
   # -------------------------------------------------------------------
-  # Build Windows DLLs from the release's target commit (the tag itself
-  # need not exist yet — see header comment).
+  # Build Windows DLLs from the tagged commit. The reusable workflow takes
+  # the ref from the run, which is the tag on every path that gets here --
+  # so the assets are named for the version rather than for a branch.
   # -------------------------------------------------------------------
   windows-build:
     name: Build Windows DLLs
@@ -149,41 +142,12 @@ jobs:
       test-runner-args: 'tests/10-lua'
 
   # -------------------------------------------------------------------
-  # Attach the built DLL zips to the (draft) release.
-  # -------------------------------------------------------------------
-  attach-release-assets:
-    name: Attach DLLs to release
-    needs: windows-build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Upload artifacts to the release
-        uses: php/php-windows-builder/release@29352c0ef9e8ce65264ea9e287881a6f7758a953 # v1 (1.9.0)
-        with:
-          release: ${{ env.LUAEXT_TAG }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # REQUIRED, and the default of false is actively wrong here. The
-          # action does find an existing draft by tag_name and upload onto it
-          # -- but with draft false it then PUBLISHES it, which creates the git
-          # tag, exposes the version to Packagist, and does both before the
-          # smoke tests below have looked at the assets. Exactly what the
-          # draft-first flow exists to prevent, observed on 0.1.0-rc.1.
-          #
-          # Publishing that way also runs on GITHUB_TOKEN, and events raised by
-          # that token create no workflow run -- so `post-publish-verify` never
-          # fires either. The failure hides the failure.
-          draft: true
-
-  # -------------------------------------------------------------------
-  # Pre-publish smoke test, part 1: source build via PIE on Unix.
-  # The tag doesn't exist yet, so we point PIE at the exact commit through
-  # a VCS repository + `dev-<branch>#<sha>` constraint instead of at a
-  # version string.
+  # Pre-publish smoke test, part 1: source build via PIE on Unix, against
+  # the tag itself -- the literal command a user runs.
   # -------------------------------------------------------------------
   smoke-test-source:
     name: "pie install smoke test (source) / ${{ matrix.os }}"
-    needs: attach-release-assets
+    needs: windows-build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -208,12 +172,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: pie install from this commit via a VCS repository
+      - name: pie install the tag via a VCS repository
         env:
-          LUAEXT_TARGET_REF: ${{ github.event.release.target_commitish || github.ref_name }}
-          LUAEXT_TARGET_SHA: ${{ github.sha }}
-          # Without a token Composer's VCS resolution rides the runner pool's
-          # anonymous API rate limit and falls back to SSH on exhaustion; see
+          # Added rather than relying on Packagist: its webhook may not have
+          # fired yet, while Composer's VCS driver sees a pushed tag at once.
+          #
+          # Without a token that resolution rides the runner pool's anonymous
+          # API rate limit and falls back to SSH on exhaustion; see
           # pie-install.yml, where the macOS pool hit exactly that.
           COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         run: |
@@ -227,12 +192,10 @@ jobs:
           # pie-install.yml, which met it first.
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo -E "$(command -v php)" /tmp/pie.phar install \
-              "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" \
-              --no-interaction
+              "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
           else
             php /tmp/pie.phar install \
-              "${LUAEXT_PACKAGE_NAME}:dev-${LUAEXT_TARGET_REF}#${LUAEXT_TARGET_SHA}" \
-              --no-interaction
+              "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
           fi
 
       - name: Verify extension loaded
@@ -240,14 +203,14 @@ jobs:
 
   # -------------------------------------------------------------------
   # Pre-publish smoke test, part 2: the built DLLs actually load on
-  # Windows. A real `pie install <tag>` isn't possible here yet — PIE's
-  # Windows path resolves pre-packaged binaries against a real tagged
-  # release, and the git tag doesn't exist until publish (see header
-  # comment) — so this validates the artifact directly instead.
+  # Windows. A real `pie install <tag>` isn't possible here — PIE's Windows
+  # path resolves pre-packaged binaries against a published release, and
+  # nothing is published until these pass — so this validates the artifact
+  # directly instead. post-publish-verify runs the real command later.
   # -------------------------------------------------------------------
   smoke-test-windows-dll:
     name: DLL load smoke test / windows-latest
-    needs: attach-release-assets
+    needs: windows-build
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -269,11 +232,9 @@ jobs:
       # Downloads every zip and filters by substring rather than assuming a
       # name -- which is what caught the convention differing from the shape
       # this file originally guessed. See the extract step below.
-      # Taken from this run's own artifacts, not from the release. A draft has
-      # no git tag, and `gh release download` resolves by tag -- so against the
-      # draft this is meant to validate it answers "release not found". The
-      # artifacts carry the same names as the assets and are the same bytes
-      # that were just uploaded, so this checks what actually ships.
+      # Taken from this run's own artifacts: no release exists yet, and these
+      # are the same bytes create-draft-release attaches, so this checks what
+      # actually ships.
       - name: Download the built DLLs
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -284,11 +245,11 @@ jobs:
         shell: pwsh
         run: |
           # Assets are named php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip --
-          # observed, not assumed. Two things differ from what this job
-          # originally guessed: the arch reads "x86_64" rather than "x64", and
-          # the first field is the ref the build ran from, not the tag. Both
-          # arch spellings are matched so a change on either side does not
-          # silently select nothing.
+          # observed, not assumed. The arch reads "x86_64" rather than the
+          # "x64" this job originally guessed; both spellings are matched so a
+          # change on either side does not silently select nothing. The first
+          # field is whatever ref the build ran from, which building at the
+          # tag makes the version.
           #
           # Whether a downloaded artifact hands back the zip or its unpacked
           # contents is the action's business, so both shapes are handled
@@ -335,18 +296,42 @@ jobs:
           }
 
   # -------------------------------------------------------------------
-  # Post-publish confirmation: now that the maintainer has published the
-  # release, the git tag genuinely exists. Run the real, literal
-  # `pie install developgravity/lua-ext:<tag>` this whole pipeline
-  # exists to protect, on all three OSes. We still add the VCS repository
-  # so this doesn't depend on Packagist's webhook having already fired —
+  # Create the draft release and attach the built DLL zips to it, once and
+  # only once everything above is green. A failed build therefore leaves no
+  # half-made release behind -- which 0.1.0-rc.1 was.
+  # -------------------------------------------------------------------
+  create-draft-release:
+    name: Create draft release with DLLs
+    needs: [smoke-test-source, smoke-test-windows-dll]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the draft and upload the artifacts
+        uses: php/php-windows-builder/release@29352c0ef9e8ce65264ea9e287881a6f7758a953 # v1 (1.9.0)
+        with:
+          release: ${{ github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Required, and the default of false is actively wrong here: it
+          # publishes, which is how 0.1.0-rc.1 went out before anything had
+          # looked at its assets. Publishing that way also runs on
+          # GITHUB_TOKEN, whose events create no workflow run, so
+          # post-publish-verify never fired either -- the failure hid itself.
+          draft: 'true'
+
+  # -------------------------------------------------------------------
+  # Post-publish confirmation: the assets are attached and the release is
+  # public, so Windows can finally resolve a pre-packaged binary. Run the
+  # real, literal `pie install developgravity/lua-ext:<tag>` this whole
+  # pipeline exists to protect, on all three OSes. The VCS repository is
+  # still added so this doesn't depend on Packagist's webhook having fired —
   # Composer's VCS driver sees a pushed tag immediately.
   # -------------------------------------------------------------------
   post-publish-verify:
     name: "pie install <tag> / ${{ matrix.os }}"
-    # Fires when a PERSON publishes. An automated publish would run on
+    # Fires when a person publishes. An automated publish would run on
     # GITHUB_TOKEN, whose events create no workflow run -- which is the second
-    # reason attach-release-assets must not publish. See its `draft` input.
+    # reason create-draft-release must not publish. See its `draft` input.
     if: github.event.action == 'published'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -388,8 +373,19 @@ jobs:
         env:
           COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
         run: |
+          set -euo pipefail
           php /tmp/pie.phar repository:add vcs "${{ github.server_url }}/${{ github.repository }}"
-          php /tmp/pie.phar install "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
+
+          # Same root-owned extension directory as smoke-test-source; this job
+          # has simply never run far enough to meet it.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo -E "$(command -v php)" /tmp/pie.phar install \
+              "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
+          else
+            php /tmp/pie.phar install \
+              "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
+          fi
+
           php -m | grep -qi luaext
 
       - name: pie install (Windows)
