@@ -5,6 +5,7 @@
 #include "luaext_require.h"
 
 #include "luaext_error.h"
+#include "luaext_seal.h"
 #include "luaext_timers.h"
 #include "luaext_vfs.h"
 #include "luaext_vfs_path.h"
@@ -140,6 +141,13 @@ static void luaext_require_push_table(lua_State *L, const char *key)
  * compile() guards: a resolver that can hand back a binary chunk can hand back
  * native execution, which is why the capability gates it rather than the source
  * flag alone.
+ *
+ * The capability is not vouching, though. This is the third door into the
+ * unverified binary loader -- compileBinary() and the script's own load() are
+ * the other two, and both refuse a blob nothing can vouch for -- so a binary
+ * module answers the same one question compileBinary() asks: a sealed blob is
+ * verified against the mode THIS SANDBOX is configured for, and an unsealed one
+ * loads only where luaext.allow_raw_bytecode accepts raw bytes process-wide.
  */
 static bool luaext_require_load(lua_State *L, luaext_sandbox *sandbox, const char *code,
 								size_t code_len, const char *chunk_name, bool is_bytecode)
@@ -153,6 +161,36 @@ static bool luaext_require_load(lua_State *L, luaext_sandbox *sandbox, const cha
 						   "That module is bytecode, and this sandbox was not granted the "
 						   "loadBytecode capability");
 		return false;
+	}
+
+	if (allow_binary) {
+		if (luaext_seal_is_sealed(code, code_len)) {
+			/* The payload points into the Lua-owned blob on the stack, so it
+			 * outlives everything up to and including the load below. */
+			const char *payload = NULL;
+			size_t payload_len = 0;
+
+			if (!luaext_seal_open(code, code_len, (luaext_seal_algo)sandbox->policy.seal_mode,
+								  sandbox->policy.bytecode_key, sandbox->policy.bytecode_key_len,
+								  &payload, &payload_len)) {
+				luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
+								   "That module's bytecode does not verify: it was sealed by a "
+								   "sandbox configured differently -- another SealMode, or "
+								   "another SandboxConfig::$bytecodeKey -- or it has been "
+								   "altered since");
+				return false;
+			}
+
+			code = payload;
+			code_len = payload_len;
+		} else if (!LUAEXT_G(allow_raw_bytecode)) {
+			luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
+							   "That module is unsealed bytecode, which nothing can vouch for. "
+							   "Anything dump() produces is sealed and loads without any INI "
+							   "change; luaext.allow_raw_bytecode=1 is the only way to accept "
+							   "raw blobs");
+			return false;
+		}
 	}
 
 	/*

@@ -106,7 +106,7 @@ With the `vfs` capability granted, that same table additionally gains the filesy
 5. The VFS, searched along `SandboxConfig::modulePaths` (default `['/?.lua', '/?/init.lua']`) — this is the mechanism for vendoring pure-Lua libraries; see the cookbook.
 6. A PHP `ModuleResolver`, as a final fallback.
 
-Resolved source compiles via `luaL_loadbufferx` in text mode (`"t"`) unless the `loadBytecode` capability additionally allows a resolver to hand back bytecode. A module that fails during loading is **not** cached in `package.loaded` — a subsequent `require()` of the same name gets a fresh attempt, not a cached failure.
+Resolved source compiles via `luaL_loadbufferx` in text mode (`"t"`) unless the `loadBytecode` capability additionally allows a resolver to hand back bytecode — and a binary module then passes the same vouching as `Sandbox::compileBinary()`: a sealed blob is verified against the sandbox's `SealMode`/`bytecodeKey` before the loader sees a byte, and an unsealed blob additionally requires `luaext.allow_raw_bytecode` (see [SECURITY.md](../SECURITY.md)). A module that fails during loading is **not** cached in `package.loaded` — a subsequent `require()` of the same name gets a fresh attempt, not a cached failure.
 
 Pure-Lua third-party libraries — including pure-Lua LuaRocks packages such as `dkjson`, `penlight`, or `inspect` — work by vendoring their source into the VFS (or a `ModuleResolver`) and letting `require()` find them there; they execute fully inside the sandbox, under the same CPU/memory/coroutine limits as the rest of the script. Binary (C) LuaRocks cannot be loaded under any configuration — see [SECURITY.md](../SECURITY.md#what-this-does-not-defend-against) for why that's an architectural property, not a missing feature.
 

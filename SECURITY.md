@@ -48,7 +48,7 @@ Nine reachable escapes are covered and gating: `pcall`, nested `pcall`, `xpcall`
 So there are two gates, and both must be open:
 
 - The **`loadBytecode` capability**, which stays off even under `Capabilities::trusted()` and needs an explicit `with(loadBytecode: true)`.
-- The **`luaext.allow_raw_bytecode` INI setting, off by default**, which governs *unsealed* blobs for both doors into the loader: `compileBinary()` and a script's own `load($bytes, name, "b")`. Gating only the host side would leave a script granted `loadBytecode` able to assemble bytes itself and reach the same loader.
+- The **`luaext.allow_raw_bytecode` INI setting, off by default**, which governs *unsealed* blobs for all three doors into the loader: `compileBinary()`, a `ModuleResolver` handing `require()` a binary module, and a script's own `load($bytes, name, "b")`. Gating only the host side would leave a script granted `loadBytecode` able to assemble bytes itself and reach the same loader. A resolver's sealed blobs are verified exactly as `compileBinary()`'s are; the script-side `load()` never consults a seal at all — the default seal is an unkeyed checksum a script could compute for itself, so "sealed" can never become a script's permission.
 
 **Sealed bytecode is the supported path and needs no INI change.** Everything `dump()` produces is sealed, and `compileBinary()` verifies it before the loader sees a byte. There are two modes, chosen with `SandboxConfig::$sealMode`:
 
