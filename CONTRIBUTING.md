@@ -263,7 +263,9 @@ doc naming a method that no longer exists is a bug with no compiler to catch it.
 
 ## Cutting a release
 
-Maintainers only. Pushing the tag is the trigger; there is nothing to click first.
+Maintainers only. Pushing the tag is the trigger; there is nothing to click first. This
+section is the reasoning; the checkbox walk-through, including the git-flow
+release-branch routine, is `RELEASE.md` at the repository root.
 
 1. Bump `PHP_LUAEXT_VERSION` in `src/php_luaext.h`, update `CHANGELOG.md`, and merge that
    to `main`.
