@@ -601,6 +601,47 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 	sandbox->co_depth = 0;
 }
 
+uint32_t luaext_corolib_live_count(luaext_sandbox *sandbox)
+{
+	lua_State *L = sandbox->L;
+	uint32_t live = 0;
+
+	/*
+	 * The fallbacks answer with the running counter: after close() there is
+	 * no table left to ask (and the sweep zeroed the counter anyway), during
+	 * the sweep the table is detached, and a stack that cannot grow cannot
+	 * walk. Everywhere else the table is the truth and the counter is only a
+	 * high-water mark -- it counts threads that finished and were collected
+	 * until something recounts it, which is exactly what this does.
+	 */
+	if (L == NULL || sandbox->co_sweeping || !lua_checkstack(L, 3)) {
+		return sandbox->co_live;
+	}
+
+	luaext_corolib_push_threads(L);
+
+	lua_pushnil(L);
+
+	while (lua_next(L, -2) != 0) {
+		lua_State *co = lua_tothread(L, -2);
+
+		lua_pop(L, 1); /* value; the key stays for lua_next */
+
+		/*
+		 * The weak table only drops a dead thread at the next collection, so
+		 * membership alone still over-counts; status is what separates a
+		 * thread that finished from one that is merely uncollected.
+		 */
+		if (co != NULL && strcmp(luaext_corolib_status_name(L, co), "dead") != 0) {
+			live++;
+		}
+	}
+
+	lua_pop(L, 1);
+
+	return live;
+}
+
 void luaext_corolib_set_hook_all(luaext_sandbox *sandbox, lua_Hook hook, int mask, int count)
 {
 	lua_State *L = sandbox->L;

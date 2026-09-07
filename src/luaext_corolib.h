@@ -49,6 +49,16 @@ bool luaext_corolib_install(lua_State *L, luaext_sandbox *sandbox);
 void luaext_corolib_sweep(luaext_sandbox *sandbox);
 
 /*
+ * Coroutines that are genuinely alive right now -- suspended, normal, or
+ * running -- judged by status, not by table membership or the co_live
+ * counter. Both of those over-count: the weak tracking table only drops a
+ * dead thread at the next collection, and co_live is a high-water mark that
+ * is re-synced only when the cap is hit. stats() asks this instead, because
+ * its docblock invites reading mid-run from a host callback.
+ */
+uint32_t luaext_corolib_live_count(luaext_sandbox *sandbox);
+
+/*
  * Install or clear a debug hook on the main state AND every live coroutine.
  *
  * lua_sethook() is per-lua_State and a thread only inherits the creator's hook

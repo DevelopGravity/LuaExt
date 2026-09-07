@@ -15,6 +15,8 @@
 
 #include "luaext_config.h"
 
+#include "luaext_corolib.h"
+
 #include "luaext_seal.h"
 
 #include "luaext_timers.h"
@@ -1476,7 +1478,7 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "outputBytes", &value);
 	ZVAL_BOOL(&value, sandbox->out.truncated);
 	LUAEXT_SET(object, "outputTruncated", &value);
-	ZVAL_LONG(&value, (zend_long)sandbox->co_live);
+	ZVAL_LONG(&value, (zend_long)luaext_corolib_live_count(sandbox));
 	LUAEXT_SET(object, "liveCoroutines", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->co_peak_depth);
 	LUAEXT_SET(object, "peakCoroutineDepth", &value);
