@@ -522,11 +522,32 @@ static void luaext_convert_push_value(luaext_convert_push_ctx *ctx, zval *value,
 		lua_pushnumber(L, (lua_Number)Z_DVAL_P(value));
 		return;
 
-	case IS_STRING:
+	case IS_STRING: {
+		size_t string_limit =
+			ctx->sandbox != NULL ? ctx->sandbox->policy.limits.max_string_length : (size_t)0;
+
+		/*
+		 * Refused here rather than left to the interpreter's own gate in the
+		 * patched lstring.c, because that gate raises without rewinding this
+		 * conversion's half-built tables -- and because a host handing over
+		 * an oversized value deserves the ConversionError that names WHERE
+		 * in its structure the refusal happened.
+		 */
+		if (string_limit != 0 && Z_STRLEN_P(value) > string_limit) {
+			char detail[LUAEXT_CONVERT_DETAIL_MAX];
+
+			snprintf(detail, sizeof(detail),
+					 "Cannot convert a PHP string of %zu bytes to Lua: the sandbox's "
+					 "Limits::$maxStringLength is %zu",
+					 (size_t)Z_STRLEN_P(value), string_limit);
+			luaext_convert_push_fail(ctx, step, detail);
+		}
+
 		/* Explicit length throughout: PHP strings are binary and a NUL byte in
 		 * the middle of one is data, not a terminator. */
 		lua_pushlstring(L, Z_STRVAL_P(value), Z_STRLEN_P(value));
 		return;
+	}
 
 	case IS_ARRAY:
 		luaext_convert_push_array(ctx, Z_ARRVAL_P(value), step, depth);

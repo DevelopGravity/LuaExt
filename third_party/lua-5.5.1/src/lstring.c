@@ -177,8 +177,24 @@ static TString *createstrobj (lua_State *L, size_t totalsize, lu_byte tag,
 
 
 TString *luaS_createlngstrobj (lua_State *L, size_t l) {
-  size_t totalsize = luaS_sizelngstr(l, LSTRREG);
-  TString *ts = createstrobj(L, totalsize, LUA_VLNGSTR, G(L)->seed);
+  size_t totalsize;
+  TString *ts;
+#if LUAEXT_LUA_HOOKS
+  /*
+  ** luaext: every long string a script can produce -- concatenation,
+  ** string.rep, string.format, table.concat, load results, values pushed
+  ** through the C API -- materialises here, which makes this the one place
+  ** Limits::$maxStringLength can be a real ceiling instead of a promise.
+  ** Refused before the object is allocated, so an oversized string never
+  ** exists even transiently. Short strings never arrive here, so the
+  ** limit's effective floor is LUAI_MAXSHORTLEN.
+  */
+  size_t luaext_limit_ = luaext_string_limit(L);
+  if (l_unlikely(luaext_limit_ != 0 && l > luaext_limit_))
+    luaext_raise_string_too_long(L, l);
+#endif
+  totalsize = luaS_sizelngstr(l, LSTRREG);
+  ts = createstrobj(L, totalsize, LUA_VLNGSTR, G(L)->seed);
   ts->u.lnglen = l;
   ts->shrlen = LSTRREG;  /* signals that it is a regular long string */
   ts->contents = cast_charp(ts) + offsetof(TString, falloc);
@@ -318,6 +334,22 @@ static void f_newext (lua_State *L, void *ud) {
 TString *luaS_newextlstr (lua_State *L,
 	          const char *s, size_t len, lua_Alloc falloc, void *ud) {
   struct NewExt ne;
+#if LUAEXT_LUA_HOOKS
+  /*
+  ** luaext: the second door into long strings. luaL_Buffer hands its boxed
+  ** buffer over through here -- string.rep, string.format, table.concat --
+  ** so a gate on luaS_createlngstrobj alone covers concatenation and misses
+  ** the library. Refusal honours the adoption contract exactly as the
+  ** memory-error path below does: the external buffer is freed before the
+  ** raise, because ownership passed to Lua the moment this was called.
+  */
+  { size_t luaext_limit_ = luaext_string_limit(L);
+    if (l_unlikely(luaext_limit_ != 0 && len > luaext_limit_)) {
+      if (falloc)
+        (*falloc)(ud, cast_voidp(s), len + 1, 0);
+      luaext_raise_string_too_long(L, len);
+    } }
+#endif
   if (!falloc) {
     ne.kind = LSTRFIX;
     f_newext(L, &ne);  /* just create header */

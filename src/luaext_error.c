@@ -467,6 +467,38 @@ ZEND_COLD ZEND_NORETURN void luaext_raise_withheld(lua_State *L, const char *nam
 	ZEND_UNREACHABLE();
 }
 
+/*
+ * The pair behind the patched lstring.c's string-length gate (vendored patch
+ * 0011). The reader answers with the policy ceiling; the raise refuses.
+ */
+size_t luaext_string_limit(lua_State *L)
+{
+	const luaext_sandbox *sandbox = LUAEXT_SB(L);
+
+	return sandbox != NULL ? sandbox->policy.limits.max_string_length : 0;
+}
+
+/*
+ * Catchable, matching os.date's older, narrower check: nothing was allocated
+ * and nothing is held, so a script that pcalls this and retries smaller has
+ * defeated nothing.
+ *
+ * THE MESSAGE MUST STAY UNDER LUAI_MAXSHORTLEN (40) BYTES. The error value
+ * proper carries it as a zend_string, but luaext_error_push() falls back to
+ * lua_pushlstring() when the state is closing or the metatable never
+ * arrived -- and a fallback message long enough to be a Lua LONG string
+ * would re-enter the very gate that is raising. Short strings never visit
+ * the gate, so a sub-40-byte message is recursion-proof by construction.
+ */
+ZEND_COLD ZEND_NORETURN void luaext_raise_string_too_long(lua_State *L, size_t len)
+{
+	(void)len;
+
+	luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "%s",
+					   "string exceeds Limits::$maxStringLength");
+	ZEND_UNREACHABLE();
+}
+
 /* -------------------------------------------------------------------------
  * Identifying our errors
  * ---------------------------------------------------------------------- */

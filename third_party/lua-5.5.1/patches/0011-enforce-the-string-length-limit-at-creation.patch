@@ -1,0 +1,99 @@
+Subject: enforce the sandbox string-length limit at string creation
+
+Limits::$maxStringLength promised "longest single Lua string" and was
+enforced in exactly one place: os.date's result check. Everywhere else
+-- string.rep, concatenation, string.format, table.concat, load
+results, values pushed through the C API -- a script built strings of
+any size the memory limit tolerated.
+
+Long strings materialise through exactly two functions, and both are
+gated here. luaS_createlngstrobj covers concatenation and every
+luaS_newlstr caller; luaS_newextlstr is the door luaL_Buffer hands its
+boxed buffer through, which is how the string library's results
+arrive. The refusal in the external case frees the adopted buffer
+first, byte-for-byte the contract the memory-error path beneath it
+already honours.
+
+Short strings are interned through internshrstr and are never
+consulted, so the limit's effective floor is LUAI_MAXSHORTLEN. That is
+also what makes the raise safe: the extension's refusal message is
+shorter than that constant, so even the error path's fallback
+lua_pushlstring cannot re-enter the gate that raised it.
+
+Both externs live in luaext_lua_hooks.h with the others; their
+definitions are src/luaext_error.c.
+
+--- a/src/lstring.c
++++ b/src/lstring.c
+@@ -177,8 +177,24 @@ static TString *createstrobj (lua_State *L, size_t totalsize, lu_byte tag,
+ 
+ 
+ TString *luaS_createlngstrobj (lua_State *L, size_t l) {
+-  size_t totalsize = luaS_sizelngstr(l, LSTRREG);
+-  TString *ts = createstrobj(L, totalsize, LUA_VLNGSTR, G(L)->seed);
++  size_t totalsize;
++  TString *ts;
++#if LUAEXT_LUA_HOOKS
++  /*
++  ** luaext: every long string a script can produce -- concatenation,
++  ** string.rep, string.format, table.concat, load results, values pushed
++  ** through the C API -- materialises here, which makes this the one place
++  ** Limits::$maxStringLength can be a real ceiling instead of a promise.
++  ** Refused before the object is allocated, so an oversized string never
++  ** exists even transiently. Short strings never arrive here, so the
++  ** limit's effective floor is LUAI_MAXSHORTLEN.
++  */
++  size_t luaext_limit_ = luaext_string_limit(L);
++  if (l_unlikely(luaext_limit_ != 0 && l > luaext_limit_))
++    luaext_raise_string_too_long(L, l);
++#endif
++  totalsize = luaS_sizelngstr(l, LSTRREG);
++  ts = createstrobj(L, totalsize, LUA_VLNGSTR, G(L)->seed);
+   ts->u.lnglen = l;
+   ts->shrlen = LSTRREG;  /* signals that it is a regular long string */
+   ts->contents = cast_charp(ts) + offsetof(TString, falloc);
+@@ -318,6 +334,22 @@ static void f_newext (lua_State *L, void *ud) {
+ TString *luaS_newextlstr (lua_State *L,
+ 	          const char *s, size_t len, lua_Alloc falloc, void *ud) {
+   struct NewExt ne;
++#if LUAEXT_LUA_HOOKS
++  /*
++  ** luaext: the second door into long strings. luaL_Buffer hands its boxed
++  ** buffer over through here -- string.rep, string.format, table.concat --
++  ** so a gate on luaS_createlngstrobj alone covers concatenation and misses
++  ** the library. Refusal honours the adoption contract exactly as the
++  ** memory-error path below does: the external buffer is freed before the
++  ** raise, because ownership passed to Lua the moment this was called.
++  */
++  { size_t luaext_limit_ = luaext_string_limit(L);
++    if (l_unlikely(luaext_limit_ != 0 && len > luaext_limit_)) {
++      if (falloc)
++        (*falloc)(ud, cast_voidp(s), len + 1, 0);
++      luaext_raise_string_too_long(L, len);
++    } }
++#endif
+   if (!falloc) {
+     ne.kind = LSTRFIX;
+     f_newext(L, &ne);  /* just create header */
+--- a/src/luaext_lua_hooks.h
++++ b/src/luaext_lua_hooks.h
+@@ -28,6 +28,19 @@ extern const char *luaext_withheld_capability(struct lua_State *L, const char *n
+    does not return. Defined by the extension (src/luaext_error.c). */
+ extern void luaext_raise_withheld(struct lua_State *L, const char *name,
+                                   const char *capability);
++/* The longest single Lua string this sandbox permits, or 0 for no limit.
++   Defined by the extension (src/luaext_error.c). 'lstring.c' asks before
++   materialising any long string -- the one choke point every string a script
++   can produce passes through. Short strings (at most LUAI_MAXSHORTLEN bytes)
++   are interned and never consulted, so the effective floor of the limit is
++   that constant. */
++extern size_t luaext_string_limit(struct lua_State *L);
++/* Raise the refusal for a string of 'len' bytes. Longjmps where the
++   allocation would have unwound anyway; does not return. Defined by the
++   extension (src/luaext_error.c). Its error value stores the message outside
++   the Lua heap and any fallback string it pushes is shorter than
++   LUAI_MAXSHORTLEN, so the raise cannot re-enter the gate that called it. */
++extern void luaext_raise_string_too_long(struct lua_State *L, size_t len);
+ #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
+ /* The hot-path load is relaxed: it only answers "is anything pending?", and
+    costs nothing when nothing is. Ordering is established on the slow path

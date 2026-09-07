@@ -276,7 +276,12 @@ final readonly class Limits
     /** Depth of nested require() calls. */
     public int $maxRequireDepth;
 
-    /** Longest single Lua string. */
+    /**
+     * Longest single Lua string, enforced at the interpreter's string
+     * allocator, whichever operation builds it. Strings no longer than
+     * Lua's interned-string size (40 bytes) are always permitted, so that
+     * is the limit's effective floor. Zero lifts the ceiling.
+     */
     public int $maxStringLength;
 
     /**

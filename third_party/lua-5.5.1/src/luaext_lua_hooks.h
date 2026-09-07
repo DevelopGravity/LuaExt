@@ -28,6 +28,19 @@ extern const char *luaext_withheld_capability(struct lua_State *L, const char *n
    does not return. Defined by the extension (src/luaext_error.c). */
 extern void luaext_raise_withheld(struct lua_State *L, const char *name,
                                   const char *capability);
+/* The longest single Lua string this sandbox permits, or 0 for no limit.
+   Defined by the extension (src/luaext_error.c). 'lstring.c' asks before
+   materialising any long string -- the one choke point every string a script
+   can produce passes through. Short strings (at most LUAI_MAXSHORTLEN bytes)
+   are interned and never consulted, so the effective floor of the limit is
+   that constant. */
+extern size_t luaext_string_limit(struct lua_State *L);
+/* Raise the refusal for a string of 'len' bytes. Longjmps where the
+   allocation would have unwound anyway; does not return. Defined by the
+   extension (src/luaext_error.c). Its error value stores the message outside
+   the Lua heap and any fallback string it pushes is shorter than
+   LUAI_MAXSHORTLEN, so the raise cannot re-enter the gate that called it. */
+extern void luaext_raise_string_too_long(struct lua_State *L, size_t len);
 #define LUAEXT_IRQ(L) (*(luaext_irq **)lua_getextraspace(L))
 /* The hot-path load is relaxed: it only answers "is anything pending?", and
    costs nothing when nothing is. Ordering is established on the slow path
