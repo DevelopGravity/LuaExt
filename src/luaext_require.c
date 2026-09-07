@@ -438,6 +438,14 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 						 : (uint8_t)0;
 		}
 
+		/*
+		 * Counted with the same breath that times it. The stub documents
+		 * phpCallsOut as "calls from Lua back into PHP" and
+		 * phpWallClockSeconds as covering the module resolver -- the two
+		 * buckets must not disagree about the same crossing.
+		 */
+		sandbox->php_calls_out++;
+
 		luaext_timers_span_begin(sandbox, &sandbox->php_span_depth, &host_span);
 
 		zend_call_known_instance_method(fn, Z_OBJ(sandbox->module_resolver_zv), &result, 2, args);
