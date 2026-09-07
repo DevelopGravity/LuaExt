@@ -558,6 +558,35 @@ static bool luaext_config_vfs_quota(zend_object *quota, luaext_vfs_quota *out)
  * exception should not have to consult the manual to get moving again.
  * ---------------------------------------------------------------------- */
 
+/*
+ * Shared by construction and by setLimits(), which is the point: the two reach
+ * limit state through different doors and describe it differently -- raw
+ * configuration zvals on one side, a parsed luaext_limits and resolved
+ * capability bits on the other -- so what they share is the decision and the
+ * message rather than the inputs. setLimits() used to skip the check entirely,
+ * which let a host reach by the second door a configuration the first refuses.
+ */
+bool luaext_config_refuse_hooks_with_limits(bool debug_hooks, bool has_cpu_limit,
+											bool has_wall_limit)
+{
+	if (!debug_hooks || !(has_cpu_limit || has_wall_limit)) {
+		return false;
+	}
+
+	zend_throw_exception(
+		luaext_ce_configuration_error,
+		"The debugHooks capability cannot be combined with a CPU or wall-clock limit: a "
+		"script that can call debug.sethook() replaces the interpreter hook BOTH limits "
+		"are delivered through -- the watchdog thread only raises a flag, and that hook "
+		"is what turns the flag into a stopped script -- so either limit would stop being "
+		"enforced the moment the script chose to. Either drop debugHooks, or set both "
+		"Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this "
+		"sandbox cannot be bounded in time.",
+		0);
+
+	return true;
+}
+
 static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 								zend_object *filesystem, bool seed_is_fixed, bool deterministic,
 								const zend_object *seal_mode, const zend_string *bytecode_key)
@@ -591,17 +620,7 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	 * script by the same count hook, so displacing the hook defeats both limits
 	 * and not just the one whose name mentions the CPU.
 	 */
-	if (debug_hooks && (has_cpu_limit || has_wall_limit)) {
-		zend_throw_exception(
-			luaext_ce_configuration_error,
-			"The debugHooks capability cannot be combined with a CPU or wall-clock limit: a "
-			"script that can call debug.sethook() replaces the interpreter hook BOTH limits "
-			"are delivered through -- the watchdog thread only raises a flag, and that hook "
-			"is what turns the flag into a stopped script -- so either limit would stop being "
-			"enforced the moment the script chose to. Either drop debugHooks, or set both "
-			"Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this "
-			"sandbox cannot be bounded in time.",
-			0);
+	if (luaext_config_refuse_hooks_with_limits(debug_hooks, has_cpu_limit, has_wall_limit)) {
 		return false;
 	}
 

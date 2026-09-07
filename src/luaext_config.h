@@ -76,6 +76,17 @@ void luaext_config_stats_create(const luaext_sandbox *sandbox, zval *out);
  */
 bool luaext_config_limits_read(zend_object *limits, luaext_limits *out);
 
+/*
+ * Refuse debugHooks alongside a timing limit, throwing ConfigurationError and
+ * returning true when the pair is unsatisfiable.
+ *
+ * Shared with Sandbox::setLimits() for the same reason limits_read is: a second
+ * copy of the rule is a second rule, and this one is the difference between a
+ * limit that is enforced and one a script can switch off.
+ */
+bool luaext_config_refuse_hooks_with_limits(bool debug_hooks, bool has_cpu_limit,
+											bool has_wall_limit);
+
 /* Build a Limits object from the enforceable form. The inverse of the above. */
 void luaext_config_limits_create(const luaext_limits *limits, zval *out);
 

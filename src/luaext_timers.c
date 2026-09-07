@@ -176,6 +176,17 @@ bool luaext_timers_attach(luaext_sandbox *sandbox)
 	 * Installed before any script can exist either way, so there is never a
 	 * window in which something ran unwatched.
 	 */
+	/*
+	 * Before the decision below, not after it. The thread starts lazily on the
+	 * first armed limit -- which the two setters at the end of this function do
+	 * -- so asking thread_failed() first would ask a process that had not tried
+	 * yet. It answers false, no fallback hook is installed, and if the start
+	 * then fails this sandbox is left with neither enforcer.
+	 */
+	if (sandbox->policy.limits.cpu_ns != 0 || sandbox->policy.limits.wall_ns != 0) {
+		luaext_watchdog_prime();
+	}
+
 	if (luaext_timers_hook_armed() && luaext_watchdog_thread_failed()) {
 		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
 	}

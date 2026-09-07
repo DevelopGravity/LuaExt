@@ -1472,6 +1472,20 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits)
 	 * a pre-flight check would duplicate the setters' own refusal rules, and two
 	 * copies of that logic drifting apart is the more likely defect.
 	 */
+	/*
+	 * The one rule the setters do NOT carry, because it is about a capability
+	 * rather than about a limit: a sandbox granted debugHooks cannot also be
+	 * bounded in time, since the script can displace the hook both limits are
+	 * delivered through. Construction refuses that pair, and this is the other
+	 * door into the same state -- shared with the constructor rather than
+	 * restated, so the two cannot drift.
+	 */
+	if (luaext_config_refuse_hooks_with_limits(
+			luaext_has_cap(&sandbox->policy, LUAEXT_CAP_DEBUG_HOOKS), limits.cpu_ns != 0,
+			limits.wall_ns != 0)) {
+		RETURN_THROWS();
+	}
+
 	if (!luaext_timers_set_cpu_limit(sandbox, limits.cpu_ns) ||
 		!luaext_timers_set_wall_limit(sandbox, limits.wall_ns)) {
 		RETURN_THROWS();
