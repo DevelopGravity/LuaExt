@@ -2,6 +2,16 @@
 luaext.use_zend_mm=1 really routes the Lua heap through PHP's allocator
 --EXTENSIONS--
 luaext
+--SKIPIF--
+<?php
+// run-tests.php -m (the valgrind leg) forces USE_ZEND_ALLOC=0, which turns
+// ZendMM into a malloc pass-through that memory_get_usage() cannot see grow.
+// Routing Lua's heap "through ZendMM" is then unobservable by design, not
+// broken -- there is nothing this test could measure.
+if (getenv('USE_ZEND_ALLOC') === '0') {
+	echo 'skip ZendMM is disabled (USE_ZEND_ALLOC=0), so routed allocations are not measurable';
+}
+?>
 --INI--
 luaext.use_zend_mm=1
 --FILE--
