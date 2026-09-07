@@ -11,6 +11,7 @@
 #include <lauxlib.h>
 #include <lua.h>
 
+#include <limits.h>
 #include <string.h>
 
 /*
@@ -127,6 +128,7 @@ static void luaext_profiler_hook(lua_State *L, lua_Debug *ar)
 
 bool luaext_profiler_enable(luaext_sandbox *sandbox, double period_seconds)
 {
+	double ticks;
 	int count;
 
 	/*
@@ -145,10 +147,22 @@ bool luaext_profiler_enable(luaext_sandbox *sandbox, double period_seconds)
 		zend_hash_init(&sandbox->profiler->counts, 64, NULL, NULL, 1);
 	}
 
-	count = (int)(period_seconds * LUAEXT_PROFILER_NOMINAL_IPS);
+	/*
+	 * Clamped BEFORE the cast: double-to-int conversion of a value outside
+	 * int's range is undefined behaviour, and a period above ~43 seconds
+	 * pushes this product past INT_MAX -- on x86 the conversion answered
+	 * INT_MIN, handing lua_sethook a negative base count whose decrement in
+	 * luaG_traceexec never reaches zero. enableProfiler() then returned true
+	 * for a profiler that would not take a single sample.
+	 */
+	ticks = period_seconds * LUAEXT_PROFILER_NOMINAL_IPS;
 
-	if (count < 1) {
+	if (ticks >= (double)INT_MAX) {
+		count = INT_MAX;
+	} else if (ticks < 1.0) {
 		count = 1;
+	} else {
+		count = (int)ticks;
 	}
 
 	sandbox->profiler->enabled = true;
