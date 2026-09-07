@@ -4,6 +4,7 @@
 
 #include "luaext_vfs.h"
 
+#include "luaext_alloc.h"
 #include "luaext_error.h"
 #include "luaext_timers.h"
 #include "luaext_vfs_path.h"
@@ -586,8 +587,14 @@ static void luaext_vfs_push_handles(lua_State *L)
  * Limits::$memoryBytes as well as to the VFS's own maxTotalBytes. Charging only
  * the VFS quota would let a script hold eight megabytes of file buffers inside a
  * one megabyte sandbox.
+ *
+ * What was actually taken is recorded on the handle, and the refund reads that
+ * record rather than the buffer's length: both raises below longjmp with the
+ * buffer already attached, and a release that refunded the length after a
+ * refused charge would hand both ledgers bytes never taken.
  */
-bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size_t bytes)
+bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox,
+									 luaext_vfs_handle *handle, size_t bytes)
 {
 	size_t cap = sandbox->policy.vfs_quota.max_total_bytes;
 
@@ -599,7 +606,16 @@ bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size
 		return false;
 	}
 
+	if (!luaext_alloc_charge(sandbox, bytes)) {
+		luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+						   "Buffering %zu more byte(s) of file data does not fit in the "
+						   "sandbox's memory budget",
+						   bytes);
+		return false;
+	}
+
 	sandbox->vfs_buffered_bytes += bytes;
+	handle->buffer_charged += bytes;
 
 	return true;
 }
@@ -608,15 +624,21 @@ static void luaext_vfs_refund_buffer(luaext_sandbox *sandbox, size_t bytes)
 {
 	/* Clamped rather than trusted. The counter is maintained across paths that
 	 * can unwind, and a wrapped size_t here would read as an enormous budget. */
-	sandbox->vfs_buffered_bytes =
-		bytes > sandbox->vfs_buffered_bytes ? 0 : sandbox->vfs_buffered_bytes - bytes;
+	size_t held = bytes > sandbox->vfs_buffered_bytes ? sandbox->vfs_buffered_bytes : bytes;
+
+	sandbox->vfs_buffered_bytes -= held;
+	luaext_alloc_discharge(sandbox, held);
 }
 
 /* Release what a handle owns and stop counting it. Never calls the backend. */
 static void luaext_vfs_handle_release(luaext_sandbox *sandbox, luaext_vfs_handle *handle)
 {
+	if (handle->buffer_charged != 0) {
+		luaext_vfs_refund_buffer(sandbox, handle->buffer_charged);
+		handle->buffer_charged = 0;
+	}
+
 	if (handle->buffer != NULL) {
-		luaext_vfs_refund_buffer(sandbox, ZSTR_LEN(handle->buffer));
 		zend_string_release(handle->buffer);
 		handle->buffer = NULL;
 	}
@@ -1029,7 +1051,7 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 		handle->buffer = zend_string_copy(Z_STR(result));
 		zval_ptr_dtor(&result);
 
-		if (!luaext_vfs_charge_buffer_public(L, sandbox, ZSTR_LEN(handle->buffer))) {
+		if (!luaext_vfs_charge_buffer_public(L, sandbox, handle, ZSTR_LEN(handle->buffer))) {
 			luaext_vfs_handle_release(sandbox, handle);
 			return false;
 		}

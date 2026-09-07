@@ -32,6 +32,8 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <limits.h>
+
 /* -------------------------------------------------------------------------
  * Writing to the sink
  * ---------------------------------------------------------------------- */
@@ -256,7 +258,13 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 
 		ZVAL_STR(&args[0], handle->path);
 		ZVAL_LONG(&args[1], (zend_long)handle->offset);
-		ZVAL_LONG(&args[2], (zend_long)length);
+		/*
+		 * Clamped before it narrows. With maxFileBytes unlimited a "read it
+		 * all" request arrives as UINT64_MAX, and the plain cast handed the
+		 * backend -1 -- a negative length no implementation is prepared for.
+		 * ZEND_LONG_MAX simply means "everything you have".
+		 */
+		ZVAL_LONG(&args[2], length > (uint64_t)ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long)length);
 
 		if (luaext_vfs_call(L, sandbox, "readRange", 3, args, &result, refusal) != LUAEXT_VFS_OK) {
 			return -1;
@@ -266,6 +274,17 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 			zval_ptr_dtor(&result);
 			luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
 							   "RangedFileSystem::readRange() did not return a string");
+			return -1;
+		}
+
+		/* The reply's length narrows to this function's int return; a backend
+		 * answering more than INT_MAX bytes is refused rather than truncated
+		 * into a wrong offset. */
+		if (Z_STRLEN(result) > (size_t)INT_MAX) {
+			zval_ptr_dtor(&result);
+			luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+							   "RangedFileSystem::readRange() returned more than the extension "
+							   "can address in one read");
 			return -1;
 		}
 
@@ -608,7 +627,7 @@ static int luaext_iolib_file_write(lua_State *L)
 			zend_string *grown;
 
 			if (new_len > old_len &&
-				!luaext_vfs_charge_buffer_public(L, sandbox, new_len - old_len)) {
+				!luaext_vfs_charge_buffer_public(L, sandbox, handle, new_len - old_len)) {
 				return lua_error(L);
 			}
 

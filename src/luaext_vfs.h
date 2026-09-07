@@ -146,10 +146,17 @@ typedef struct {
 	zend_string *path; /* canonical, owned */
 
 	/*
-	 * Whole-file contents for a buffered handle, NULL for a ranged one. Owned,
-	 * and its length is what this handle contributes to vfs_buffered_bytes.
+	 * Whole-file contents for a buffered handle, NULL for a ranged one. Owned.
 	 */
 	zend_string *buffer;
+
+	/*
+	 * What this handle actually charged against vfs_buffered_bytes and the
+	 * memory ledger -- tracked separately from the buffer's length because a
+	 * refused charge raises with the buffer already attached, and a release
+	 * that refunded the length would hand back bytes never taken.
+	 */
+	size_t buffer_charged;
 
 	uint64_t offset; /* read/write position */
 
@@ -223,7 +230,8 @@ zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, con
  * error and returns false when the budget is spent -- fatal because a script
  * able to catch it would keep writing.
  */
-bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox, size_t bytes);
+bool luaext_vfs_charge_buffer_public(lua_State *L, luaext_sandbox *sandbox,
+									 luaext_vfs_handle *handle, size_t bytes);
 
 /*
  * Release what a handle owns, WITHOUT calling the backend.
