@@ -17,6 +17,8 @@
 
 #include <lua.h>
 
+#include <limits.h>
+
 #include <Zend/zend_attributes.h>
 #include <Zend/zend_enum.h>
 #include <Zend/zend_exceptions.h>
@@ -93,14 +95,47 @@ static zend_class_entry *luaext_ce_lua_logic_exception;
  * INI
  * ---------------------------------------------------------------------- */
 
+/*
+ * luaext.hook_count feeds lua_sethook(), whose count parameter is an int. The
+ * stock OnUpdateLong accepted 4294967296, stored it as a zend_long, and let
+ * the consumer's cast truncate it to zero -- at which point
+ * luaext_timers_hook_armed() still reported the fallback enforcer armed while
+ * a base count of zero meant its hook could never fire. Negatives are refused
+ * outright and anything past INT_MAX is clamped to it, so the stored value is
+ * always exactly what lua_sethook() will receive.
+ */
+static PHP_INI_MH(luaext_ini_update_hook_count)
+{
+	zend_long parsed = zend_ini_parse_quantity_warn(new_value, entry->name);
+
+	(void)mh_arg1;
+	(void)mh_arg2;
+	(void)mh_arg3;
+	(void)stage;
+
+	if (parsed < 0) {
+		return FAILURE;
+	}
+
+	if (parsed > (zend_long)INT_MAX) {
+		parsed = (zend_long)INT_MAX;
+	}
+
+	LUAEXT_G(hook_count) = parsed;
+
+	return SUCCESS;
+}
+
 PHP_INI_BEGIN()
 /*
-	 * Instruction interval of the always-armed interrupt hook. Lower reacts to a
-	 * limit sooner, higher costs less per instruction; 0 disables the hook, which
-	 * also disables the only race-free half of interrupt delivery.
+	 * Instruction interval of the fallback interrupt hook, armed only when the
+	 * watchdog thread could not start. Lower reacts to a limit sooner, higher
+	 * costs less per instruction; 0 disables the hook, which on such a build
+	 * disables CPU-limit delivery entirely. PHP_INI_SYSTEM like the other
+	 * entries that gate an enforcement mechanism: a knob ini_set() could turn
+	 * from userland would not be a floor.
 	 */
-STD_PHP_INI_ENTRY("luaext.hook_count", "1000", PHP_INI_ALL, OnUpdateLong, hook_count,
-				  zend_luaext_globals, luaext_globals)
+PHP_INI_ENTRY("luaext.hook_count", "1000", PHP_INI_SYSTEM, luaext_ini_update_hook_count)
 
 /*
 	 * Floor on watchdog wake-ups, in microseconds. It bounds how far past its
@@ -125,8 +160,9 @@ STD_PHP_INI_BOOLEAN("luaext.allow_raw_bytecode", "0", PHP_INI_SYSTEM, OnUpdateBo
 					allow_raw_bytecode, zend_luaext_globals, luaext_globals)
 
 /*
-	 * Benchmarking switch only. A sandbox may outlive the request that built it
-	 * in a worker SAPI, and request-local memory would be freed underneath it.
+	 * Route Lua allocations through ZendMM instead of malloc. See the field's
+	 * comment in php_luaext.h for the trade; captured per sandbox at
+	 * construction, so flipping it never mixes allocators within one state.
 	 */
 STD_PHP_INI_BOOLEAN("luaext.use_zend_mm", "0", PHP_INI_SYSTEM, OnUpdateBool, use_zend_mm,
 					zend_luaext_globals, luaext_globals)
