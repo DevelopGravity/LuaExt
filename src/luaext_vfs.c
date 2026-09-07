@@ -797,8 +797,7 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 		 * would walk somewhere else entirely -- a backend answering '..'
 		 * would walk this count in circles.
 		 */
-		if (Z_STRLEN_P(entry) == 0 ||
-			memchr(Z_STRVAL_P(entry), '/', Z_STRLEN_P(entry)) != NULL ||
+		if (Z_STRLEN_P(entry) == 0 || memchr(Z_STRVAL_P(entry), '/', Z_STRLEN_P(entry)) != NULL ||
 			zend_string_equals_literal(Z_STR_P(entry), ".") ||
 			zend_string_equals_literal(Z_STR_P(entry), "..")) {
 			continue;

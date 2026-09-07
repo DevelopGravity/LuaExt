@@ -605,7 +605,7 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 	sandbox->co_depth = 0;
 }
 
-uint32_t luaext_corolib_live_count(luaext_sandbox *sandbox)
+uint32_t luaext_corolib_live_count(const luaext_sandbox *sandbox)
 {
 	lua_State *L = sandbox->L;
 	uint32_t live = 0;

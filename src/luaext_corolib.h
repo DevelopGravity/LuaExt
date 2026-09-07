@@ -56,7 +56,7 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox);
  * is re-synced only when the cap is hit. stats() asks this instead, because
  * its docblock invites reading mid-run from a host callback.
  */
-uint32_t luaext_corolib_live_count(luaext_sandbox *sandbox);
+uint32_t luaext_corolib_live_count(const luaext_sandbox *sandbox);
 
 /*
  * Install or clear a debug hook on the main state AND every live coroutine.

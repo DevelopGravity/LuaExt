@@ -1263,8 +1263,8 @@ bool luaext_watchdog_resume(luaext_watch_slot *slot, uint8_t mask)
 			spent = luaext_watch_evaluate(slot);
 
 			if (!spent) {
-				queue = luaext_watch_deadline(slot, &deadline) &&
-						!luaext_watch_covered(slot, deadline);
+				queue =
+					luaext_watch_deadline(slot, &deadline) && !luaext_watch_covered(slot, deadline);
 
 				if (queue) {
 					luaext_watch_stamp(slot, &entry, deadline);
