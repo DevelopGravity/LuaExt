@@ -37,7 +37,7 @@
  * Release tags are plain semver with no "v" prefix; the release workflow
  * refuses to publish when this macro and the tag disagree.
  */
-#define PHP_LUAEXT_VERSION "0.1.0-rc.2"
+#define PHP_LUAEXT_VERSION "0.1.0-rc.3"
 
 extern zend_module_entry luaext_module_entry;
 #define phpext_luaext_ptr &luaext_module_entry
