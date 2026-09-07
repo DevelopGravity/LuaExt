@@ -550,7 +550,23 @@ static bool luaext_watch_deadline(luaext_watch_slot *slot, uint64_t *deadline)
 		remaining = luaext_watch.floor_ns;
 	}
 
-	*deadline = luaext_clock_monotonic_ns() + remaining;
+	{
+		/*
+		 * Saturated rather than wrapped. A limit past LUAEXT_LIMIT_MAX_SECONDS
+		 * saturates to UINT64_MAX nanoseconds at configuration time, and once
+		 * any of it has been spent `remaining` is huge without being the
+		 * exactly-UINT64_MAX sentinel the early return above catches -- so the
+		 * addition wrapped to a deadline in the past, the thread woke
+		 * immediately, re-evaluated, published another wrapped deadline, and
+		 * spun at full speed holding the process-wide lock.
+		 *
+		 * UINT64_MAX sorts last in the heap and never fires, which is the
+		 * honest meaning of a ceiling nobody will reach.
+		 */
+		uint64_t now = luaext_clock_monotonic_ns();
+
+		*deadline = remaining > UINT64_MAX - now ? UINT64_MAX : now + remaining;
+	}
 
 	return true;
 }
@@ -703,6 +719,11 @@ static void luaext_watch_ensure_thread(void)
 	}
 
 	luaext_once_run(&luaext_watch.once, luaext_watch_start_once);
+}
+
+void luaext_watchdog_prime(void)
+{
+	luaext_watch_ensure_thread();
 }
 
 /* -------------------------------------------------------------------------

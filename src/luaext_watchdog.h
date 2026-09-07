@@ -187,4 +187,16 @@ bool luaext_watchdog_thread_running(void);
  */
 bool luaext_watchdog_thread_failed(void);
 
+/*
+ * Make the one lazy start attempt now, so thread_failed() answers about a
+ * decision already taken.
+ *
+ * The thread is created on the first armed limit, which means a sandbox that
+ * decides how to enforce its limits BEFORE arming them reads thread_failed()
+ * from a process that has not tried yet -- it answers false, the count-hook
+ * fallback is not installed, and if the start then fails that sandbox has
+ * neither enforcer. Priming first collapses the window.
+ */
+void luaext_watchdog_prime(void);
+
 #endif /* LUAEXT_WATCHDOG_H */
