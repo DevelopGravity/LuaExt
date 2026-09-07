@@ -54,6 +54,31 @@
 #define LUAEXT_NS_PER_SEC UINT64_C(1000000000)
 
 /* -------------------------------------------------------------------------
+ * Startup
+ * ---------------------------------------------------------------------- */
+
+#if defined(LUAEXT_CLOCK_WINDOWS)
+/*
+ * Probed once, single-threaded, from luaext_clock_startup() at MINIT. The QPC
+ * frequency is fixed at boot, and the function-local lazy init this replaces
+ * was a C11 data race: the watchdog thread and every PHP thread reach the
+ * monotonic clock, and whichever arrived first wrote the static the others
+ * were reading. Zero means the probe failed and the tick-count fallback is in
+ * force.
+ */
+static LARGE_INTEGER luaext_clock_qpc_frequency;
+#endif
+
+void luaext_clock_startup(void)
+{
+#if defined(LUAEXT_CLOCK_WINDOWS)
+	if (!QueryPerformanceFrequency(&luaext_clock_qpc_frequency)) {
+		luaext_clock_qpc_frequency.QuadPart = 0;
+	}
+#endif
+}
+
+/* -------------------------------------------------------------------------
  * Capture and release
  * ---------------------------------------------------------------------- */
 
@@ -216,14 +241,11 @@ bool luaext_clock_read(const luaext_cpu_clock *clock, uint64_t *ns)
 uint64_t luaext_clock_monotonic_ns(void)
 {
 #if defined(LUAEXT_CLOCK_WINDOWS)
-	static LARGE_INTEGER frequency;
 	LARGE_INTEGER counter;
 
-	if (frequency.QuadPart == 0 && !QueryPerformanceFrequency(&frequency)) {
-		return (uint64_t)GetTickCount64() * UINT64_C(1000000);
-	}
-
-	if (!QueryPerformanceCounter(&counter)) {
+	/* Read-only: the frequency was probed at startup, before the watchdog
+	 * thread could exist. See luaext_clock_startup(). */
+	if (luaext_clock_qpc_frequency.QuadPart == 0 || !QueryPerformanceCounter(&counter)) {
 		return (uint64_t)GetTickCount64() * UINT64_C(1000000);
 	}
 
@@ -233,9 +255,9 @@ uint64_t luaext_clock_monotonic_ns(void)
 	 * uptime on a 10 MHz timebase, which would make every deadline nonsense on
 	 * a machine that had merely been switched on for a while.
 	 */
-	return (uint64_t)(counter.QuadPart / frequency.QuadPart) * LUAEXT_NS_PER_SEC +
-		   (uint64_t)(counter.QuadPart % frequency.QuadPart) * LUAEXT_NS_PER_SEC /
-			   (uint64_t)frequency.QuadPart;
+	return (uint64_t)(counter.QuadPart / luaext_clock_qpc_frequency.QuadPart) * LUAEXT_NS_PER_SEC +
+		   (uint64_t)(counter.QuadPart % luaext_clock_qpc_frequency.QuadPart) * LUAEXT_NS_PER_SEC /
+			   (uint64_t)luaext_clock_qpc_frequency.QuadPart;
 #else
 	struct timespec now;
 

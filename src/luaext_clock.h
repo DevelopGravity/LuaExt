@@ -59,6 +59,14 @@ typedef struct luaext_cpu_clock {
 	bool valid;
 } luaext_cpu_clock;
 
+/*
+ * One-time process startup, from MINIT before any watchdog thread exists.
+ * Probes what the clocks need probed exactly once -- on Windows the QPC
+ * frequency, which is fixed at boot -- so every later read is read-only and
+ * thread-free. Harmless on the other platforms.
+ */
+void luaext_clock_startup(void);
+
 /* Capture the CALLING thread's clock. Must run on the owning thread. */
 bool luaext_clock_capture_self(luaext_cpu_clock *out);
 

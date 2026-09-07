@@ -51,6 +51,10 @@ static uint64_t luaext_timers_resolution_ns = 0;
 
 void luaext_timers_startup(void)
 {
+	/* Before the watchdog exists: the clock's one-time probe must finish while
+	 * this is still the only thread that can reach it. */
+	luaext_clock_startup();
+
 	luaext_watchdog_startup();
 
 	luaext_timers_have_cpu = luaext_clock_cpu_available();
