@@ -29,6 +29,7 @@
 #include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_clock.h"
+#include "luaext_exec.h"
 #include "luaext_timers.h"
 
 #include <lauxlib.h>
@@ -781,7 +782,10 @@ bool luaext_phpcall_register_table(luaext_sandbox *sandbox, const char *name, si
 	build.functions = functions;
 	build.failed = false;
 
-	L = sandbox->L;
+	/* The running state, not the main thread: a registration made from inside
+	 * a coroutine's host callback would otherwise run this pcall on a stack
+	 * whose C-call budget lua_resume lent to the coroutine. */
+	L = luaext_exec_state(sandbox);
 
 	if (!lua_checkstack(L, LUAEXT_PHPCALL_SLOTS)) {
 		zend_throw_exception(luaext_ce_memory_limit_error,

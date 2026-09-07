@@ -340,7 +340,10 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
 		RETURN_THROWS();
 	}
 
-	L = sandbox->L;
+	/* The running state, for the same reason every other host entry resolves
+	 * it: dumping from inside a coroutine's host callback must use the state
+	 * that is actually executing. */
+	L = luaext_exec_state(sandbox);
 
 	if (!lua_checkstack(L, 2)) {
 		zend_throw_exception(luaext_ce_runtime_error,
