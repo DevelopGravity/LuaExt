@@ -72,6 +72,51 @@ struct luaext_proxy_class {
 };
 
 /*
+ * The proxy payload: a full userdata wrapping one PHP object.
+ *
+ * `object` holds one refcount from the moment the proxy is pushed; __gc hands
+ * it to the defer queue rather than releasing in the collector. `gc_index` is
+ * the payload's slot in the sandbox's live-proxy list, which is what get_gc
+ * reports to PHP's cycle collector and stats() counts.
+ */
+#define LUAEXT_PROXY_MAGIC 0x4C585072u /* "LXPr" */
+
+struct luaext_proxy_ud {
+	uint32_t magic;
+	zend_object *object;	 /* NULL once finalised */
+	luaext_proxy_class *cls; /* the nearest registered ancestor it wrapped as */
+	size_t gc_index;
+};
+
+/*
+ * Push a proxy for `object` if its class (or an ancestor) is registered.
+ * Returns false — pushing nothing — when unregistered, so the caller falls
+ * through to the conversion layer's refusal. May raise on memory pressure;
+ * callers are already inside a raise-safe conversion context.
+ */
+bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *object);
+
+/*
+ * The live proxy at `index`, or NULL for anything else. Never raises and
+ * never dereferences foreign memory. Metamethods hand this ANY value — under
+ * debugMutate a script can stamp a real proxy metatable onto a plain table —
+ * so the gates run in this order, each one making the next read sound:
+ *   1. lua_type(L, index) == LUA_TUSERDATA
+ *   2. lua_rawlen(L, index) == sizeof(luaext_proxy_ud)
+ *   3. the value's metatable answers in the luaext_key_proxymts map
+ *   4. magic == LUAEXT_PROXY_MAGIC and object != NULL (resurrected is dead)
+ */
+luaext_proxy_ud *luaext_proxy_test(luaext_sandbox *sandbox, lua_State *L, int index);
+
+/*
+ * Report every live proxy's wrapped object to the cycle collector. Without
+ * this, a script-held proxy of an object that (transitively) references its
+ * own Sandbox is a cycle no collector can see, and the whole sandbox leaks
+ * until process end.
+ */
+void luaext_proxy_add_gc(const luaext_sandbox *sandbox, zend_get_gc_buffer *buffer);
+
+/*
  * Resolve, validate and store a registration.
  *
  * `class_name` is looked up (autoloading applies); `allowlist` overrides

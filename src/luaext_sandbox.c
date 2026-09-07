@@ -51,6 +51,7 @@
  * ---------------------------------------------------------------------- */
 
 const char luaext_key_refs = 0;
+const char luaext_key_proxymts = 0;
 const char luaext_key_errmt = 0;
 const char luaext_key_filemt = 0;
 const char luaext_key_threads = 0;
@@ -372,6 +373,15 @@ static HashTable *luaext_sandbox_get_gc(zend_object *object, zval **table, int *
 	if (ZEND_FCC_INITIALIZED(sandbox->out.fcc)) {
 		zend_get_gc_buffer_add_fcc(buffer, &sandbox->out.fcc);
 	}
+
+	/*
+	 * The one deliberate exception to "references inside the interpreter are
+	 * absent": each live proxy holds a PHP object the collector must see, or
+	 * a proxy of an object that (transitively) references this sandbox is an
+	 * uncollectable cycle. The proxy subsystem keeps the side list precisely
+	 * so this handler can report it.
+	 */
+	luaext_proxy_add_gc(sandbox, buffer);
 
 	zend_get_gc_buffer_use(buffer, table, count);
 

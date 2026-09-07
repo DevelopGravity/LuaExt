@@ -1534,8 +1534,7 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "vfsCpuSeconds", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->gc_collections);
 	LUAEXT_SET(object, "gcCollections", &value);
-	/* FIXME: wired to the real live-proxy counter in wave 17 task 2. */
-	ZVAL_LONG(&value, 0);
+	ZVAL_LONG(&value, (zend_long)sandbox->proxy_gc_count);
 	LUAEXT_SET(object, "liveObjectProxies", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->lua_calls_in);
 	LUAEXT_SET(object, "luaCallsIn", &value);

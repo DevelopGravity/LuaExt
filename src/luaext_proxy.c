@@ -14,7 +14,13 @@
 
 #include "luaext_proxy.h"
 
+#include "luaext_defer.h"
 #include "luaext_phpcall.h"
+
+#include <lauxlib.h>
+#include <lua.h>
+
+#include <string.h>
 
 #include <Zend/zend_attributes.h>
 #include <Zend/zend_exceptions.h>
@@ -276,6 +282,200 @@ static bool luaext_proxy_collect_allowlist(luaext_proxy_class *record, zend_clas
 }
 
 /* -------------------------------------------------------------------------
+ * The proxy userdata
+ *
+ * One metatable per registered class, built on first push and interned twice
+ * in the registry: class record -> metatable (for pushing) and, inside the
+ * luaext_key_proxymts map, metatable -> class record (for the identity test).
+ * A metatable *is* its __gc, so each map entry vouches that a userdata
+ * carrying that metatable is a luaext_proxy_ud — the same one-key-one-payload
+ * rule luaext_phpcall_metatable() documents.
+ * ---------------------------------------------------------------------- */
+
+/*
+ * The __gc finaliser. Runs inside the collector, so the PHP reference is
+ * handed to the defer queue rather than released here — releasing could run
+ * an arbitrary __destruct against the very state being swept. See
+ * luaext_defer.h; the timing of the release is all that is given up.
+ */
+static int luaext_proxy_release(lua_State *L)
+{
+	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_touserdata(L, 1);
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	zval carrier;
+
+	if (slot == NULL || slot->magic != LUAEXT_PROXY_MAGIC) {
+		return 0;
+	}
+
+	/* A finalised proxy is no longer one of ours, even if it is resurrected. */
+	slot->magic = 0;
+
+	/* Swap-remove from the live list, keeping the moved entry's index true. */
+	if (sandbox != NULL && slot->gc_index < sandbox->proxy_gc_count &&
+		sandbox->proxy_gc_items[slot->gc_index] == slot) {
+		size_t last = --sandbox->proxy_gc_count;
+
+		sandbox->proxy_gc_items[slot->gc_index] = sandbox->proxy_gc_items[last];
+		sandbox->proxy_gc_items[slot->gc_index]->gc_index = slot->gc_index;
+	}
+
+	if (slot->object != NULL) {
+		ZVAL_OBJ(&carrier, slot->object);
+		slot->object = NULL;
+
+		if (sandbox == NULL || !luaext_defer_zval(sandbox, &carrier)) {
+			/* Releasing here risks the narrow re-entrancy window; leaking
+			 * would be worse, and a failed queue growth means the process is
+			 * already out of memory. */
+			zval_ptr_dtor(&carrier);
+		}
+	}
+
+	return 0;
+}
+
+/* Push the proxymts map (metatable -> class light ud), creating it lazily. */
+static void luaext_proxy_mts_map(lua_State *L)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_proxymts) == LUA_TTABLE) {
+		return;
+	}
+
+	lua_pop(L, 1);
+	lua_createtable(L, 0, 2);
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_proxymts);
+}
+
+/* Push `cls`'s metatable, building and interning it on first use. */
+static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, cls) == LUA_TTABLE) {
+		return;
+	}
+
+	lua_pop(L, 1);
+	lua_createtable(L, 0, 4);
+
+	lua_pushcfunction(L, luaext_proxy_release);
+	lua_setfield(L, -2, "__gc");
+
+	/* Locked for the same reason every subsystem locks it: a script that
+	 * could read this table back out could replace __gc, and one that could
+	 * stamp it onto its own value could hand the collector a forged payload. */
+	lua_pushboolean(L, 0);
+	lua_setfield(L, -2, "__metatable");
+
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, cls);
+
+	luaext_proxy_mts_map(L);
+	lua_pushvalue(L, -2);
+	lua_pushlightuserdata(L, cls);
+	lua_rawset(L, -3);
+	lua_pop(L, 1);
+}
+
+bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *object)
+{
+	luaext_proxy_class *cls = luaext_proxy_find(sandbox, object->ce);
+	luaext_proxy_ud *slot;
+
+	if (cls == NULL) {
+		return false;
+	}
+
+	/* May raise on memory pressure; nothing is owned before this returns. */
+	slot = (luaext_proxy_ud *)lua_newuserdatauv(L, sizeof(*slot), 0);
+	memset(slot, 0, sizeof(*slot));
+
+	/* Armed while magic is still zero, so a raise below leaves a userdata
+	 * whose finaliser no-ops rather than one holding an unreleased ref. */
+	luaext_proxy_push_metatable(L, cls);
+	lua_setmetatable(L, -2);
+
+	if (sandbox->proxy_gc_count == sandbox->proxy_gc_cap) {
+		size_t cap = sandbox->proxy_gc_cap == 0 ? 8 : sandbox->proxy_gc_cap * 2;
+
+		sandbox->proxy_gc_items = (luaext_proxy_ud **)perealloc(
+			sandbox->proxy_gc_items, cap * sizeof(*sandbox->proxy_gc_items), 1);
+		sandbox->proxy_gc_cap = cap;
+	}
+
+	slot->object = object;
+	GC_ADDREF(object);
+	slot->cls = cls;
+	slot->gc_index = sandbox->proxy_gc_count;
+	sandbox->proxy_gc_items[sandbox->proxy_gc_count++] = slot;
+
+	/* Last: only a fully-listed, reference-holding payload is a live proxy. */
+	slot->magic = LUAEXT_PROXY_MAGIC;
+
+	return true;
+}
+
+luaext_proxy_ud *luaext_proxy_test(luaext_sandbox *sandbox, lua_State *L, int index)
+{
+	luaext_proxy_ud *slot;
+	bool ours;
+
+	(void)sandbox;
+
+	index = lua_absindex(L, index);
+
+	/*
+	 * The four gates, in order, each making the next read sound. The first
+	 * two exist because metamethods and dispatch closures receive arbitrary
+	 * values — under debugMutate a script can stamp a genuine proxy metatable
+	 * onto a plain table or a foreign userdata, and nothing may be read out
+	 * of the payload until the value is provably one of ours.
+	 */
+	if (lua_type(L, index) != LUA_TUSERDATA) {
+		return NULL;
+	}
+
+	if (lua_rawlen(L, index) != sizeof(luaext_proxy_ud)) {
+		return NULL;
+	}
+
+	if (!lua_getmetatable(L, index)) {
+		return NULL;
+	}
+
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_proxymts) != LUA_TTABLE) {
+		lua_pop(L, 2);
+		return NULL;
+	}
+
+	lua_pushvalue(L, -2);
+	lua_rawget(L, -2);
+	ours = lua_type(L, -1) == LUA_TLIGHTUSERDATA;
+	lua_pop(L, 3);
+
+	if (!ours) {
+		return NULL;
+	}
+
+	slot = (luaext_proxy_ud *)lua_touserdata(L, index);
+
+	if (slot == NULL || slot->magic != LUAEXT_PROXY_MAGIC || slot->object == NULL) {
+		return NULL;
+	}
+
+	return slot;
+}
+
+void luaext_proxy_add_gc(const luaext_sandbox *sandbox, zend_get_gc_buffer *buffer)
+{
+	size_t index;
+
+	for (index = 0; index < sandbox->proxy_gc_count; index++) {
+		zend_get_gc_buffer_add_obj(buffer, sandbox->proxy_gc_items[index]->object);
+	}
+}
+
+/* -------------------------------------------------------------------------
  * The registry
  * ---------------------------------------------------------------------- */
 
@@ -490,4 +690,14 @@ void luaext_proxy_shutdown(luaext_sandbox *sandbox)
 		luaext_proxy_class_free(record);
 		record = next;
 	}
+
+	/* lua_close() finalised every proxy, so the list is empty by now; the
+	 * storage is what remains. */
+	if (sandbox->proxy_gc_items != NULL) {
+		pefree(sandbox->proxy_gc_items, 1);
+		sandbox->proxy_gc_items = NULL;
+	}
+
+	sandbox->proxy_gc_count = 0;
+	sandbox->proxy_gc_cap = 0;
 }

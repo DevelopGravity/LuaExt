@@ -33,6 +33,7 @@ typedef struct luaext_vfs luaext_vfs;
 typedef struct luaext_modules luaext_modules;
 typedef struct luaext_profiler luaext_profiler;
 typedef struct luaext_proxy_class luaext_proxy_class;
+typedef struct luaext_proxy_ud luaext_proxy_ud;
 
 /* -------------------------------------------------------------------------
  * Registry keys
@@ -42,17 +43,18 @@ typedef struct luaext_proxy_class luaext_proxy_class;
  * name them even if the registry were ever exposed. Defined in luaext_sandbox.c.
  * ---------------------------------------------------------------------- */
 
-extern const char luaext_key_refs;	  /* int -> Lua value, backing PHP handles */
-extern const char luaext_key_errmt;	  /* metatable of the fatal-error userdata */
-extern const char luaext_key_filemt;  /* metatable of VFS file handles */
-extern const char luaext_key_threads; /* weak: thread -> tracking sentinel */
-extern const char luaext_key_handles; /* strong: open VFS handle -> sentinel */
-extern const char luaext_key_loaded;  /* package.loaded */
-extern const char luaext_key_preload; /* package.preload */
-extern const char luaext_key_loading; /* in-flight requires, for cycle detection */
-extern const char luaext_key_zvalmt;  /* metatable of zval-holding userdata */
-extern const char luaext_key_chunks;  /* eval() compile cache: key -> main chunk */
-extern const char luaext_key_pathmt;  /* metatable of canonical-path userdata */
+extern const char luaext_key_refs;	   /* int -> Lua value, backing PHP handles */
+extern const char luaext_key_errmt;	   /* metatable of the fatal-error userdata */
+extern const char luaext_key_filemt;   /* metatable of VFS file handles */
+extern const char luaext_key_threads;  /* weak: thread -> tracking sentinel */
+extern const char luaext_key_handles;  /* strong: open VFS handle -> sentinel */
+extern const char luaext_key_loaded;   /* package.loaded */
+extern const char luaext_key_preload;  /* package.preload */
+extern const char luaext_key_loading;  /* in-flight requires, for cycle detection */
+extern const char luaext_key_zvalmt;   /* metatable of zval-holding userdata */
+extern const char luaext_key_chunks;   /* eval() compile cache: key -> main chunk */
+extern const char luaext_key_pathmt;   /* metatable of canonical-path userdata */
+extern const char luaext_key_proxymts; /* proxy metatable -> its class record */
 
 /* -------------------------------------------------------------------------
  * Interrupt reasons
@@ -561,6 +563,16 @@ struct luaext_sandbox {
 
 	/* Classes registered with registerClass(); see luaext_proxy.h. */
 	luaext_proxy_class *proxy_classes;
+
+	/*
+	 * Every live proxy's payload, so get_gc can show the collector the PHP
+	 * objects the interpreter holds and stats() can report the count.
+	 * pemalloc'd: entries are removed by __gc, which also runs from
+	 * lua_close() during the request-shutdown sweep.
+	 */
+	luaext_proxy_ud **proxy_gc_items;
+	size_t proxy_gc_count;
+	size_t proxy_gc_cap;
 
 	/* Keeps the FileSystem, ModuleResolver and output callback alive. */
 	zval config_zv;

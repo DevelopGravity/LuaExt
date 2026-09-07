@@ -37,6 +37,7 @@
 
 #include "luaext_alloc.h"
 #include "luaext_error.h"
+#include "luaext_proxy.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -444,14 +445,25 @@ static void luaext_convert_push_object(luaext_convert_push_ctx *ctx, zval *value
 
 	if (!instanceof_function(object->ce, luaext_ce_lua_function)) {
 		/*
-		 * Deliberately not "convertible with a bit more work": an object that
-		 * crossed into Lua would have to carry identity and behaviour with it,
-		 * and registerObject() is the one bridge that exposes behaviour without
-		 * exposing the object.
+		 * The one other object with a Lua representation is an instance of a
+		 * class this sandbox registered with registerClass(), which crosses
+		 * as an unforgeable userdata proxy — behaviour without properties,
+		 * under the registration's explicit method selection. The LuaFunction
+		 * branch is checked FIRST and stays first, so registering a class
+		 * that is or extends LuaFunction can never shadow function-handle
+		 * semantics. Everything else keeps the refusal: an unregistered
+		 * object crossing silently is how a host hands a script its own
+		 * internals.
 		 */
+		luaext_convert_push_reserve(ctx, step);
+
+		if (ctx->sandbox != NULL && luaext_proxy_try_push(ctx->sandbox, ctx->L, object)) {
+			return;
+		}
+
 		snprintf(detail, sizeof(detail),
-				 "Cannot convert an instance of %s to Lua; only LuaFunction values from this "
-				 "sandbox have a Lua representation",
+				 "Cannot convert an instance of %s to Lua; only LuaFunction values and instances "
+				 "of classes registered with registerClass() have a Lua representation",
 				 ZSTR_VAL(object->ce->name));
 		luaext_convert_push_fail(ctx, step, detail);
 	}
@@ -1042,7 +1054,24 @@ static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_c
 									  "Cannot convert a Lua coroutine to PHP: coroutines are an "
 									  "in-script tool and have no PHP-side handle");
 
-	case LUA_TUSERDATA:
+	case LUA_TUSERDATA: {
+		/*
+		 * A proxy unwraps to the original PHP instance — host-side identity
+		 * (===) holds. Cross-sandbox proxies cannot occur here: a Lua value
+		 * never leaves its lua_State, so any proxy this state holds was
+		 * pushed by this sandbox. Everything else keeps the refusal.
+		 */
+		const luaext_proxy_ud *proxy = luaext_proxy_test(ctx->sandbox, ctx->L, index);
+
+		if (proxy != NULL) {
+			ZVAL_OBJ_COPY(out, proxy->object);
+			return true;
+		}
+
+		return luaext_convert_to_fail(
+			ctx, step, "Cannot convert Lua userdata to PHP: it would hand out a raw pointer");
+	}
+
 	case LUA_TLIGHTUSERDATA:
 		return luaext_convert_to_fail(
 			ctx, step, "Cannot convert Lua userdata to PHP: it would hand out a raw pointer");
