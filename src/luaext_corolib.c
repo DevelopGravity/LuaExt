@@ -600,3 +600,40 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 	sandbox->co_live = 0;
 	sandbox->co_depth = 0;
 }
+
+void luaext_corolib_set_hook_all(luaext_sandbox *sandbox, lua_Hook hook, int mask, int count)
+{
+	lua_State *L = sandbox->L;
+
+	if (L == NULL) {
+		return;
+	}
+
+	lua_sethook(L, hook, mask, count);
+
+	/*
+	 * A stack that cannot grow forfeits the walk, not the main hook above --
+	 * the same give-up as the sweep. The callers treat a partially armed
+	 * profile as a profile, which it still is: sampling is statistical, and
+	 * this branch needs an allocator failure to be reached at all.
+	 */
+	if (!lua_checkstack(L, 3)) {
+		return;
+	}
+
+	luaext_corolib_push_threads(L);
+
+	lua_pushnil(L);
+
+	while (lua_next(L, -2) != 0) {
+		lua_State *co = lua_tothread(L, -2);
+
+		lua_pop(L, 1); /* value; the key stays for lua_next */
+
+		if (co != NULL && co != L) {
+			lua_sethook(co, hook, mask, count);
+		}
+	}
+
+	lua_pop(L, 1);
+}

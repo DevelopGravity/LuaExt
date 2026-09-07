@@ -48,4 +48,15 @@ bool luaext_corolib_install(lua_State *L, luaext_sandbox *sandbox);
  */
 void luaext_corolib_sweep(luaext_sandbox *sandbox);
 
+/*
+ * Install or clear a debug hook on the main state AND every live coroutine.
+ *
+ * lua_sethook() is per-lua_State and a thread only inherits the creator's hook
+ * at lua_newthread() time, so a hook armed on sandbox->L alone misses every
+ * coroutine that already exists -- and clearing it there alone leaves every
+ * coroutine created since still trapping. This file owns the tracking table,
+ * which is why the walk lives here. Passing hook = NULL clears.
+ */
+void luaext_corolib_set_hook_all(luaext_sandbox *sandbox, lua_Hook hook, int mask, int count);
+
 #endif /* LUAEXT_COROLIB_H */

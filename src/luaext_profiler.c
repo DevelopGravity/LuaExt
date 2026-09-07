@@ -4,6 +4,7 @@
 
 #include "luaext_profiler.h"
 
+#include "luaext_corolib.h"
 #include "luaext_timers.h"
 #include "luaext_watchdog.h"
 
@@ -152,7 +153,13 @@ bool luaext_profiler_enable(luaext_sandbox *sandbox, double period_seconds)
 
 	sandbox->profiler->enabled = true;
 
-	lua_sethook(sandbox->L, luaext_profiler_hook, LUA_MASKCOUNT, count);
+	/*
+	 * Every live thread, not just the main one. lua_sethook() is per-state
+	 * and a coroutine only inherits the hook its creator carried at
+	 * lua_newthread() time, so arming sandbox->L alone would never sample a
+	 * coroutine that already existed when profiling was switched on.
+	 */
+	luaext_corolib_set_hook_all(sandbox, luaext_profiler_hook, LUA_MASKCOUNT, count);
 
 	return true;
 }
@@ -168,9 +175,12 @@ void luaext_profiler_disable(luaext_sandbox *sandbox)
 	/*
 	 * Cleared outright rather than restored to whatever was there. Nothing else
 	 * arms a hook while profiling is possible: the timers hook only exists when
-	 * the watchdog failed, and enable() refuses in exactly that case.
+	 * the watchdog failed, and enable() refuses in exactly that case. Cleared
+	 * on every live thread for the same reason enable arms every one: a
+	 * coroutine created while profiling was on would otherwise keep the trap
+	 * armed for the rest of its life.
 	 */
-	lua_sethook(sandbox->L, NULL, 0, 0);
+	luaext_corolib_set_hook_all(sandbox, NULL, 0, 0);
 }
 
 /*
