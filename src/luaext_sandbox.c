@@ -1373,6 +1373,26 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)
 	Z_PARAM_ZVAL(loader)
 	ZEND_PARSE_PARAMETERS_END();
 
+	/*
+	 * No single ZPP macro spells the LuaFunction|callable union, so the raw
+	 * zval is taken and the declared type is enforced here, before anything
+	 * else -- the same engine TypeError, naming the argument position, that
+	 * wrapCallable's Z_PARAM_FUNC delivers for its plain `callable`. Without
+	 * this the arginfo type is decoration: internal functions get no VM check,
+	 * and a wrong-typed loader would surface as a ConfigurationError from the
+	 * later resolution, which a `catch (TypeError)` written against the
+	 * published stub would never see.
+	 */
+	if (!(Z_TYPE_P(loader) == IS_OBJECT &&
+		  instanceof_function(Z_OBJCE_P(loader), luaext_ce_lua_function)) &&
+		!zend_is_callable(loader, 0, NULL)) {
+		zend_argument_type_error(2,
+								 "must be of type DevelopGravity\\LuaExt\\LuaFunction|callable, "
+								 "%s given",
+								 zend_zval_value_name(loader));
+		RETURN_THROWS();
+	}
+
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
 	if (!luaext_sandbox_check_usable(sandbox)) {
