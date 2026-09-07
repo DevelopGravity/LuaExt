@@ -24,8 +24,14 @@ use DevelopGravity\LuaExt\SandboxConfig;
 // there, force a refused conversion charge, and the megabyte must still be on
 // the books afterwards.
 
+// No timing limits: the ledger is the subject, and the megabytes shuffled
+// below are real CPU work -- on a valgrind- or sanitizer-slowed build the
+// constructor's default one-second CPU budget accumulates across these evals
+// and tripped at a later call boundary, drowning the assertions.
 $sandbox = new Sandbox(new SandboxConfig(
 	limits: new Limits(
+		cpuSeconds: null,
+		wallClockSeconds: null,
 		memoryBytes: 16 * 1024 * 1024,
 		outputBytes: 2 * 1024 * 1024,
 		outputOverflow: OverflowBehavior::Fail,

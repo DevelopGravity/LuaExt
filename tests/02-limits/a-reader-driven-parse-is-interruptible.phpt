@@ -19,10 +19,14 @@ use DevelopGravity\LuaExt\SandboxConfig;
 // lifted, the wall clock is the only thing standing between an endless reader
 // and a permanently wedged worker.
 
+// No CPU limit: the wall clock is the subject here, and valgrind's thread-CPU
+// clock over-reports badly enough that even a 10-second CPU allowance fired
+// before the 0.3-second wall deadline on that leg. The wall limit bounds the
+// parse; run-tests' own timeout is the net behind it.
 $sandbox = new Sandbox(new SandboxConfig(
 	capabilities: (new Capabilities())->with(compileAtRuntime: true),
 	limits: new Limits(
-		cpuSeconds: 10.0,
+		cpuSeconds: null,
 		wallClockSeconds: 0.3,
 		maxSourceBytes: 0,
 	),
