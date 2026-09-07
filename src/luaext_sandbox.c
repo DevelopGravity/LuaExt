@@ -430,6 +430,15 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 * fails construction rather than being discovered later.
 	 */
 	sandbox->alloc.limit = sandbox->policy.limits.memory_bytes;
+
+	/*
+	 * Captured now, not read per allocation: the state about to be created
+	 * must free every block through the allocator that produced it, whatever
+	 * the INI reads later. PHP_INI_SYSTEM makes a later change unlikely, but
+	 * "unlikely" is not a memory-safety argument.
+	 */
+	sandbox->alloc.use_zend_mm = LUAEXT_G(use_zend_mm);
+
 	sandbox->owner_thread = luaext_thread_self();
 	sandbox->seed = luaext_sandbox_seed(&sandbox->policy);
 

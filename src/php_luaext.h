@@ -134,8 +134,15 @@ bool allow_raw_bytecode;
 
 /*
 	 * Route Lua allocations through the Zend allocator instead of malloc.
-	 * Off by default: a sandbox may outlive the request that built it in a
-	 * worker SAPI, and request-local memory would be freed underneath it.
+	 *
+	 * On, the Lua heap shows up in memory_get_usage() and answers to PHP's
+	 * memory_limit (the allocator refuses growth short of it rather than
+	 * letting emalloc bail out through the interpreter's frames). Off -- the
+	 * default -- the heap is invisible to PHP's accounting and bounded only
+	 * by Limits::$memoryBytes, which keeps a sandbox's spike from failing
+	 * unrelated PHP code sharing the request. Captured per sandbox at
+	 * construction; the RSHUTDOWN sweep closes every live sandbox before the
+	 * request arena resets, which is what makes the ZendMM route sound.
 	 */
 bool use_zend_mm;
 ZEND_END_MODULE_GLOBALS(luaext)

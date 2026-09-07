@@ -186,6 +186,34 @@ static zend_always_inline bool luaext_alloc_fits(size_t live, size_t limit, size
 	return live < limit && growth <= limit - live;
 }
 
+/*
+ * Whether ZendMM can take `growth` more bytes without tripping PHP's own
+ * memory_limit.
+ *
+ * The contract this protects is lua_Alloc's: an allocator MUST NOT longjmp,
+ * and an emalloc that breaches memory_limit does exactly that through
+ * zend_error_noreturn. Refusing here instead hands Lua a NULL, which it
+ * answers with an emergency collection and, failing that, a clean LUA_ERRMEM.
+ * The margin of one ZendMM chunk covers the allocator's own granularity --
+ * real usage grows chunk-wise, so an exact comparison would still let the
+ * fatal through on a chunk boundary.
+ */
+static bool luaext_alloc_zend_mm_headroom(size_t growth)
+{
+	const size_t chunk_margin = (size_t)2 * 1024 * 1024;
+	zend_long limit = PG(memory_limit);
+	size_t used;
+
+	if (limit <= 0) {
+		return true;
+	}
+
+	used = zend_memory_usage(true);
+
+	return used < (size_t)limit && (size_t)limit - used > growth &&
+		   (size_t)limit - used - growth >= chunk_margin;
+}
+
 void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
 	luaext_sandbox *sandbox = (luaext_sandbox *)ud;
@@ -201,7 +229,14 @@ void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	const size_t old = (ptr != NULL) ? osize : 0;
 
 	if (nsize == 0) {
-		free(ptr);
+		if (alloc->use_zend_mm) {
+			/* efree, unlike free, does not accept NULL. */
+			if (ptr != NULL) {
+				efree(ptr);
+			}
+		} else {
+			free(ptr);
+		}
 
 		/*
 		 * Cannot underflow: `usage` is the sum of the sizes of exactly the live
@@ -221,7 +256,11 @@ void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 			return NULL;
 		}
 
-		block = realloc(ptr, nsize);
+		if (alloc->use_zend_mm && !luaext_alloc_zend_mm_headroom(growth)) {
+			return NULL;
+		}
+
+		block = alloc->use_zend_mm ? erealloc(ptr, nsize) : realloc(ptr, nsize);
 
 		/*
 		 * Nothing has been touched yet, so a failed allocation leaves every
@@ -252,9 +291,10 @@ void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	 * A shrink is never refused. Lua asserts that a reallocation to a non-zero
 	 * size succeeds (lmem.c:186) and luaM_saferealloc_ turns a NULL into a
 	 * memory error, so refusing to shrink would strand a sandbox that has no
-	 * way left to give memory back — precisely when it most needs one.
+	 * way left to give memory back — precisely when it most needs one. (A
+	 * ZendMM shrink cannot trip memory_limit, so no headroom check either.)
 	 */
-	block = realloc(ptr, nsize);
+	block = alloc->use_zend_mm ? erealloc(ptr, nsize) : realloc(ptr, nsize);
 
 	if (block == NULL) {
 		/*

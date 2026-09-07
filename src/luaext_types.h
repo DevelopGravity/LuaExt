@@ -374,6 +374,16 @@ typedef struct {
 	size_t charged;
 	size_t peak;
 	size_t gc_last_tune;
+
+	/*
+	 * luaext.use_zend_mm, captured at construction so one state allocates and
+	 * frees through a single allocator for its whole life whatever the INI
+	 * does later. Routing through ZendMM makes the Lua heap visible to
+	 * memory_get_usage() and PHP's own memory_limit; the RSHUTDOWN sweep
+	 * closes every live sandbox before the request arena resets, which is
+	 * what makes request-lifetime memory sound here.
+	 */
+	bool use_zend_mm;
 } luaext_alloc;
 
 /* -------------------------------------------------------------------------
