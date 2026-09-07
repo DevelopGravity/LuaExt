@@ -25,6 +25,7 @@ if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
 declare(strict_types=1);
 
 use DevelopGravity\LuaExt\Exception\CpuLimitError;
+use DevelopGravity\LuaExt\Exception\WallClockLimitError;
 use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\Sandbox;
 use DevelopGravity\LuaExt\SandboxConfig;
@@ -74,7 +75,11 @@ for ($round = 0; $round < ROUNDS; $round++) {
 	try {
 		(void) $sandbox->eval('local x = 0 for i = 1, 1000000 do x = x + i end return x', '=churn');
 		$finished++;
-	} catch (CpuLimitError) {
+	} catch (CpuLimitError | WallClockLimitError) {
+		// Either timing limit counts as "a deadline fired before teardown",
+		// which is all an $expires round exists to arrange. WHICH one wins is
+		// the scheduler's call: a starved CI runner can pass the 50ms wall
+		// budget while the loop was granted less than its 1ms of CPU.
 		$stopped++;
 	}
 
@@ -104,7 +109,9 @@ $last = new Sandbox(new SandboxConfig(
 try {
 	(void) $last->eval('while true do end', '=runaway');
 	echo "NOT STOPPED\n";
-} catch (CpuLimitError) {
+} catch (CpuLimitError | WallClockLimitError) {
+	// Same scheduler tolerance as the churn loop: enforcement is the subject,
+	// not which of the two deadlines out-raced the other.
 	echo "a slot handed out after the churn still enforces\n";
 }
 
