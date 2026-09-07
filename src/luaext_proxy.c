@@ -15,6 +15,7 @@
 #include "luaext_proxy.h"
 
 #include "luaext_defer.h"
+#include "luaext_error.h"
 #include "luaext_phpcall.h"
 
 #include <lauxlib.h>
@@ -335,6 +336,65 @@ static int luaext_proxy_release(lua_State *L)
 	return 0;
 }
 
+/*
+ * Instance dispatch. Upvalues: (1) the class record, (2) the vetted
+ * zend_function, (3) the Lua-visible name. Colon convention: the first
+ * argument must be a proxy of this exact class — subclass instances already
+ * wrapped as their nearest registered ancestor, so one identity check covers
+ * the hierarchy. Everything past self converts through the shared boundary,
+ * which is what makes chaining work: a returned registered instance wraps on
+ * the way back out.
+ */
+static int luaext_proxy_method_call(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	zend_function *method = (zend_function *)lua_touserdata(L, lua_upvalueindex(2));
+	const char *name = lua_tostring(L, lua_upvalueindex(3));
+	luaext_proxy_ud *self = luaext_proxy_test(LUAEXT_SB(L), L, 1);
+	luaext_phpcall_target target;
+
+	if (self == NULL || self->cls != cls) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "method '%s' must be called with a colon (obj:%s(...))", name, name);
+	}
+
+	target.fcc = NULL;
+	target.fn = method;
+	target.bound = self->object;
+	target.scope = self->object->ce;
+	target.label = name;
+	target.first_arg = 2;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
+/* The __tostring metamethod, present only when __toString() was marked. */
+static int luaext_proxy_tostring(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	luaext_proxy_ud *self = luaext_proxy_test(LUAEXT_SB(L), L, 1);
+	luaext_phpcall_target target;
+
+	if (self == NULL || self->cls != cls) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "tostring() received a value that is not a %s proxy",
+						   ZSTR_VAL(cls->lua_name));
+	}
+
+	/* Lua calls __tostring with just the value; drop anything above it so the
+	 * boundary converts no stray arguments. */
+	lua_settop(L, 1);
+
+	target.fcc = NULL;
+	target.fn = cls->to_string;
+	target.bound = self->object;
+	target.scope = self->object->ce;
+	target.label = "__toString";
+	target.first_arg = 2;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
 /* Push the proxymts map (metatable -> class light ud), creating it lazily. */
 static void luaext_proxy_mts_map(lua_State *L)
 {
@@ -366,6 +426,33 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 	 * stamp it onto its own value could hand the collector a forged payload. */
 	lua_pushboolean(L, 0);
 	lua_setfield(L, -2, "__metatable");
+
+	/* __index: one shared closure per exposed instance method. A missing
+	 * name reads as nil and fails the standard Lua way. */
+	{
+		zend_string *method_name;
+		zend_function *method;
+
+		lua_createtable(L, 0, (int)zend_hash_num_elements(cls->instance_methods));
+
+		ZEND_HASH_MAP_FOREACH_STR_KEY_PTR(cls->instance_methods, method_name, method)
+		{
+			lua_pushlightuserdata(L, cls);
+			lua_pushlightuserdata(L, method);
+			lua_pushlstring(L, ZSTR_VAL(method_name), ZSTR_LEN(method_name));
+			lua_pushcclosure(L, luaext_proxy_method_call, 3);
+			lua_setfield(L, -2, ZSTR_VAL(method_name));
+		}
+		ZEND_HASH_FOREACH_END();
+
+		lua_setfield(L, -2, "__index");
+	}
+
+	if (cls->to_string != NULL) {
+		lua_pushlightuserdata(L, cls);
+		lua_pushcclosure(L, luaext_proxy_tostring, 1);
+		lua_setfield(L, -2, "__tostring");
+	}
 
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, cls);

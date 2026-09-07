@@ -197,7 +197,9 @@ static int luaext_phpcall_push_result(lua_State *L)
 }
 
 /*
- * The C closure every registered callable is reached through.
+ * The boundary core every host call goes through — registered callables via
+ * the closure below it, proxy dispatch (methods, statics, operators)
+ * directly. Exactly one of target->fcc / target->fn is set.
  *
  * One PHP return value becomes one Lua value: a string returns a string, an
  * array returns a table. The extension this replaces required a callback to
@@ -205,20 +207,16 @@ static int luaext_phpcall_push_result(lua_State *L)
  * the common case the awkward one; a script that genuinely wants several values
  * out of one call unpacks the table it was given.
  */
-static int luaext_phpcall_invoke(lua_State *L)
+int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *target)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
-	luaext_phpcall_ud *slot = (luaext_phpcall_ud *)lua_touserdata(L, lua_upvalueindex(1));
-
-	/* Only read out of the storage once the storage has been vouched for: a
-	 * userdata that is not ours has no name field to read. */
-	const char *label = LUAEXT_PHPCALL_ANONYMOUS;
+	const char *label = target->label != NULL ? target->label : LUAEXT_PHPCALL_ANONYMOUS;
 	uint32_t depth_limit;
 	zval *params = NULL;
 	size_t params_bytes = 0;
 	size_t content_bytes = 0;
 	zval result;
-	int argc = lua_gettop(L);
+	int argc = lua_gettop(L) - (target->first_arg - 1);
 	int index;
 	int status = LUA_OK;
 	bool converted = true;
@@ -230,12 +228,9 @@ static int luaext_phpcall_invoke(lua_State *L)
 	 * Past it, the frame owns zvals and host memory and must not.
 	 */
 
-	if (slot == NULL || slot->magic != LUAEXT_PHPCALL_MAGIC || !ZEND_FCC_INITIALIZED(slot->fcc)) {
-		luaext_error_raise(L, LUAEXT_ERR_ABORT, true,
-						   "A host callback was invoked after its storage was released");
+	if (argc < 0) {
+		argc = 0;
 	}
-
-	label = luaext_phpcall_label(slot);
 
 	if (sandbox == NULL || sandbox->closed || sandbox->L == NULL) {
 		luaext_error_raise(L, LUAEXT_ERR_ABORT, true,
@@ -309,7 +304,8 @@ static int luaext_phpcall_invoke(lua_State *L)
 	for (index = 0; index < argc && converted; index++) {
 		size_t billed = 0;
 
-		converted = luaext_convert_to_zval_billed(sandbox, L, index + 1, &params[index], &billed);
+		converted = luaext_convert_to_zval_billed(sandbox, L, target->first_arg + index,
+												  &params[index], &billed);
 
 		/* Accumulated even when that call failed: a partial conversion has
 		 * already charged for the part it built. */
@@ -347,9 +343,15 @@ static int luaext_phpcall_invoke(lua_State *L)
 		 * zend_call_known_fcc() rather than zend_call_function(): it copies a
 		 * trampoline before calling, because zend_call_function() frees the one
 		 * it is given, and the fcc it would be given here is the closure's own
-		 * long-lived copy.
+		 * long-lived copy. The fn branch is the proxy path: a vetted
+		 * zend_function on a known receiver needs no callable resolution at all.
 		 */
-		zend_call_known_fcc(&slot->fcc, &result, (uint32_t)argc, params, NULL);
+		if (target->fcc != NULL) {
+			zend_call_known_fcc(target->fcc, &result, (uint32_t)argc, params, NULL);
+		} else {
+			zend_call_known_function(target->fn, target->bound, target->scope, &result,
+									 (uint32_t)argc, params, NULL);
+		}
 
 		luaext_timers_span_end(sandbox, &sandbox->php_span_depth, &host_span,
 							   &sandbox->php_time_wall_ns, &sandbox->php_time_cpu_ns);
@@ -503,6 +505,29 @@ static int luaext_phpcall_invoke(lua_State *L)
 	}
 
 	return 1;
+}
+
+/* The C closure every registered callable is reached through. */
+static int luaext_phpcall_invoke(lua_State *L)
+{
+	luaext_phpcall_ud *slot = (luaext_phpcall_ud *)lua_touserdata(L, lua_upvalueindex(1));
+	luaext_phpcall_target target;
+
+	/* Only read out of the storage once the storage has been vouched for: a
+	 * userdata that is not ours has no name field to read. */
+	if (slot == NULL || slot->magic != LUAEXT_PHPCALL_MAGIC || !ZEND_FCC_INITIALIZED(slot->fcc)) {
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true,
+						   "A host callback was invoked after its storage was released");
+	}
+
+	target.fcc = &slot->fcc;
+	target.fn = NULL;
+	target.bound = NULL;
+	target.scope = NULL;
+	target.label = luaext_phpcall_label(slot);
+	target.first_arg = 1;
+
+	return luaext_phpcall_invoke_target(L, &target);
 }
 
 /* -------------------------------------------------------------------------

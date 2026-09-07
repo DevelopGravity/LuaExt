@@ -56,4 +56,30 @@ HashTable *luaext_phpcall_collect_methods(zval *instance, HashTable *allowlist);
 bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *method,
 								   zend_string **out);
 
+/*
+ * One host call through the boundary, whoever initiates it.
+ *
+ * Exactly one of `fcc` / `fn` is set: registered callables carry their own
+ * long-lived fcall cache, while proxy dispatch calls a known zend_function on
+ * a known receiver. Either way the call inherits every boundary rule — depth
+ * limits, argument billing, timer pausing, span accounting, and the
+ * RuntimeError-catchable classification.
+ */
+typedef struct {
+	zend_fcall_info_cache *fcc; /* the registered-callable path */
+	zend_function *fn;			/* direct engine call: zend_call_known_function */
+	zend_object *bound;			/* receiver for fn calls; NULL for statics */
+	zend_class_entry *scope;	/* called scope for fn calls */
+	const char *label;			/* what messages call this target; NULL = anonymous */
+	int first_arg;				/* first Lua stack index converted as an argument */
+} luaext_phpcall_target;
+
+/*
+ * Convert stack values [first_arg..top] into arguments, call the target, and
+ * push its one converted result. Returns 1, or raises under the existing
+ * catchable-vs-fatal rule. Must run inside a Lua-protected context, like the
+ * closure it was extracted from.
+ */
+int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *target);
+
 #endif /* LUAEXT_PHPCALL_H */
