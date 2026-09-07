@@ -146,6 +146,30 @@ const SURFACE_CHUNK = <<<'LUA'
         key = next(environment, key)
     end
 
+    -- package is a read-only proxy (see luaext_require.c): its fields live
+    -- behind an __index the raw walk above deliberately cannot see. They are
+    -- still reachable surface, so they are probed by their documented names.
+    -- Going through the metamethod here does not break the no-metamethod
+    -- rule's point: this one is the extension's own, installed before any
+    -- script ran, and a script cannot replace it (__metatable is false and
+    -- writes to package raise).
+    local package_proxy = rawget(environment, "package")
+
+    if type(package_proxy) == "table" then
+        local names = {"loaded", "preload", "path", "cpath", "searchers", "loadlib"}
+        local index = 1
+
+        while names[index] ~= nil do
+            local value = package_proxy[names[index]]
+
+            if value ~= nil then
+                result[#result + 1] = "package." .. names[index] .. "\t" .. type(value)
+            end
+
+            index = index + 1
+        end
+    end
+
     return result
     LUA;
 
