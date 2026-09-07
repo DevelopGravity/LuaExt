@@ -125,6 +125,6 @@ fileBytes:   [catchable] A file range ending at byte %d exceeds the 64 byte VfsQ
 totalBytes:  [fatal] Buffering %d more byte(s) would pass the 256 byte VfsQuota::$maxTotalBytes
 files:       [fatal] The filesystem already holds 3 file(s), which is its VfsQuota::$maxFiles
 operations:  [fatal] This call has already made 12 filesystem operation(s), which is its VfsQuota::$maxOperations
-pathLength:  [catchable] This path cannot be used: %s
-pathDepth:   [catchable] This path cannot be used: %s
+pathLength:  [catchable] This path cannot be used: is longer than the filesystem quota allows
+pathDepth:   [catchable] This path cannot be used: nests deeper than the filesystem quota allows
 int(6)
