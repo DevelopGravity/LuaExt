@@ -205,6 +205,34 @@ static int luaext_corolib_do_resume(lua_State *L, lua_State *co, int nargs, int 
 	return status;
 }
 
+/*
+ * Close `co` with running_L pointing at it for the duration.
+ *
+ * lua_closethread runs the thread's <close> handlers ON `co`, and those are
+ * script code like any resumed body: everything that resolves "the state that
+ * is executing" from running_L -- interrupt delivery, the output layer's
+ * exception reporting -- must see `co`, not whichever state asked for the
+ * close. Raising on the wrong state is not cosmetic: the main thread has no
+ * errorJmp here, so a raise routed to it would reach the panic handler and
+ * take the request. Saved and restored rather than cleared, for the reason
+ * do_resume records.
+ *
+ * The self-close (co == L from inside co) never returns and skips the restore,
+ * which is harmless: running_L already names co on that path, and the resume
+ * frame it unwinds to restores its own saved value.
+ */
+static int luaext_corolib_close_thread(luaext_sandbox *sandbox, lua_State *co, lua_State *from)
+{
+	lua_State *previous = sandbox->running_L;
+	int status;
+
+	sandbox->running_L = co;
+	status = lua_closethread(co, from);
+	sandbox->running_L = previous;
+
+	return status;
+}
+
 static int luaext_corolib_resume(lua_State *L)
 {
 	lua_State *co = lua_tothread(L, 1);
@@ -317,7 +345,7 @@ static int luaext_corolib_wrapped(lua_State *L)
 	 * on what lua_resume reported.
 	 */
 	if (lua_status(co) != LUA_OK && lua_status(co) != LUA_YIELD) {
-		status = lua_closethread(co, L);
+		status = luaext_corolib_close_thread(LUAEXT_SB(L), co, L);
 	}
 
 	/*
@@ -467,11 +495,11 @@ static int luaext_corolib_close(lua_State *L)
 			return luaL_error(L, "cannot close main thread");
 		}
 
-		lua_closethread(co, L);
+		luaext_corolib_close_thread(LUAEXT_SB(L), co, L);
 		/* The self-close does not return. */
 	}
 
-	status = lua_closethread(co, L);
+	status = luaext_corolib_close_thread(LUAEXT_SB(L), co, L);
 
 	if (status == LUA_OK) {
 		lua_pushboolean(L, 1);
@@ -590,9 +618,13 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 				 * protected call in between -- and the sticky interrupt flag,
 				 * still set at this point, is what actually stops a handler
 				 * that tripped a limit. Every thread gets closed either way;
-				 * one misbehaving handler must not strand the rest.
+				 * one misbehaving handler must not strand the rest. A host
+				 * exception a handler provoked survives regardless: the output
+				 * layer declines to raise while co_sweeping is set, so it
+				 * stays pending in PHP rather than being caught and dropped
+				 * here.
 				 */
-				(void)lua_closethread(co, L);
+				(void)luaext_corolib_close_thread(sandbox, co, L);
 			}
 		}
 	}

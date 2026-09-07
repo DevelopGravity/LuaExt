@@ -387,6 +387,17 @@ static void luaext_output_report_exception(luaext_sandbox *sandbox)
 	}
 
 	/*
+	 * The end-of-call coroutine sweep is inside the interpreter by the in_lua
+	 * count, but a raise there lands in lua_closethread's protected frame and
+	 * the sweep discards close statuses by design -- the host's exception
+	 * would be caught and dropped where nothing reports it. Declining leaves
+	 * it pending for PHP, which the boundary is about to return to anyway.
+	 */
+	if (sandbox->co_sweeping) {
+		return;
+	}
+
+	/*
 	 * A RuntimeError stays catchable and anything else becomes fatal, and either
 	 * way the original object is carried rather than its message text. That
 	 * judgement belongs to the error subsystem, not here.
