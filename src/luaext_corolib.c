@@ -79,6 +79,18 @@ static int luaext_corolib_create(lua_State *L)
 
 	luaL_checktype(L, 1, LUA_TFUNCTION);
 
+	/*
+	 * The sweep is closing this call's coroutines; a <close> handler creating
+	 * new ones mid-sweep is exactly the suspended state the sweep exists to
+	 * end, and inserting into the tracking table would rehash it under the
+	 * sweep's own iterator. Catchable: the handler simply fails, and
+	 * lua_closethread swallows what it raises.
+	 */
+	if (sandbox->co_sweeping) {
+		return luaL_error(L,
+						  "coroutines cannot be created while the call that owns them is closing");
+	}
+
 	cap = sandbox->policy.limits.max_live_coroutines;
 
 	if (cap != 0 && sandbox->co_live >= cap) {
@@ -498,38 +510,50 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 		return;
 	}
 
-	luaext_corolib_push_threads(L);
+	/*
+	 * Two defences against the same attack, and both are needed. Closing a
+	 * thread runs its <close> handlers, and a handler that created a coroutine
+	 * mid-sweep would insert into the table lua_next is walking -- a rehash
+	 * under the iterator skips entries, and a skipped suspended coroutine
+	 * survives the call that created it, resumable from the next one. Measured
+	 * before this shape: 45 of 50 adversarial calls leaked one.
+	 *
+	 * So creation is refused for the duration (see luaext_corolib_create),
+	 * which is what makes co_live = 0 below true rather than asserted -- and
+	 * the table is detached anyway, so nothing a handler does can reach the
+	 * one being walked.
+	 */
+	sandbox->co_sweeping = true;
 
-	lua_pushnil(L);
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_threads) == LUA_TTABLE) {
+		lua_pushnil(L);
+		lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_threads);
 
-	while (lua_next(L, -2) != 0) {
-		lua_State *co = lua_tothread(L, -2);
+		lua_pushnil(L);
 
-		lua_pop(L, 1); /* value; the key stays for lua_next */
+		while (lua_next(L, -2) != 0) {
+			lua_State *co = lua_tothread(L, -2);
 
-		if (co != NULL && co != L) {
-			/*
-			 * Return value deliberately ignored. A <close> handler that raised
-			 * has nowhere to report to -- this runs between the script finishing
-			 * and the boundary returning, with no protected call in between --
-			 * and the sticky interrupt flag, still set at this point, is what
-			 * actually stops a handler that tripped a limit. Every thread gets
-			 * closed either way; one misbehaving handler must not strand the
-			 * rest.
-			 */
-			(void)lua_closethread(co, L);
+			lua_pop(L, 1); /* value; the key stays for lua_next */
+
+			if (co != NULL && co != L) {
+				/*
+				 * Return value deliberately ignored. A <close> handler that
+				 * raised has nowhere to report to -- this runs between the
+				 * script finishing and the boundary returning, with no
+				 * protected call in between -- and the sticky interrupt flag,
+				 * still set at this point, is what actually stops a handler
+				 * that tripped a limit. Every thread gets closed either way;
+				 * one misbehaving handler must not strand the rest.
+				 */
+				(void)lua_closethread(co, L);
+			}
 		}
 	}
 
-	lua_pop(L, 1);
+	lua_pop(L, 1); /* the detached table, or whatever non-table was found */
 
-	/*
-	 * Emptied rather than left to the collector: the guarantee is that no
-	 * suspended state survives the call, and a dead thread still in the table
-	 * would keep the count wrong for the next one.
-	 */
-	lua_pushnil(L);
-	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_threads);
+	sandbox->co_sweeping = false;
 
 	sandbox->co_live = 0;
 	sandbox->co_depth = 0;

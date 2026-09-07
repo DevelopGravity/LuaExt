@@ -455,6 +455,10 @@ struct luaext_sandbox {
 	uint32_t co_depth;
 	uint32_t co_peak_depth;
 
+	/* The call-scope sweep is closing this call's coroutines; creating new ones
+	 * is refused for the duration. See luaext_corolib_sweep(). */
+	bool co_sweeping;
+
 	/* PHP references waiting to be released somewhere the collector is not
 	 * running. See luaext_defer.h. */
 	luaext_deferred deferred;
