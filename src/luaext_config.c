@@ -577,13 +577,14 @@ bool luaext_config_refuse_hooks_with_limits(bool debug_hooks, bool has_cpu_limit
 
 	zend_throw_exception(
 		luaext_ce_configuration_error,
-		"The debugHooks capability cannot be combined with a CPU or wall-clock limit: a "
-		"script that can call debug.sethook() replaces the interpreter hook BOTH limits "
-		"are delivered through -- the watchdog thread only raises a flag, and that hook "
-		"is what turns the flag into a stopped script -- so either limit would stop being "
-		"enforced the moment the script chose to. Either drop debugHooks, or set both "
-		"Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this "
-		"sandbox cannot be bounded in time.",
+		"The debugHooks capability cannot be combined with a CPU or wall-clock limit. On a "
+		"build whose watchdog thread cannot start, both limits are delivered through the "
+		"interpreter's count hook, and a script that can call debug.sethook() would replace "
+		"it -- and whether that fallback will be needed is not knowable when the sandbox is "
+		"constructed. A limit that stops being enforced the moment the script chooses is "
+		"not a limit. Either drop debugHooks, or set both Limits::$cpuSeconds and "
+		"Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded "
+		"in time.",
 		0);
 
 	return true;
@@ -612,15 +613,17 @@ static bool luaext_config_check(zend_object *capabilities, zend_object *limits,
 	}
 
 	/*
-	 * Debug hooks are per-coroutine and there is only one of them. A script
-	 * that can call debug.sethook() can therefore replace the hook the limits
-	 * are delivered through, which makes the pair unsatisfiable rather than
-	 * merely unwise: whichever is configured, the script decides.
+	 * Primary delivery is the interrupt check at the VM's back edges (the
+	 * vendored LUAEXT_VMCHECK, patch 0009), which debug.sethook() cannot
+	 * displace. What it CAN displace is the fallback: on a build whose
+	 * watchdog thread failed to start, the count hook is the only thing that
+	 * turns a raised flag into a stopped script, and there is exactly one
+	 * hook slot per thread. Whether that fallback will be needed is not
+	 * knowable at construction -- the thread starts lazily -- so the pair is
+	 * refused rather than accepted on a promise this build might not keep.
 	 *
-	 * The wall-clock limit is covered too, and that is not an over-reach. The
-	 * watchdog thread only ever raises a FLAG; the flag is turned into a stopped
-	 * script by the same count hook, so displacing the hook defeats both limits
-	 * and not just the one whose name mentions the CPU.
+	 * The wall-clock limit is covered too, and that is not an over-reach: on
+	 * the fallback path the same hook delivers both flags.
 	 */
 	if (luaext_config_refuse_hooks_with_limits(debug_hooks, has_cpu_limit, has_wall_limit)) {
 		return false;

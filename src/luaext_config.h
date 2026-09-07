@@ -23,8 +23,9 @@ void luaext_config_startup(void);
  * satisfied. The refusals are deliberate and belong here rather than at the
  * point of use:
  *
- *   - debugHooks together with a CPU limit, because a script that can install
- *     its own debug hook can displace the one the limit depends on;
+ *   - debugHooks together with a timing limit, because on a build whose
+ *     watchdog thread cannot start the limits fall back to the count hook,
+ *     and a script that can install its own debug hook displaces it;
  *   - a fixed seed without deterministic mode, because pinning the string
  *     hash seed forfeits hash-flooding protection and must be asked for;
  *   - the vfs capability with no FileSystem to back it;

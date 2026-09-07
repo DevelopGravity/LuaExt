@@ -141,9 +141,9 @@ var_dump($forever->limits?->wallClockSeconds);
 
 ?>
 --EXPECTF--
-The debugHooks capability cannot be combined with a CPU or wall-clock limit: a script that can call debug.sethook() replaces the interpreter hook BOTH limits are delivered through -- the watchdog thread only raises a flag, and that hook is what turns the flag into a stopped script -- so either limit would stop being enforced the moment the script chose to. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
+The debugHooks capability cannot be combined with a CPU or wall-clock limit. On a build whose watchdog thread cannot start, both limits are delivered through the interpreter's count hook, and a script that can call debug.sethook() would replace it -- and whether that fallback will be needed is not knowable when the sandbox is constructed. A limit that stops being enforced the moment the script chooses is not a limit. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
 
-The debugHooks capability cannot be combined with a CPU or wall-clock limit: a script that can call debug.sethook() replaces the interpreter hook BOTH limits are delivered through -- the watchdog thread only raises a flag, and that hook is what turns the flag into a stopped script -- so either limit would stop being enforced the moment the script chose to. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
+The debugHooks capability cannot be combined with a CPU or wall-clock limit. On a build whose watchdog thread cannot start, both limits are delivered through the interpreter's count hook, and a script that can call debug.sethook() would replace it -- and whether that fallback will be needed is not knowable when the sandbox is constructed. A limit that stops being enforced the moment the script chooses is not a limit. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
 
 bool(true)
 A fixed SandboxConfig::$seed pins Lua's string hash seed, which forfeits the hash-flooding protection a random seed provides, so it has to be asked for explicitly: pass deterministic: true alongside it if this sandbox runs code you trust, or leave $seed null to draw one from the system CSPRNG.
@@ -165,7 +165,7 @@ The vfs and vfsWrite capabilities need a backing store, but SandboxConfig::$file
 
 A fixed SandboxConfig::$seed pins Lua's string hash seed, which forfeits the hash-flooding protection a random seed provides, so it has to be asked for explicitly: pass deterministic: true alongside it if this sandbox runs code you trust, or leave $seed null to draw one from the system CSPRNG.
 
-The debugHooks capability cannot be combined with a CPU or wall-clock limit: a script that can call debug.sethook() replaces the interpreter hook BOTH limits are delivered through -- the watchdog thread only raises a flag, and that hook is what turns the flag into a stopped script -- so either limit would stop being enforced the moment the script chose to. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
+The debugHooks capability cannot be combined with a CPU or wall-clock limit. On a build whose watchdog thread cannot start, both limits are delivered through the interpreter's count hook, and a script that can call debug.sethook() would replace it -- and whether that fallback will be needed is not knowable when the sandbox is constructed. A limit that stops being enforced the moment the script chooses is not a limit. Either drop debugHooks, or set both Limits::$cpuSeconds and Limits::$wallClockSeconds to null and accept that this sandbox cannot be bounded in time.
 
 bool(true)
 --- negative limits ---
