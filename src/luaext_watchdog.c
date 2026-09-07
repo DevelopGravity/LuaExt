@@ -1112,17 +1112,22 @@ void luaext_watchdog_arm(luaext_watch_slot *slot)
 	bool queue;
 
 	/*
-	 * The no-limit fast path, and the reason it reads an owner-only mirror
-	 * rather than the slot's own state: every eval() and call() goes through
-	 * here, and a process-wide -- or even a per-slot -- lock acquisition on the
-	 * common case where the host set no timing limit would be a measurable
-	 * regression for no benefit.
+	 * MEASUREMENT IS NOT GATED ON has_limits; only enforcement is. The
+	 * segments open on every outermost entry so that stats()->cpuSeconds and
+	 * ->wallClockSeconds describe what the sandbox actually spent, limits or
+	 * none -- a no-limit sandbox that reported 0.0 forever was handing
+	 * billing pipelines a lie. The cost on the no-limit path is this slot's
+	 * lock and two clock reads per outermost eval()/call(), the same price
+	 * every limit-armed call already paid; what stays gated is the watchdog
+	 * thread, which a sandbox with nothing to enforce never starts.
 	 */
-	if (slot == NULL || !slot->has_limits || slot->armed) {
+	if (slot == NULL || slot->armed) {
 		return;
 	}
 
-	luaext_watch_ensure_thread();
+	if (slot->has_limits) {
+		luaext_watch_ensure_thread();
+	}
 
 	luaext_mutex_lock(&slot->lock);
 
@@ -1139,8 +1144,8 @@ void luaext_watchdog_arm(luaext_watch_slot *slot)
 	 * exhausted. The flag is sticky, so the boundary that returns to PHP reports
 	 * it even if the chunk never ticks the hook at all.
 	 */
-	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline) &&
-			!luaext_watch_covered(slot, deadline);
+	queue = slot->has_limits && !luaext_watch_evaluate(slot) &&
+			luaext_watch_deadline(slot, &deadline) && !luaext_watch_covered(slot, deadline);
 
 	if (queue) {
 		luaext_watch_stamp(slot, &entry, deadline);
@@ -1209,10 +1214,12 @@ void luaext_watchdog_pause(luaext_watch_slot *slot, uint8_t mask)
 
 	slot->paused = (uint8_t)(slot->paused | mask);
 
-	if (!slot->has_limits) {
-		return;
-	}
-
+	/*
+	 * Segments close whether or not a limit is set: the pause suspends
+	 * MEASUREMENT, and stats report exactly what enforcement would have
+	 * billed. The close is a no-op for a slot that never armed, so the lock
+	 * is only ever taken where a pause can matter.
+	 */
 	luaext_mutex_lock(&slot->lock);
 	luaext_watch_close(slot, mask);
 	luaext_mutex_unlock(&slot->lock);
@@ -1238,10 +1245,6 @@ bool luaext_watchdog_resume(luaext_watch_slot *slot, uint8_t mask)
 
 	slot->paused = (uint8_t)(slot->paused & ~mask);
 
-	if (!slot->has_limits) {
-		return false;
-	}
-
 	luaext_mutex_lock(&slot->lock);
 
 	if (slot->armed) {
@@ -1253,15 +1256,19 @@ bool luaext_watchdog_resume(luaext_watch_slot *slot, uint8_t mask)
 		 * hand the script a whole extra budget, which is exactly the hole the
 		 * old "expired while paused" reconstruction existed to paper over.
 		 * Nothing expires while paused here, because while paused nothing is
-		 * measured -- but time billed BEFORE the pause still counts.
+		 * measured -- but time billed BEFORE the pause still counts. All of it
+		 * is enforcement, so a slot measuring without limits skips it.
 		 */
-		spent = luaext_watch_evaluate(slot);
+		if (slot->has_limits) {
+			spent = luaext_watch_evaluate(slot);
 
-		if (!spent) {
-			queue = luaext_watch_deadline(slot, &deadline) && !luaext_watch_covered(slot, deadline);
+			if (!spent) {
+				queue = luaext_watch_deadline(slot, &deadline) &&
+						!luaext_watch_covered(slot, deadline);
 
-			if (queue) {
-				luaext_watch_stamp(slot, &entry, deadline);
+				if (queue) {
+					luaext_watch_stamp(slot, &entry, deadline);
+				}
 			}
 		}
 	}
