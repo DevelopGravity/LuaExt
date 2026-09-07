@@ -62,9 +62,10 @@ vfsBytes             int
 vfsWallClockSeconds  float
 vfsCpuSeconds        float
 gcCollections        int
+liveObjectProxies    int
 luaCallsIn           int
 phpCallsOut          int
 phpWallClockSeconds  float
 phpCpuSeconds        float
 bool(true)
-{"memoryBytes":0,"peakMemoryBytes":0,"memoryLimitBytes":0,"cpuSeconds":0,"wallClockSeconds":0,"outputBytes":0,"outputTruncated":false,"liveCoroutines":0,"peakCoroutineDepth":0,"modulesLoaded":0,"cachedChunks":0,"vfsOperations":0,"vfsBytes":0,"vfsWallClockSeconds":0,"vfsCpuSeconds":0,"gcCollections":0,"luaCallsIn":0,"phpCallsOut":0,"phpWallClockSeconds":0,"phpCpuSeconds":0}
+{"memoryBytes":0,"peakMemoryBytes":0,"memoryLimitBytes":0,"cpuSeconds":0,"wallClockSeconds":0,"outputBytes":0,"outputTruncated":false,"liveCoroutines":0,"peakCoroutineDepth":0,"modulesLoaded":0,"cachedChunks":0,"vfsOperations":0,"vfsBytes":0,"vfsWallClockSeconds":0,"vfsCpuSeconds":0,"gcCollections":0,"liveObjectProxies":0,"luaCallsIn":0,"phpCallsOut":0,"phpWallClockSeconds":0,"phpCpuSeconds":0}

@@ -1264,11 +1264,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	bool cache_compiled_chunks = false;
 	zend_object *seal_mode = NULL;
 	zend_string *bytecode_key = NULL;
+	/* A zval, not a HashTable, for the same empty-array reason as modulePaths. */
+	zval *classes = NULL;
 	zend_object *object;
 	luaext_policy policy;
 	zval value;
 
-	ZEND_PARSE_PARAMETERS_START(0, 14)
+	ZEND_PARSE_PARAMETERS_START(0, 15)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(capabilities, luaext_ce_capabilities)
 	Z_PARAM_OBJ_OF_CLASS_OR_NULL(limits, luaext_ce_limits)
@@ -1284,6 +1286,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	Z_PARAM_BOOL(cache_compiled_chunks)
 	Z_PARAM_OBJ_OF_CLASS(seal_mode, luaext_ce_seal_mode)
 	Z_PARAM_STR_OR_NULL(bytecode_key)
+	Z_PARAM_ARRAY(classes)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object = Z_OBJ_P(ZEND_THIS);
@@ -1304,6 +1307,29 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 									 seed, deterministic, cache_compiled_chunks, seal_mode,
 									 bytecode_key, &policy)) {
 		RETURN_THROWS();
+	}
+
+	/*
+	 * Shape only: entries must be non-empty strings. The classes themselves
+	 * need not be loaded yet — a config object may predate them, and the
+	 * Sandbox constructor is where each name is resolved and registered.
+	 */
+	if (classes != NULL) {
+		zval *class_entry_name;
+
+		ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(classes), class_entry_name)
+		{
+			ZVAL_DEREF(class_entry_name);
+
+			if (Z_TYPE_P(class_entry_name) != IS_STRING || Z_STRLEN_P(class_entry_name) == 0) {
+				zend_throw_exception(luaext_ce_configuration_error,
+									 "SandboxConfig::$classes must hold non-empty class-name "
+									 "strings",
+									 0);
+				RETURN_THROWS();
+			}
+		}
+		ZEND_HASH_FOREACH_END();
 	}
 
 	if (capabilities != NULL) {
@@ -1391,6 +1417,14 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	}
 
 	LUAEXT_SET(object, "bytecodeKey", &value);
+
+	if (classes != NULL) {
+		ZVAL_COPY(&value, classes);
+	} else {
+		ZVAL_EMPTY_ARRAY(&value);
+	}
+
+	LUAEXT_SET(object, "classes", &value);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with)
@@ -1500,6 +1534,9 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	LUAEXT_SET(object, "vfsCpuSeconds", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->gc_collections);
 	LUAEXT_SET(object, "gcCollections", &value);
+	/* FIXME: wired to the real live-proxy counter in wave 17 task 2. */
+	ZVAL_LONG(&value, 0);
+	LUAEXT_SET(object, "liveObjectProxies", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->lua_calls_in);
 	LUAEXT_SET(object, "luaCallsIn", &value);
 	ZVAL_LONG(&value, (zend_long)sandbox->php_calls_out);
@@ -1863,6 +1900,67 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaMethod, __construct)
 	}
 
 	LUAEXT_ASSIGN(object, "name", &value);
+}
+
+/* The attribute instance operator mapping reads; same shape as LuaMethod. */
+ZEND_METHOD(DevelopGravity_LuaExt_LuaOperator, __construct)
+{
+	zend_object *operator_case;
+	zend_object *object;
+	zval value;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_OBJ_OF_CLASS(operator_case, luaext_ce_operator)
+	ZEND_PARSE_PARAMETERS_END();
+
+	object = Z_OBJ_P(ZEND_THIS);
+
+	ZVAL_OBJ_COPY(&value, operator_case);
+	LUAEXT_ASSIGN(object, "operator", &value);
+}
+
+/*
+ * The class-level configuration carrier registerClass() reads. A carrier,
+ * never a grant: holding this attribute exposes nothing until a sandbox
+ * registers the class.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_LuaClass, __construct)
+{
+	zend_string *lua_name = NULL;
+	zval *methods = NULL;
+	zval *operators = NULL;
+	zend_object *object;
+	zval value;
+
+	ZEND_PARSE_PARAMETERS_START(0, 3)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_STR_OR_NULL(lua_name)
+	Z_PARAM_ARRAY_OR_NULL(methods)
+	Z_PARAM_ARRAY_OR_NULL(operators)
+	ZEND_PARSE_PARAMETERS_END();
+
+	object = Z_OBJ_P(ZEND_THIS);
+
+	if (lua_name != NULL) {
+		ZVAL_STR_COPY(&value, lua_name);
+	} else {
+		ZVAL_NULL(&value);
+	}
+	LUAEXT_ASSIGN(object, "luaName", &value);
+
+	if (methods != NULL) {
+		ZVAL_COPY(&value, methods);
+	} else {
+		ZVAL_NULL(&value);
+	}
+	LUAEXT_ASSIGN(object, "methods", &value);
+
+	if (operators != NULL) {
+		ZVAL_COPY(&value, operators);
+	} else {
+		ZVAL_NULL(&value);
+	}
+	LUAEXT_ASSIGN(object, "operators", &value);
 }
 
 /* -------------------------------------------------------------------------

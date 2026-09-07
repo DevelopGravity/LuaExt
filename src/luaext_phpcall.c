@@ -893,8 +893,8 @@ static bool luaext_phpcall_add_method(HashTable *methods, zval *instance, zend_f
  *
  * Returns a reference the caller releases, or false with an exception thrown.
  */
-static bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *method,
-										  zend_string **out)
+bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *method,
+								   zend_string **out)
 {
 	zend_class_entry *scope = method->common.scope;
 	zend_string *filename = NULL;

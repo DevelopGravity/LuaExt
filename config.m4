@@ -162,6 +162,7 @@ if test "$PHP_LUAEXT" != "no"; then
      src/luaext_corolib.c \
      src/luaext_debuglib.c \
      src/luaext_defer.c \
+     src/luaext_proxy.c \
      src/luaext_error.c \
      src/luaext_exec.c \
      src/luaext_function.c \

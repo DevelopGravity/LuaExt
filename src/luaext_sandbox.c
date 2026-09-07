@@ -24,6 +24,7 @@
 #include "luaext_openlibs.h"
 #include "luaext_output.h"
 #include "luaext_phpcall.h"
+#include "luaext_proxy.h"
 #include "luaext_timers.h"
 #include "luaext_profiler.h"
 #include "luaext_require.h"
@@ -290,6 +291,10 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 * behaviour.
 	 */
 	luaext_defer_shutdown(sandbox);
+
+	/* After the drain: registry records are never read by finalisers, and the
+	 * proxy GC list they anchor is gone with the state. */
+	luaext_proxy_shutdown(sandbox);
 
 	luaext_sandbox_unlink(sandbox);
 
@@ -1369,6 +1374,33 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
 	zend_array_destroy(methods);
 
 	if (!registered) {
+		RETURN_THROWS();
+	}
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerClass)
+{
+	luaext_sandbox *sandbox;
+	zend_string *class_name;
+	HashTable *methods = NULL;
+	zend_string *lua_name = NULL;
+	HashTable *operators = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 4)
+	Z_PARAM_STR(class_name)
+	Z_PARAM_OPTIONAL
+	Z_PARAM_ARRAY_HT_OR_NULL(methods)
+	Z_PARAM_STR_OR_NULL(lua_name)
+	Z_PARAM_ARRAY_HT_OR_NULL(operators)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		RETURN_THROWS();
+	}
+
+	if (!luaext_proxy_register(sandbox, class_name, methods, lua_name, operators)) {
 		RETURN_THROWS();
 	}
 }

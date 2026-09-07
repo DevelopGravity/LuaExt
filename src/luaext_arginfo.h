@@ -1,8 +1,18 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 47fb5a25ea2ab4425e7867ad2935e453e9a04eff */
+ * Stub hash: 70e3f228a469a91129d09500af75de842b889437 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaOperator___construct, 0, 0, 1)
+	ZEND_ARG_OBJ_INFO(0, operator, DevelopGravity\\LuaExt\\Operator, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaClass___construct, 0, 0, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, luaName, IS_STRING, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, methods, IS_ARRAY, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, operators, IS_ARRAY, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Capabilities___construct, 0, 0, 0)
@@ -86,6 +96,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig___const
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cacheCompiledChunks, _IS_BOOL, 0, "false")
 	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, sealMode, DevelopGravity\\LuaExt\\SealMode, 0, "DevelopGravity\\LuaExt\\SealMode::Checksum")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bytecodeKey, IS_STRING, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, classes, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_SandboxConfig_with, 0, 0, DevelopGravity\\LuaExt\\SandboxConfig, 0)
@@ -166,6 +177,13 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sand
 	ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
 	ZEND_ARG_TYPE_INFO(0, instance, IS_OBJECT, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, methods, IS_ARRAY, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_registerClass, 0, 1, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, class, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, methods, IS_ARRAY, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, luaName, IS_STRING, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, operators, IS_ARRAY, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_preloadModule, 0, 2, IS_VOID, 0)
@@ -291,6 +309,8 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Modul
 ZEND_END_ARG_INFO()
 
 ZEND_METHOD(DevelopGravity_LuaExt_LuaMethod, __construct);
+ZEND_METHOD(DevelopGravity_LuaExt_LuaOperator, __construct);
+ZEND_METHOD(DevelopGravity_LuaExt_LuaClass, __construct);
 ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, __construct);
 ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, untrusted);
 ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, trusted);
@@ -319,6 +339,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setGlobal);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerLibrary);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject);
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerClass);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, limits);
@@ -344,6 +365,16 @@ ZEND_METHOD(DevelopGravity_LuaExt_ModuleSource, __construct);
 
 static const zend_function_entry class_DevelopGravity_LuaExt_LuaMethod_methods[] = {
 	ZEND_ME(DevelopGravity_LuaExt_LuaMethod, __construct, arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_DevelopGravity_LuaExt_LuaOperator_methods[] = {
+	ZEND_ME(DevelopGravity_LuaExt_LuaOperator, __construct, arginfo_class_DevelopGravity_LuaExt_LuaOperator___construct, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_DevelopGravity_LuaExt_LuaClass_methods[] = {
+	ZEND_ME(DevelopGravity_LuaExt_LuaClass, __construct, arginfo_class_DevelopGravity_LuaExt_LuaClass___construct, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
 
@@ -400,6 +431,7 @@ static const zend_function_entry class_DevelopGravity_LuaExt_Sandbox_methods[] =
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, wrapCallable, arginfo_class_DevelopGravity_LuaExt_Sandbox_wrapCallable, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerLibrary, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerLibrary, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerObject, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerObject, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerClass, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerClass, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, preloadModule, arginfo_class_DevelopGravity_LuaExt_Sandbox_preloadModule, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setLimits, arginfo_class_DevelopGravity_LuaExt_Sandbox_setLimits, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, limits, arginfo_class_DevelopGravity_LuaExt_Sandbox_limits, ZEND_ACC_PUBLIC)
@@ -521,6 +553,35 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SealMode(void)
 	return class_entry;
 }
 
+static zend_class_entry *register_class_DevelopGravity_LuaExt_Operator(void)
+{
+	zend_class_entry *class_entry = zend_register_internal_enum("DevelopGravity\\LuaExt\\Operator", IS_UNDEF, NULL);
+
+	zend_enum_add_case_cstr(class_entry, "LessThan", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "LessThanOrEqual", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Equality", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Add", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Subtract", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Multiply", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Divide", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Modulo", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Power", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "UnaryMinus", NULL);
+
+	zend_enum_add_case_cstr(class_entry, "Concatenate", NULL);
+
+	return class_entry;
+}
+
 static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaMethod(void)
 {
 	zend_class_entry ce, *class_entry;
@@ -531,6 +592,51 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaMethod(void)
 	zval property_name_default_value;
 	ZVAL_UNDEF(&property_name_default_value);
 	zend_declare_typed_property(class_entry, ZSTR_KNOWN(ZEND_STR_NAME), &property_name_default_value, ZEND_ACC_PUBLIC, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING|MAY_BE_NULL));
+
+	return class_entry;
+}
+
+static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaOperator(void)
+{
+	zend_class_entry ce, *class_entry;
+
+	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "LuaOperator", class_DevelopGravity_LuaExt_LuaOperator_methods);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL);
+
+	zval property_operator_default_value;
+	ZVAL_UNDEF(&property_operator_default_value);
+	zend_string *property_operator_name = zend_string_init("operator", sizeof("operator") - 1, 1);
+	zend_string *property_operator_class_DevelopGravity_LuaExt_Operator = zend_string_init("DevelopGravity\\LuaExt\\Operator", sizeof("DevelopGravity\\LuaExt\\Operator")-1, 1);
+	zend_declare_typed_property(class_entry, property_operator_name, &property_operator_default_value, ZEND_ACC_PUBLIC, NULL, (zend_type) ZEND_TYPE_INIT_CLASS(property_operator_class_DevelopGravity_LuaExt_Operator, 0, 0));
+	zend_string_release(property_operator_name);
+
+	return class_entry;
+}
+
+static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaClass(void)
+{
+	zend_class_entry ce, *class_entry;
+
+	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "LuaClass", class_DevelopGravity_LuaExt_LuaClass_methods);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL);
+
+	zval property_luaName_default_value;
+	ZVAL_UNDEF(&property_luaName_default_value);
+	zend_string *property_luaName_name = zend_string_init("luaName", sizeof("luaName") - 1, 1);
+	zend_declare_typed_property(class_entry, property_luaName_name, &property_luaName_default_value, ZEND_ACC_PUBLIC, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING|MAY_BE_NULL));
+	zend_string_release(property_luaName_name);
+
+	zval property_methods_default_value;
+	ZVAL_UNDEF(&property_methods_default_value);
+	zend_string *property_methods_name = zend_string_init("methods", sizeof("methods") - 1, 1);
+	zend_declare_typed_property(class_entry, property_methods_name, &property_methods_default_value, ZEND_ACC_PUBLIC, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY|MAY_BE_NULL));
+	zend_string_release(property_methods_name);
+
+	zval property_operators_default_value;
+	ZVAL_UNDEF(&property_operators_default_value);
+	zend_string *property_operators_name = zend_string_init("operators", sizeof("operators") - 1, 1);
+	zend_declare_typed_property(class_entry, property_operators_name, &property_operators_default_value, ZEND_ACC_PUBLIC, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY|MAY_BE_NULL));
+	zend_string_release(property_operators_name);
 
 	return class_entry;
 }
@@ -839,6 +945,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxConfig(void
 	zend_declare_typed_property(class_entry, property_vfsQuota_name, &property_vfsQuota_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_CLASS(property_vfsQuota_class_DevelopGravity_LuaExt_VfsQuota, 0, MAY_BE_NULL));
 	zend_string_release(property_vfsQuota_name);
 
+	zval property_classes_default_value;
+	ZVAL_UNDEF(&property_classes_default_value);
+	zend_string *property_classes_name = zend_string_init("classes", sizeof("classes") - 1, 1);
+	zend_declare_typed_property(class_entry, property_classes_name, &property_classes_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY));
+	zend_string_release(property_classes_name);
+
 	zval property_moduleResolver_default_value;
 	ZVAL_UNDEF(&property_moduleResolver_default_value);
 	zend_string *property_moduleResolver_name = zend_string_init("moduleResolver", sizeof("moduleResolver") - 1, 1);
@@ -1009,6 +1121,12 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_SandboxStats(zend_
 	zend_string *property_gcCollections_name = zend_string_init("gcCollections", sizeof("gcCollections") - 1, 1);
 	zend_declare_typed_property(class_entry, property_gcCollections_name, &property_gcCollections_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
 	zend_string_release(property_gcCollections_name);
+
+	zval property_liveObjectProxies_default_value;
+	ZVAL_UNDEF(&property_liveObjectProxies_default_value);
+	zend_string *property_liveObjectProxies_name = zend_string_init("liveObjectProxies", sizeof("liveObjectProxies") - 1, 1);
+	zend_declare_typed_property(class_entry, property_liveObjectProxies_name, &property_liveObjectProxies_default_value, ZEND_ACC_PUBLIC|ZEND_ACC_READONLY, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG));
+	zend_string_release(property_liveObjectProxies_name);
 
 	zval property_luaCallsIn_default_value;
 	ZVAL_UNDEF(&property_luaCallsIn_default_value);

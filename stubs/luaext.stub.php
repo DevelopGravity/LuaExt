@@ -111,6 +111,30 @@ enum SealMode
 }
 
 /**
+ * Lua operator slots a mapped PHP method may back, on a class registered with
+ * Sandbox::registerClass().
+ *
+ * Comparison slots require the mapped method to declare a bool return;
+ * arithmetic and concatenation slots may return any convertible value, and a
+ * returned registered instance auto-wraps so results chain. Lua derives > and
+ * >= itself by swapping the operands of < and <=.
+ */
+enum Operator
+{
+    case LessThan;
+    case LessThanOrEqual;
+    case Equality;
+    case Add;
+    case Subtract;
+    case Multiply;
+    case Divide;
+    case Modulo;
+    case Power;
+    case UnaryMinus;
+    case Concatenate;
+}
+
+/**
  * Marks a method as callable from Lua once its object is passed to
  * Sandbox::registerObject().
  *
@@ -129,6 +153,49 @@ final class LuaMethod
     public ?string $name;
 
     public function __construct(?string $name = null) {}
+}
+
+/**
+ * Maps a method to a Lua operator slot on a class registered with
+ * Sandbox::registerClass().
+ *
+ * Mapping grants the operator only: it does not make the method callable by
+ * name, which still takes #[LuaMethod] or the allowlist, independently.
+ *
+ * Registered in MINIT like LuaMethod, for the same gen_stub reason; the
+ * published IDE stubs restore the #[Attribute] marker.
+ */
+final class LuaOperator
+{
+    public Operator $operator;
+
+    public function __construct(Operator $operator) {}
+}
+
+/**
+ * Class-level configuration CARRIER for Sandbox::registerClass(). Never a
+ * grant: an annotated class still crosses nothing until a sandbox registers
+ * it. Explicit registerClass() parameters override these fields, which in
+ * turn override method-level attributes.
+ *
+ * PHP attributes cannot be attached to inherited methods, so this is how a
+ * vendor class is wrapped once, declaratively, in a host-authored subclass.
+ */
+final class LuaClass
+{
+    public ?string $luaName;
+
+    /** @var null|list<string> */
+    public ?array $methods;
+
+    /** @var null|array<string, Operator> */
+    public ?array $operators;
+
+    public function __construct(
+        ?string $luaName = null,
+        ?array $methods = null,
+        ?array $operators = null,
+    ) {}
 }
 
 /**
@@ -424,6 +491,15 @@ final readonly class SandboxConfig
     /** Null selects the default VfsQuota. */
     public ?VfsQuota $vfsQuota;
 
+    /**
+     * @var list<string> Classes registered at Sandbox construction, exactly as
+     * by registerClass() with no parameter overrides — their configuration
+     * comes from #[LuaClass] and method-level attributes. Validated for shape
+     * here; the classes themselves need only be loaded once a Sandbox is
+     * built from this config.
+     */
+    public array $classes;
+
     /** Consulted by require() after preloaded modules and VFS search paths. */
     public ?ModuleResolver $moduleResolver;
 
@@ -507,6 +583,7 @@ final readonly class SandboxConfig
         bool $cacheCompiledChunks = false,
         SealMode $sealMode = SealMode::Checksum,
         ?string $bytecodeKey = null,
+        array $classes = [],
     ) {}
 
     /**
@@ -586,6 +663,9 @@ final readonly class SandboxStats implements \JsonSerializable
      * and are not counted.
      */
     public int $gcCollections;
+
+    /** Object proxies currently alive inside the interpreter. */
+    public int $liveObjectProxies;
 
     /** Calls from PHP into Lua. */
     public int $luaCallsIn;
@@ -811,6 +891,26 @@ final class Sandbox
      * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method.
      */
     public function registerObject(string $name, object $instance, ?array $methods = null): void {}
+
+    /**
+     * Register a class so its instances cross into Lua as proxies.
+     *
+     * Marked statics and an exposed constructor are published on a global
+     * table (default name: the unqualified class name); marked instance
+     * methods become proxy methods reached with the colon convention, and the
+     * instance itself crosses as an unforgeable userdata wherever it appears.
+     * Registration is one-way for the sandbox's lifetime.
+     *
+     * @param null|list<string> $methods Explicit allowlist, overriding attributes.
+     * @param null|array<string, Operator> $operators Method name => operator slot.
+     * @throws Exception\ConfigurationError if the registration is malformed.
+     */
+    public function registerClass(
+        string $class,
+        ?array $methods = null,
+        ?string $luaName = null,
+        ?array $operators = null,
+    ): void {}
 
     /**
      * Register a module so require() resolves it without consulting the

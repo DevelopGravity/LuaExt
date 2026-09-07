@@ -76,6 +76,7 @@ DevelopGravity\LuaExt\SandboxConfig
   limits               NULL
   filesystem           NULL
   vfsQuota             NULL
+  classes              []
   moduleResolver       NULL
   modulePaths          [/?.lua, /?/init.lua]
   outputMode           DevelopGravity\LuaExt\OutputMode::Buffer

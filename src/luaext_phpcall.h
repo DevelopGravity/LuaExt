@@ -12,6 +12,8 @@
 
 #include "luaext_types.h"
 
+#include <Zend/zend_attributes.h>
+
 /*
  * Push a Lua C closure that invokes `callable`. The fcall_info_cache is copied
  * into the closure's own storage and released when Lua collects it, so the
@@ -43,5 +45,15 @@ bool luaext_phpcall_register_table(luaext_sandbox *sandbox, const char *name, si
  * luaext_phpcall_register_table() only reads it.
  */
 HashTable *luaext_phpcall_collect_methods(zval *instance, HashTable *allowlist);
+
+/*
+ * The name a #[LuaMethod] attribute asks for, or the method's own name.
+ * Returns a reference the caller releases, or false with an exception thrown.
+ *
+ * Shared with the proxy registry, which routes constructors and __toString by
+ * whether the resolved name differs from the method's own.
+ */
+bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *method,
+								   zend_string **out);
 
 #endif /* LUAEXT_PHPCALL_H */

@@ -32,6 +32,7 @@ typedef struct luaext_watch_slot luaext_watch_slot;
 typedef struct luaext_vfs luaext_vfs;
 typedef struct luaext_modules luaext_modules;
 typedef struct luaext_profiler luaext_profiler;
+typedef struct luaext_proxy_class luaext_proxy_class;
 
 /* -------------------------------------------------------------------------
  * Registry keys
@@ -557,6 +558,9 @@ struct luaext_sandbox {
 	luaext_vfs *vfs;
 	luaext_modules *modules;
 	luaext_profiler *profiler;
+
+	/* Classes registered with registerClass(); see luaext_proxy.h. */
+	luaext_proxy_class *proxy_classes;
 
 	/* Keeps the FileSystem, ModuleResolver and output callback alive. */
 	zval config_zv;

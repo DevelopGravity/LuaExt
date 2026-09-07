@@ -52,6 +52,9 @@ zend_class_entry *luaext_ce_file_stat;
 zend_class_entry *luaext_ce_module_resolver;
 zend_class_entry *luaext_ce_module_source;
 zend_class_entry *luaext_ce_lua_method_attribute;
+zend_class_entry *luaext_ce_lua_operator_attribute;
+zend_class_entry *luaext_ce_lua_class_attribute;
+zend_class_entry *luaext_ce_operator;
 
 zend_class_entry *luaext_ce_output_mode;
 zend_class_entry *luaext_ce_overflow_behavior;
@@ -249,6 +252,17 @@ static void luaext_register_classes(void)
 	 * keeps registerObject()'s selection rule meaningful.
 	 */
 	zend_internal_attribute_register(luaext_ce_lua_method_attribute, ZEND_ATTRIBUTE_TARGET_METHOD);
+
+	luaext_ce_operator = register_class_DevelopGravity_LuaExt_Operator();
+
+	/* Same gen_stub rule as LuaMethod: the markers are registered here.
+	 * LuaOperator targets methods; LuaClass is the class-level configuration
+	 * CARRIER for registerClass() — never a grant. */
+	luaext_ce_lua_operator_attribute = register_class_DevelopGravity_LuaExt_LuaOperator();
+	zend_internal_attribute_register(luaext_ce_lua_operator_attribute,
+									 ZEND_ATTRIBUTE_TARGET_METHOD);
+	luaext_ce_lua_class_attribute = register_class_DevelopGravity_LuaExt_LuaClass();
+	zend_internal_attribute_register(luaext_ce_lua_class_attribute, ZEND_ATTRIBUTE_TARGET_CLASS);
 
 	luaext_ce_capabilities = register_class_DevelopGravity_LuaExt_Capabilities();
 	luaext_ce_limits = register_class_DevelopGravity_LuaExt_Limits();
