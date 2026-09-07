@@ -282,12 +282,14 @@ Maintainers only. Pushing the tag is the trigger; there is nothing to click firs
    three platforms — and it only fires for a human publish, because GitHub raises no
    workflow events for anything `GITHUB_TOKEN` does.
 5. Push the IDE stub package. `stubs/` is also the root of
-   `developgravity/lua-ext-stubs`, so a subtree split publishes it:
+   `developgravity/lua-ext-stubs`, so a subtree split publishes it through the `stubs`
+   remote — a fresh clone recreates that with
+   `git remote add stubs git@github.com:DevelopGravity/LuaExt-Stubs.git`:
 
    ```
    git subtree split --prefix=stubs -b stubs-split
-   git push git@github.com:DevelopGravity/LuaExt-Stubs.git stubs-split:main
-   git push git@github.com:DevelopGravity/LuaExt-Stubs.git "$(git rev-parse stubs-split):refs/tags/1.2.0"
+   git push stubs stubs-split:main
+   git push stubs "$(git rev-parse stubs-split):refs/tags/1.2.0"
    git branch -D stubs-split
    ```
 
