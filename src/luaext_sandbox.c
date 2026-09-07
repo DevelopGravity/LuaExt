@@ -1264,14 +1264,26 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setGlobal)
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 {
 	luaext_sandbox *sandbox;
-	zval *callback;
+	zend_fcall_info callback_info;
+	zend_fcall_info_cache callback_cache;
 	zend_string *name = NULL;
 
+	/*
+	 * Z_PARAM_FUNC rather than a raw zval: the stub declares `callable`, and
+	 * a non-callable argument must raise the engine's own TypeError naming
+	 * the argument position -- not a ConfigurationError from the later
+	 * resolution, which a `catch (TypeError)` written against the published
+	 * stub would never see. The cache is released immediately: the push
+	 * below re-resolves from the original zval, whose validity ZPP just
+	 * proved.
+	 */
 	ZEND_PARSE_PARAMETERS_START(1, 2)
-	Z_PARAM_ZVAL(callback)
+	Z_PARAM_FUNC(callback_info, callback_cache)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_STR_OR_NULL(name)
 	ZEND_PARSE_PARAMETERS_END();
+
+	zend_release_fcall_info_cache(&callback_cache);
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
@@ -1279,7 +1291,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 		RETURN_THROWS();
 	}
 
-	if (!luaext_phpcall_push(sandbox, luaext_exec_state(sandbox), callback,
+	if (!luaext_phpcall_push(sandbox, luaext_exec_state(sandbox), &callback_info.function_name,
 							 name != NULL ? ZSTR_VAL(name) : NULL)) {
 		RETURN_THROWS();
 	}
@@ -1710,9 +1722,16 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, getProfile)
 	zval *unit = NULL;
 	uint8_t which = 1; /* Seconds, matching the stub's default */
 
+	/*
+	 * NOT the _OR_NULL variant: the stub declares a non-nullable ProfilerUnit,
+	 * and for an internal function ZPP is the only thing that enforces it --
+	 * the arginfo is never consulted at call time. `unit` still arrives NULL
+	 * when the argument is simply omitted, which is what the default below
+	 * answers.
+	 */
 	ZEND_PARSE_PARAMETERS_START(0, 1)
 	Z_PARAM_OPTIONAL
-	Z_PARAM_OBJECT_OF_CLASS_OR_NULL(unit, luaext_ce_profiler_unit)
+	Z_PARAM_OBJECT_OF_CLASS(unit, luaext_ce_profiler_unit)
 	ZEND_PARSE_PARAMETERS_END();
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
