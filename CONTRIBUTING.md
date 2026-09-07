@@ -267,7 +267,9 @@ Maintainers only. Pushing the tag is the trigger; there is nothing to click firs
 section is the reasoning; the checkbox walk-through, including the git-flow
 release-branch routine, is `RELEASE.md` at the repository root.
 
-1. Bump `PHP_LUAEXT_VERSION` in `src/php_luaext.h`, update `CHANGELOG.md`, and merge that
+1. Bump `PHP_LUAEXT_VERSION` in `src/php_luaext.h`, update `CHANGELOG.md`, regenerate
+   the numbers in `docs/performance.md` (`tools/bench-vm.sh` and `tools/bench-matrix.php`
+   — neither runs in CI, so a release is when they re-earn their figures), and merge that
    to `main`.
 2. Tag the merged commit with the plain-semver version — no `v` prefix — and push it:
 

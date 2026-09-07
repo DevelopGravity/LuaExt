@@ -33,6 +33,19 @@ integration branch rather than only on a short-lived one.
 
 - [ ] `PHP_LUAEXT_VERSION` in `src/php_luaext.h` is exactly `<version>`.
 - [ ] `CHANGELOG.md` has an entry for `<version>`.
+- [ ] The performance numbers describe this tree, not an ancestor. Neither benchmark
+  runs in CI — a shared runner measures its neighbours — so a release is when they
+  re-earn their figures. On a quiet machine, regenerate both tables in
+  `docs/performance.md` along with their "measured …" metadata (machine, compiler,
+  date, the short SHA measured against):
+
+  ```bash
+  tools/bench-vm.sh 7        # twice, independent runs, values averaged
+  make build && php -d extension=modules/luaext.so tools/bench-matrix.php 7
+  ```
+
+  The memory-across-sandboxes section stays as it is unless allocator or lifecycle
+  code changed — its claim is "leaks nothing", not a speed that drifts.
 - [ ] `make dev` passes on the branch.
 
 ## 4. Finish
