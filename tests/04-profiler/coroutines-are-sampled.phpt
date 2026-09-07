@@ -19,8 +19,10 @@ if (Sandbox::features()['cpuLimit'] === LimitSupport::Unsupported) {
 
 declare(strict_types=1);
 
+use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\ProfilerUnit;
 use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
 
 // lua_sethook is per-thread, and a coroutine only inherits the hook its
 // creator carried at lua_newthread time. So a coroutine created BEFORE
@@ -28,7 +30,13 @@ use DevelopGravity\LuaExt\Sandbox;
 // the main state -- and since the call-boundary sweep closes every suspended
 // coroutine, the one way such a coroutine exists is a host callback flipping
 // the profiler on mid-call, from inside the very call that created it.
-$sandbox = new Sandbox();
+//
+// No timing limits: what is under test is sampling attribution, and the hot
+// loop below runs 20-50x slower under valgrind and the sanitizers -- with the
+// default limits armed, those legs tripped CpuLimitError instead of sampling.
+$sandbox = new Sandbox(new SandboxConfig(
+	limits: (new Limits())->with(cpuSeconds: null, wallClockSeconds: null),
+));
 
 $sandbox->registerLibrary('host', [
 	'enable' => static function () use ($sandbox): bool {
