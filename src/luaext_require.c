@@ -474,18 +474,97 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		return -1;
 	}
 
-	loaded =
-		luaext_require_load(L, sandbox, Z_STRVAL_P(code), Z_STRLEN_P(code), Z_STRVAL_P(chunk_name),
-							is_bytecode != NULL && Z_TYPE_P(is_bytecode) == IS_TRUE);
+	{
+		/*
+		 * Same discipline as the VFS step, and for the recorded reason:
+		 * luaext_require_load() raises on a source that does not compile, and a
+		 * raise is a longjmp -- the ModuleSource zval still held across it
+		 * would simply be lost, and the bracket would never close. Both strings
+		 * move into Lua-owned memory first, then the PHP side is released.
+		 */
+		size_t source_len;
+		const char *source;
+		const char *chunk;
+		bool bytecode = is_bytecode != NULL && Z_TYPE_P(is_bytecode) == IS_TRUE;
 
-	zval_ptr_dtor(&result);
+		lua_pushlstring(L, Z_STRVAL_P(code), Z_STRLEN_P(code));
+		lua_pushlstring(L, Z_STRVAL_P(chunk_name), Z_STRLEN_P(chunk_name));
 
-	return loaded ? 1 : -1;
+		zval_ptr_dtor(&result);
+		LUAEXT_NO_RAISE_END(L);
+
+		source = lua_tolstring(L, -2, &source_len);
+		chunk = lua_tostring(L, -1);
+
+		loaded = luaext_require_load(L, sandbox, source, source_len, chunk, bytecode);
+
+		if (!loaded) {
+			return -1;
+		}
+
+		/* [source, name, chunk] -> [chunk] */
+		lua_remove(L, -3);
+		lua_remove(L, -2);
+	}
+
+	return 1;
 }
 
 /* -------------------------------------------------------------------------
  * require
  * ---------------------------------------------------------------------- */
+
+/*
+ * Steps 4 through 6 -- preload, the VFS, the resolver -- under one protected
+ * call. Two of those loaders raise by design (a module that does not compile),
+ * and a raise is a longjmp straight past luaext_require_call's frame: the
+ * in-progress mark and require_depth it set would survive the failure, so the
+ * NEXT require of that name would report "requires itself", and enough such
+ * failures would leave require() permanently dead behind an uncatchable depth
+ * error. Funneling every raise back through the caller's pcall is what lets it
+ * unwind that bookkeeping on both branches.
+ *
+ * Arguments: 1 = the module name, 2 = who is requiring it.
+ * Returns the loader, or nothing when no step provided the module.
+ */
+static int luaext_require_search(lua_State *L)
+{
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	size_t name_len;
+	const char *name = lua_tolstring(L, 1, &name_len);
+	const char *requested_by = lua_tostring(L, 2);
+	int found;
+
+	/* 4. package.preload. */
+	luaext_require_push_table(L, &luaext_key_preload);
+	lua_pushlstring(L, name, name_len);
+
+	if (lua_rawget(L, -2) != LUA_TNIL) {
+		lua_remove(L, -2); /* the preload table; the loader stays */
+		found = 1;
+	} else {
+		lua_pop(L, 2);
+
+		/* 5. The VFS. */
+		found = luaext_require_search_vfs(L, sandbox, name, name_len);
+
+		/* 6. The resolver. */
+		if (found == 0) {
+			found = luaext_require_ask_resolver(L, sandbox, name, name_len, requested_by);
+		}
+	}
+
+	if (found < 0) {
+		/* A raised Lua error or a pending PHP exception; propagate it. */
+		if (EG(exception) != NULL) {
+			luaext_error_raise_from_exception(L);
+		}
+
+		return lua_error(L);
+	}
+
+	return found == 1 ? 1 : 0;
+}
 
 static int luaext_require_call(lua_State *L)
 {
@@ -495,7 +574,6 @@ static int luaext_require_call(lua_State *L)
 	uint32_t max_modules = sandbox->policy.limits.max_modules;
 	uint32_t max_depth = sandbox->policy.limits.max_require_depth;
 	const char *requested_by;
-	int found;
 	int status;
 
 	if (!luaext_require_name_ok(name, name_len)) {
@@ -562,30 +640,20 @@ static int luaext_require_call(lua_State *L)
 		requested_by = "=main";
 	}
 
-	/* 4. package.preload. */
-	luaext_require_push_table(L, &luaext_key_preload);
+	/* Steps 4-6, protected -- see luaext_require_search on why. On success the
+	 * loader is the single result, exactly where the call below expects it. */
+	lua_pushcfunction(L, luaext_require_search);
 	lua_pushlstring(L, name, name_len);
+	lua_pushstring(L, requested_by);
 
-	if (lua_rawget(L, -2) != LUA_TNIL) {
-		lua_remove(L, -2); /* the preload table; the loader stays */
-		found = 1;
-	} else {
-		lua_pop(L, 2);
+	status = lua_pcall(L, 2, 1, 0);
 
-		/* 5. The VFS. */
-		found = luaext_require_search_vfs(L, sandbox, name, name_len);
-
-		/* 6. The resolver. */
-		if (found == 0) {
-			found = luaext_require_ask_resolver(L, sandbox, name, name_len, requested_by);
-		}
-	}
-
-	if (found <= 0) {
+	if (status != LUA_OK || lua_isnil(L, -1)) {
 		/*
 		 * Unmarked before failing, or a module that merely could not be found
 		 * once would be permanently unrequirable -- the guard would report it as
-		 * circular on the next attempt.
+		 * circular on the next attempt. This is also why the search runs
+		 * protected: a loader that raises must still pass through here.
 		 */
 		sandbox->require_depth--;
 		luaext_require_push_table(L, &luaext_key_loading);
@@ -594,10 +662,18 @@ static int luaext_require_call(lua_State *L)
 		lua_rawset(L, -3);
 		lua_pop(L, 1);
 
-		if (found < 0) {
-			/* A raised Lua error or a pending PHP exception; propagate it. */
-			if (EG(exception) != NULL) {
-				luaext_error_raise_from_exception(L);
+		if (status != LUA_OK) {
+			/*
+			 * Keyed on the status for the reason the loader call below is:
+			 * LUA_ERRMEM carries Lua's own string instead of the unforgeable
+			 * marker, and re-raising it as-is would hand an enclosing pcall a
+			 * catchable memory breach.
+			 */
+			if (status == LUA_ERRMEM) {
+				lua_pop(L, 1);
+				luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+								   "The sandbox is out of memory; a script may not catch its own "
+								   "memory limit being reached");
 			}
 
 			return lua_error(L);
