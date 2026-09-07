@@ -407,26 +407,10 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 
 	luaext_timers_leave_lua(sandbox, &frame);
 
-	/*
-	 * The routine drain point, and the reason it is here rather than deeper:
-	 * this is where the outermost call has fully unwound, so no Lua execution is
-	 * in progress and a __destruct released now cannot re-enter the collector it
-	 * was queued from. See luaext_defer.h.
-	 *
-	 * Draining on every outermost return, not only at close, keeps the queue
-	 * from growing across a long-lived sandbox's many calls.
-	 */
-	if (sandbox->in_lua == 0) {
-		luaext_defer_drain(sandbox);
-	}
-
 	if (interrupted) {
 		lua_settop(L, base);
-
-		return false;
-	}
-
-	if (status != LUA_OK) {
+		converted = false;
+	} else if (status != LUA_OK) {
 		/*
 		 * Classification stays in the error subsystem. It is the only place
 		 * that knows a fatal error must not surface as a class the host would
@@ -435,14 +419,27 @@ bool luaext_exec_pcall(luaext_sandbox *sandbox, int func_index, zval *args, uint
 		 */
 		luaext_error_throw_from_lua(sandbox, L, status);
 		lua_settop(L, base);
-
-		return false;
+		converted = false;
+	} else {
+		converted = luaext_convert_stack_to_array(sandbox, L, handler + 1, lua_gettop(L) - handler,
+												  return_value);
+		lua_settop(L, base);
 	}
 
-	converted = luaext_convert_stack_to_array(sandbox, L, handler + 1, lua_gettop(L) - handler,
-											  return_value);
-
-	lua_settop(L, base);
+	/*
+	 * The routine drain point, and it comes after the LAST use of L rather than
+	 * before, which is the part that matters: a __destruct released here is
+	 * arbitrary host code, and with in_lua already back to zero nothing stops
+	 * it calling close() -- which lua_close()es the very state the three
+	 * branches above were still settling. See luaext_defer.h for why the drain
+	 * belongs at an outermost return at all.
+	 *
+	 * Draining on every outermost return, not only at close, keeps the queue
+	 * from growing across a long-lived sandbox's many calls.
+	 */
+	if (sandbox->in_lua == 0) {
+		luaext_defer_drain(sandbox);
+	}
 
 	return converted;
 }

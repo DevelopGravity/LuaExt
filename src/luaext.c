@@ -309,13 +309,23 @@ static PHP_RSHUTDOWN_FUNCTION(luaext)
 	 * execution state exists between requests" guarantee true regardless of what
 	 * the host forgot to do.
 	 */
-	luaext_sandbox *sandbox = LUAEXT_G(live_sandboxes);
+	luaext_sandbox *sandbox;
 
-	while (sandbox != NULL) {
-		luaext_sandbox *next = sandbox->live_next;
-
+	/*
+	 * Driven off the head each time, and holding a reference across the close.
+	 * Closing runs finalisers and then releases their host references, so a
+	 * __destruct can drop the last reference to ANOTHER sandbox in this list --
+	 * a cursor read before the close is then dangling, and the object being
+	 * closed can itself be freed underneath this frame. Neither is reachable
+	 * once the loop only ever looks at the current head and owns what it holds.
+	 *
+	 * luaext_sandbox_close() always unlinks, so the head advances and this
+	 * terminates.
+	 */
+	while ((sandbox = LUAEXT_G(live_sandboxes)) != NULL) {
+		GC_ADDREF(&sandbox->std);
 		luaext_sandbox_close(sandbox);
-		sandbox = next;
+		OBJ_RELEASE(&sandbox->std);
 	}
 
 	/*
