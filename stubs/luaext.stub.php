@@ -151,7 +151,11 @@ final readonly class Capabilities
     /** Expose string.dump() and LuaFunction::dump(). */
     public bool $dumpBytecode;
 
-    /** Expose require(). Needs a module resolver, VFS search paths, or preloaded modules. */
+    /**
+     * Expose require(). Needs a module resolver, VFS search paths, or
+     * preloaded modules -- and gates Sandbox::preloadModule() itself, since a
+     * preload nothing can ever require would only be a mistake stored.
+     */
     public bool $require;
 
     /** Expose the io/os file API backed by the host FileSystem. */
@@ -182,9 +186,12 @@ final readonly class Capabilities
     public bool $debugMutate;
 
     /**
-     * Expose debug.sethook(). This lets a script replace the interrupt hook the
-     * CPU limit relies on, so combining it with a CPU limit is refused at
-     * construction.
+     * Expose debug.sethook(). This lets a script displace the interrupt hook
+     * BOTH timing limits fall back to on a build whose watchdog thread cannot
+     * start, so granting it alongside either Limits::$cpuSeconds or
+     * Limits::$wallClockSeconds is refused -- at construction and again by
+     * setLimits(). Both must be null to use it, and the default Limits sets
+     * both.
      */
     public bool $debugHooks;
 
@@ -462,6 +469,15 @@ final readonly class SandboxConfig
     public bool $cacheCompiledChunks;
 
     /**
+     * How dump() seals, and what compileBinary() accepts.
+     *
+     * Checksum needs no key and is the default. Authenticated requires
+     * $bytecodeKey; passing a key without it, or asking for it without a key,
+     * is refused at construction rather than silently doing the other thing.
+     */
+    public SealMode $sealMode;
+
+    /**
      * Key that seals and verifies bytecode, at least 16 bytes.
      *
      * With a key set, dump() returns a sealed blob and compileBinary() accepts
@@ -474,15 +490,6 @@ final readonly class SandboxConfig
      * closes corruption and tampering by anyone without the key, and does not
      * survive an attacker who can read this process's memory.
      */
-    /**
-     * How dump() seals, and what compileBinary() accepts.
-     *
-     * Checksum needs no key and is the default. Authenticated requires
-     * $bytecodeKey; passing a key without it, or asking for it without a key,
-     * is refused at construction rather than silently doing the other thing.
-     */
-    public SealMode $sealMode;
-
     public ?string $bytecodeKey;
 
     public function __construct(
@@ -808,6 +815,10 @@ final class Sandbox
     /**
      * Register a module so require() resolves it without consulting the
      * filesystem or the module resolver.
+     *
+     * @throws Exception\CapabilityError if the require capability was not granted.
+     * @throws Exception\ConfigurationError if $name is not a usable module name,
+     * or if $loader is a LuaFunction belonging to another or a closed sandbox.
      */
     public function preloadModule(string $name, LuaFunction|callable $loader): void {}
 
