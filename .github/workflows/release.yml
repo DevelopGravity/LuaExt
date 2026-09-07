@@ -236,7 +236,7 @@ jobs:
       # are the same bytes create-draft-release attaches, so this checks what
       # actually ships.
       - name: Download the built DLLs
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dll-assets
           merge-multiple: true
@@ -244,12 +244,14 @@ jobs:
       - name: Find the (${{ matrix.ts }}, x64) DLL
         shell: pwsh
         run: |
-          # Assets are named php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip --
-          # observed, not assumed. The arch reads "x86_64" rather than the
-          # "x64" this job originally guessed; both spellings are matched so a
-          # change on either side does not silently select nothing. The first
-          # field is whatever ref the build ran from, which building at the
-          # tag makes the version.
+          # Assets are php_luaext-<ref>-<php>-<ts>-<vs>-x86_64.zip and the DLL
+          # inside carries that same stem -- observed from a real build, where
+          # this job previously looked for a bare "php_luaext.dll" that the
+          # builder has never produced. Two consequences: the arch reads
+          # "x86_64" rather than "x64" (both spellings are matched so a change
+          # on either side does not silently select nothing), and the ts/arch
+          # fields are on the DLL's own name, so the same predicate picks the
+          # zip and the file.
           #
           # Whether a downloaded artifact hands back the zip or its unpacked
           # contents is the action's business, so both shapes are handled
@@ -270,19 +272,17 @@ jobs:
             Expand-Archive -Path $zip.FullName -DestinationPath dll-extracted -Force
           }
 
-          # Already-unpacked artifacts: keep only DLLs whose own directory
-          # names the build we are testing.
-          $loose = Get-ChildItem dll-assets -Recurse -Filter php_luaext.dll |
-                   Where-Object { & $wanted $_.FullName }
-
-          $dll = @(Get-ChildItem dll-extracted -Recurse -Filter php_luaext.dll -ErrorAction SilentlyContinue) +
-                 @($loose) | Select-Object -First 1
+          $dll = @(Get-ChildItem dll-extracted -Recurse -Filter 'php_luaext*.dll' -ErrorAction SilentlyContinue) +
+                 @(Get-ChildItem dll-assets -Recurse -Filter 'php_luaext*.dll' -ErrorAction SilentlyContinue) |
+                 Where-Object { & $wanted $_.Name } | Select-Object -First 1
 
           if (-not $dll) {
             $found = (Get-ChildItem dll-assets -Recurse | Select-Object -ExpandProperty Name) -join ", "
-            Write-Error "No php_luaext.dll for ts=$ts, arch=x64. Downloaded: $found"
+            Write-Error "No php_luaext DLL for ts=$ts, arch=x64. Downloaded: $found"
             exit 1
           }
+
+          Write-Host "Selected $($dll.Name)"
 
           echo "LUAEXT_DLL_PATH=$($dll.FullName)" >> $env:GITHUB_ENV
 
