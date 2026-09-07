@@ -457,6 +457,58 @@ static int luaext_proxy_new_call(lua_State *L)
 	return 1;
 }
 
+/*
+ * The __eq metamethod, on every proxy metatable: an equality that tells the
+ * truth and can never abort a script. Lua selects __eq for ANY userdata pair
+ * (and, under debugMutate, for tables wearing a stolen metatable), so the
+ * chain runs in a fixed order, each step making the next sound:
+ *
+ *   1. both operands are this sandbox's live proxies — else false, without
+ *      ever dereferencing foreign memory (luaext_proxy_test guarantees it);
+ *   2. pointer-equal objects — true, no PHP call: the same object is always
+ *      equal to itself, and `a == a` stays free;
+ *   3. proxies of different registered classes — false, no PHP call, which
+ *      also keeps `a == b` and `b == a` in agreement across classes;
+ *   4. a mapped Equality method, when the class configured one — else false:
+ *      the default is pointer semantics.
+ */
+static int luaext_proxy_eq(lua_State *L)
+{
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_ud *left = luaext_proxy_test(sandbox, L, 1);
+	luaext_proxy_ud *right = luaext_proxy_test(sandbox, L, 2);
+	luaext_phpcall_target target;
+
+	if (left == NULL || right == NULL) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	if (left->object == right->object) {
+		lua_pushboolean(L, 1);
+		return 1;
+	}
+
+	if (left->cls != right->cls || left->cls->op_methods[LUAEXT_PROXY_OP_EQ] == NULL) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	target.fcc = NULL;
+	target.fn = left->cls->op_methods[LUAEXT_PROXY_OP_EQ];
+	target.bound = left->object;
+	target.scope = left->object->ce;
+	target.label = "==";
+
+	/* Keep both operands anchored; the right one converts from a pushed copy
+	 * so a mid-call GC can never finalise an operand still in use. */
+	lua_settop(L, 2);
+	lua_pushvalue(L, 2);
+	target.first_arg = 3;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
 /* The __tostring metamethod, present only when __toString() was marked. */
 static int luaext_proxy_tostring(lua_State *L)
 {
@@ -553,6 +605,9 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 	 * stamp it onto its own value could hand the collector a forged payload. */
 	lua_pushboolean(L, 0);
 	lua_setfield(L, -2, "__metatable");
+
+	lua_pushcfunction(L, luaext_proxy_eq);
+	lua_setfield(L, -2, "__eq");
 
 	/* __index: one shared closure per exposed instance method. A missing
 	 * name reads as nil and fails the standard Lua way. */
