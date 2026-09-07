@@ -761,6 +761,7 @@ static bool luaext_config_resolve_parts(zend_object *capabilities, zend_object *
 	 */
 	policy->seed_is_fixed = seed_is_fixed;
 	policy->seed = seed_is_fixed ? (uint64_t)seed : 0;
+	policy->deterministic = deterministic;
 	policy->cache_compiled_chunks = cache_compiled_chunks;
 	policy->seal_mode = luaext_config_seal_mode(seal_mode);
 	policy->bytecode_key = bytecode_key != NULL ? ZSTR_VAL(bytecode_key) : NULL;

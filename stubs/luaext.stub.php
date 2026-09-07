@@ -438,7 +438,13 @@ final readonly class SandboxConfig
      */
     public ?int $seed;
 
-    /** Fix the seed and freeze the clock, for tests and golden-file runs. */
+    /**
+     * Make the run reproducible, for tests and golden-file runs: authorises
+     * a fixed $seed, pins os.time() and os.date()'s default time to epoch
+     * zero, and makes os.clock() report 0.0. Pair os.date with '!'-prefixed
+     * formats when the output must also be independent of the host's
+     * timezone.
+     */
     public bool $deterministic;
 
     /**

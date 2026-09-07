@@ -112,7 +112,20 @@ static int luaext_oslib_clock(lua_State *L)
 	luaext_oslib_clock_state *state =
 		(luaext_oslib_clock_state *)lua_touserdata(L, lua_upvalueindex(1));
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
-	double seconds = (sandbox != NULL) ? luaext_timers_cpu_seconds(sandbox) : 0.0;
+	double seconds;
+
+	/*
+	 * A deterministic sandbox has no clock to show: CPU time is the least
+	 * reproducible quantity on the machine, and this answer is what makes
+	 * "freeze the clock" true for the whole os table rather than two thirds
+	 * of it.
+	 */
+	if (sandbox != NULL && sandbox->policy.deterministic) {
+		lua_pushnumber(L, (lua_Number)0.0);
+		return 1;
+	}
+
+	seconds = (sandbox != NULL) ? luaext_timers_cpu_seconds(sandbox) : 0.0;
 
 	/*
 	 * The timer layer is the only source now: it reports this sandbox's own
@@ -458,11 +471,29 @@ static void luaext_oslib_check_result_length(lua_State *L, size_t length)
 	}
 }
 
+/*
+ * The current time as this sandbox's scripts see it: epoch zero when the host
+ * asked for determinism, the real clock otherwise. Only the DEFAULT is
+ * frozen -- an explicit time argument is already reproducible, being the
+ * script's own input. Pair with '!'-prefixed os.date formats for output that
+ * is also independent of the host's timezone.
+ */
+static time_t luaext_oslib_now(lua_State *L)
+{
+	const luaext_sandbox *sandbox = LUAEXT_SB(L);
+
+	if (sandbox != NULL && sandbox->policy.deterministic) {
+		return (time_t)0;
+	}
+
+	return time(NULL);
+}
+
 static int luaext_oslib_date(lua_State *L)
 {
 	size_t slen;
 	const char *s = luaL_optlstring(L, 1, "%c", &slen);
-	time_t t = luaL_opt(L, luaext_oslib_checktime, 2, time(NULL));
+	time_t t = luaL_opt(L, luaext_oslib_checktime, 2, luaext_oslib_now(L));
 	const char *se = s + slen; /* 's' end */
 	struct tm tmr, *stm;
 
@@ -530,7 +561,7 @@ static int luaext_oslib_time(lua_State *L)
 	time_t t;
 
 	if (lua_isnoneornil(L, 1)) { /* called without args? */
-		t = time(NULL);			 /* get current time */
+		t = luaext_oslib_now(L); /* current time, or the frozen epoch */
 	} else {
 		struct tm ts;
 

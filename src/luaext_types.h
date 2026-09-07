@@ -328,6 +328,14 @@ typedef struct {
 	bool seed_is_fixed;
 
 	/*
+	 * SandboxConfig::$deterministic: the run should be reproducible. Besides
+	 * authorising a fixed seed, this freezes the clock the os library shows a
+	 * script -- os.time() and os.date() answer from epoch zero, os.clock()
+	 * reports 0.0 -- so two runs of the same chunk produce the same bytes.
+	 */
+	bool deterministic;
+
+	/*
 	 * Whether eval() keeps the chunks it compiles, bounded by
 	 * limits.max_cached_chunks.
 	 *
