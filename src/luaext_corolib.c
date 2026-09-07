@@ -654,7 +654,17 @@ uint32_t luaext_corolib_live_count(const luaext_sandbox *sandbox)
 		return sandbox->co_live;
 	}
 
-	luaext_corolib_push_threads(L);
+	/*
+	 * Asked for, never created: this runs from stats(), and creating the table
+	 * would grow the very heap the caller just sampled -- reading the memory
+	 * figures must not move them. No table means no live coroutine either: the
+	 * capability is off, or the end-of-call sweep detached it and zeroed the
+	 * counter on its way out.
+	 */
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_threads) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return sandbox->co_live;
+	}
 
 	lua_pushnil(L);
 
@@ -698,7 +708,12 @@ void luaext_corolib_set_hook_all(luaext_sandbox *sandbox, lua_Hook hook, int mas
 		return;
 	}
 
-	luaext_corolib_push_threads(L);
+	/* Same non-creating lookup as the recount, same reason: arming hooks is an
+	 * observer, and with no table there is no thread to arm them on. */
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_threads) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return;
+	}
 
 	lua_pushnil(L);
 
