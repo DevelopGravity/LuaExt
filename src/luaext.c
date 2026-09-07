@@ -433,10 +433,14 @@ static PHP_MINFO_FUNCTION(luaext)
 /*
  * The exception hierarchy extends SPL's RuntimeException and LogicException,
  * and SandboxStats implements JsonSerializable, so both modules must have run
- * their own MINIT before ours does.
+ * their own MINIT before ours does. ext/hash and ext/random are the same
+ * ordering dependency by a different door: luaext_seal_startup() runs from
+ * MINIT and reads the algorithm registry ext/hash only fills in its own
+ * MINIT, and the seed path leans on ext/random's CSPRNG.
  */
-static const zend_module_dep luaext_deps[] = {ZEND_MOD_REQUIRED("spl") ZEND_MOD_REQUIRED("json")
-												  ZEND_MOD_END};
+static const zend_module_dep luaext_deps[] = {
+	ZEND_MOD_REQUIRED("spl") ZEND_MOD_REQUIRED("json") ZEND_MOD_REQUIRED("hash")
+		ZEND_MOD_REQUIRED("random") ZEND_MOD_END};
 
 zend_module_entry luaext_module_entry = {
 	STANDARD_MODULE_HEADER_EX,

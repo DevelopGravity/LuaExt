@@ -151,5 +151,11 @@ if (PHP_LUAEXT != "no") {
 	ADD_SOURCES(luaext_lua_dir, luaext_lua_sources.join(" "), "luaext", "luaext_lua");
 	ADD_FLAG("CFLAGS_BD_LUAEXT_LUA", "/w");
 
+	// Mirrors luaext_deps in src/luaext.c; see config.m4 for the reasoning.
+	ADD_EXTENSION_DEP("luaext", "spl");
+	ADD_EXTENSION_DEP("luaext", "json");
+	ADD_EXTENSION_DEP("luaext", "hash");
+	ADD_EXTENSION_DEP("luaext", "random");
+
 	AC_DEFINE("HAVE_LUAEXT", 1, "Define to 1 if the luaext extension is built.");
 }

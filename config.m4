@@ -183,6 +183,14 @@ if test "$PHP_LUAEXT" != "no"; then
     [$ext_shared],,
     [$LUAEXT_FLAGS])
 
+  dnl Mirrors luaext_deps in src/luaext.c: MINIT reads SPL's exception classes,
+  dnl JsonSerializable, ext/hash's algorithm registry and ext/random's CSPRNG,
+  dnl so all four must initialise first in an in-tree build.
+  PHP_ADD_EXTENSION_DEP([luaext], [spl])
+  PHP_ADD_EXTENSION_DEP([luaext], [json])
+  PHP_ADD_EXTENSION_DEP([luaext], [hash])
+  PHP_ADD_EXTENSION_DEP([luaext], [random])
+
   dnl PHP_NEW_EXTENSION only knows one flag set, so the interpreter is added
   dnl afterwards, into the same object list the module is linked from:
   dnl shared_objects_luaext for a phpize/PIE build, PHP_GLOBAL_OBJS when the
