@@ -180,15 +180,18 @@ PHP_INI_ENTRY("luaext.watchdog_resolution_us", "500", PHP_INI_SYSTEM,
 			  luaext_ini_update_watchdog_resolution)
 
 /*
-	 * Whether an UNSEALED binary chunk may be loaded at all, by compileBinary()
+	 * Whether an UNSEALED binary chunk may be loaded at all -- by
+	 * compileBinary(), by a ModuleResolver handing require() a binary module,
 	 * or by a script's own load(..., "b").
 	 *
 	 * Off by default, and that is the security posture rather than a
 	 * preference: Lua's loader checks the header and stops, so a corrupted
 	 * instruction stream reaches the VM intact. Measured by flipping one byte at
 	 * each position of a small chunk -- 57% refused, 33% ran anyway, 10% killed
-	 * the process. Sealed blobs carry an HMAC and are always allowed; this
-	 * reopens the path for blobs nothing can vouch for.
+	 * the process. Sealed blobs are always allowed -- an unkeyed xxh128
+	 * checksum under the default SealMode::Checksum, tamper-evident but not
+	 * authenticating; an HMAC only under SealMode::Authenticated -- and this
+	 * reopens the path for blobs nothing can vouch for at all.
 	 */
 STD_PHP_INI_BOOLEAN("luaext.allow_raw_bytecode", "0", PHP_INI_SYSTEM, OnUpdateBool,
 					allow_raw_bytecode, zend_luaext_globals, luaext_globals)
