@@ -1144,6 +1144,18 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 {
 	lua_State *L = sandbox->L;
 
+	/*
+	 * An exception already in flight when the sweep starts belongs to the
+	 * CALLER -- most critically exit()'s unwind sentinel, which reaches here
+	 * pending because an internal frame kept PHP from unwinding past us. Both
+	 * halves of the normal sweep are wrong for it: the engine refuses backend
+	 * calls while one is pending, and the clear below would cancel the exit
+	 * itself. So the flush is forfeited -- best-effort already tolerates that
+	 * -- and every handle is only released, leaving the exception exactly as
+	 * it arrived.
+	 */
+	bool pending_on_entry = EG(exception) != NULL;
+
 	if (L == NULL || sandbox->vfs_open_handles == 0) {
 		return;
 	}
@@ -1168,27 +1180,38 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 		lua_pop(L, 1); /* value; the key stays for lua_next */
 
 		if (handle != NULL && !handle->closed) {
-			zend_string *refusal = NULL;
-
-			/*
-			 * A failure here cannot be reported: the call is returning and no
-			 * script is left to hear it. What must NOT happen is a pending PHP
-			 * exception escaping into the caller's teardown, so it is cleared --
-			 * the flush was best-effort by the time we reached the sweep.
-			 *
-			 * Uncharged, because this frame runs after lua_pcall returned and a
-			 * raise here has no handler: charging the flush would let a script
-			 * spend maxOperations - 1 and leave a dirty handle, making the
-			 * sweep's own close the breaching operation. See the close helper.
-			 */
-			(void)luaext_vfs_handle_close_maybe_charged(L, sandbox, handle, &refusal, false);
-
-			if (refusal != NULL) {
-				zend_string_release(refusal);
+			if (pending_on_entry) {
+				luaext_vfs_handle_release(sandbox, handle);
+				continue;
 			}
 
-			if (EG(exception)) {
-				zend_clear_exception();
+			{
+				zend_string *refusal = NULL;
+
+				/*
+				 * A failure here cannot be reported: the call is returning and
+				 * no script is left to hear it. What must NOT happen is a PHP
+				 * exception THE FLUSH ITSELF raised escaping into the caller's
+				 * teardown, so it is cleared -- the flush was best-effort by
+				 * the time we reached the sweep. Nothing was pending on entry
+				 * (that took the release-only path above), so whatever is
+				 * pending now is the flush's own.
+				 *
+				 * Uncharged, because this frame runs after lua_pcall returned
+				 * and a raise here has no handler: charging the flush would
+				 * let a script spend maxOperations - 1 and leave a dirty
+				 * handle, making the sweep's own close the breaching
+				 * operation. See the close helper.
+				 */
+				(void)luaext_vfs_handle_close_maybe_charged(L, sandbox, handle, &refusal, false);
+
+				if (refusal != NULL) {
+					zend_string_release(refusal);
+				}
+
+				if (EG(exception)) {
+					zend_clear_exception();
+				}
 			}
 		}
 	}
