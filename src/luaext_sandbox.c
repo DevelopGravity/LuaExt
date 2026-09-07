@@ -28,6 +28,7 @@
 #include "luaext_profiler.h"
 #include "luaext_require.h"
 #include "luaext_seal.h"
+#include "luaext_thread.h"
 #include "luaext_vfs.h"
 
 #include <lauxlib.h>
@@ -40,12 +41,6 @@
 #include <Zend/zend_exceptions.h>
 #include <ext/random/php_random.h>
 #include <ext/random/php_random_csprng.h>
-
-#ifdef PHP_WIN32
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
 
 /* -------------------------------------------------------------------------
  * Registry keys
@@ -71,25 +66,6 @@ const char luaext_key_pathmt = 0;
  * ---------------------------------------------------------------------- */
 
 static zend_object_handlers luaext_sandbox_handlers;
-
-/*
- * Identity of the thread a sandbox belongs to. Only interrupt() may be called
- * from anywhere else, and enforcing that needs a comparable thread identity.
- *
- * This is not a needless reimplementation of TSRM's tsrm_thread_id(): that is
- * declared inside TSRM.h's `#ifdef ZTS` block and simply does not exist in an
- * NTS build, which this extension supports and tests. THREAD_T resolves to
- * pthread_t / DWORD -- exactly the two branches below -- so calling it where it
- * exists would buy nothing and cost an #ifdef around every call site.
- */
-static zend_always_inline uintptr_t luaext_current_thread(void)
-{
-#ifdef PHP_WIN32
-	return (uintptr_t)GetCurrentThreadId();
-#else
-	return (uintptr_t)pthread_self();
-#endif
-}
 
 /*
  * Reject use of a sandbox whose interpreter is gone. Every method other than
@@ -118,10 +94,16 @@ static bool luaext_sandbox_check_open(const luaext_sandbox *sandbox)
  *
  * owner_thread is zero until construction succeeds, which keeps a
  * part-constructed object usable by the thread that is still building it.
+ *
+ * Identity comes from luaext_thread_self() -- the one definition of thread
+ * identity, whose byte-copy of pthread_t is spelled out in luaext_thread.c.
+ * (TSRM's tsrm_thread_id() is not an option: it lives inside TSRM.h's
+ * `#ifdef ZTS` and does not exist in an NTS build, which this extension
+ * supports and tests.)
  */
 static bool luaext_sandbox_check_thread(const luaext_sandbox *sandbox)
 {
-	if (sandbox->owner_thread != 0 && sandbox->owner_thread != luaext_current_thread()) {
+	if (sandbox->owner_thread != 0 && sandbox->owner_thread != luaext_thread_self()) {
 		zend_throw_exception(luaext_ce_thread_affinity_error,
 							 "A sandbox may only be used from the thread that created it; "
 							 "only interrupt() may be called from another thread",
@@ -448,7 +430,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 * fails construction rather than being discovered later.
 	 */
 	sandbox->alloc.limit = sandbox->policy.limits.memory_bytes;
-	sandbox->owner_thread = luaext_current_thread();
+	sandbox->owner_thread = luaext_thread_self();
 	sandbox->seed = luaext_sandbox_seed(&sandbox->policy);
 
 	sandbox->L = lua_newstate(luaext_lua_alloc, sandbox, (unsigned int)sandbox->seed);
@@ -1615,7 +1597,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, interrupt)
 	 * airtight from here, because PHP's object refcounts are not atomic; a
 	 * caller racing the last reference away has already lost. The stub says so.
 	 */
-	if (sandbox->owner_thread == luaext_current_thread() && !luaext_sandbox_check_open(sandbox)) {
+	if (sandbox->owner_thread == luaext_thread_self() && !luaext_sandbox_check_open(sandbox)) {
 		RETURN_THROWS();
 	}
 
