@@ -620,13 +620,7 @@ static bool luaext_convert_value(luaext_convert_to_ctx *ctx, int index, luaext_c
 static bool luaext_convert_account(luaext_convert_to_ctx *ctx, size_t bytes,
 								   const luaext_convert_step *step)
 {
-	ctx->produced += bytes;
-
-	if (!ctx->bill || bytes == 0) {
-		return true;
-	}
-
-	if (!luaext_alloc_charge(ctx->sandbox, bytes)) {
+	if (ctx->bill && bytes != 0 && !luaext_alloc_charge(ctx->sandbox, bytes)) {
 		/*
 		 * MemoryLimitError, not ConversionError: the value is perfectly
 		 * convertible and the sandbox simply cannot afford it. Reporting it as a
@@ -641,6 +635,14 @@ static bool luaext_convert_account(luaext_convert_to_ctx *ctx, size_t bytes,
 								path, bytes);
 		return false;
 	}
+
+	/*
+	 * Accumulated only once the charge is taken (or when nothing is billing):
+	 * the caller discharges `produced` when it releases what it built, so a
+	 * refused charge counted here would later hand back bytes never taken and
+	 * the ledger would stop describing live host memory.
+	 */
+	ctx->produced += bytes;
 
 	return true;
 }
