@@ -560,6 +560,13 @@ final readonly class SandboxStats implements \JsonSerializable
     /** CPU seconds the sandbox's thread spent inside FileSystem backend calls. */
     public float $vfsCpuSeconds;
 
+    /**
+     * Full collections performed on demand: the script's
+     * collectgarbage("collect") calls plus any the extension forces under
+     * resource pressure. The collector's own automatic incremental or
+     * generational cycles are not observable from outside the interpreter
+     * and are not counted.
+     */
     public int $gcCollections;
 
     /** Calls from PHP into Lua. */

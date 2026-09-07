@@ -102,6 +102,10 @@ static int luaext_corolib_create(lua_State *L)
 		 * down does this fail.
 		 */
 		lua_gc(L, LUA_GCCOLLECT);
+		/* A full collection is a full collection wherever it was decided:
+		 * stats()->gcCollections counts this one like a script-issued
+		 * collectgarbage("collect"). */
+		sandbox->gc_collections++;
 		sandbox->co_live = luaext_corolib_recount(L);
 
 		if (sandbox->co_live >= cap) {
