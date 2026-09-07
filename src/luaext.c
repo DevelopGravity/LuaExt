@@ -438,9 +438,8 @@ static PHP_MINFO_FUNCTION(luaext)
  * MINIT and reads the algorithm registry ext/hash only fills in its own
  * MINIT, and the seed path leans on ext/random's CSPRNG.
  */
-static const zend_module_dep luaext_deps[] = {
-	ZEND_MOD_REQUIRED("spl") ZEND_MOD_REQUIRED("json") ZEND_MOD_REQUIRED("hash")
-		ZEND_MOD_REQUIRED("random") ZEND_MOD_END};
+static const zend_module_dep luaext_deps[] = {ZEND_MOD_REQUIRED("spl") ZEND_MOD_REQUIRED(
+	"json") ZEND_MOD_REQUIRED("hash") ZEND_MOD_REQUIRED("random") ZEND_MOD_END};
 
 zend_module_entry luaext_module_entry = {
 	STANDARD_MODULE_HEADER_EX,

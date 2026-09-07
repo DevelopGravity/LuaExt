@@ -68,10 +68,15 @@ var_dump($sandbox->eval('return require("vendored") == require("vendored")', '=r
 
 // package carries three names and no loader toolkit. cpath, searchers and
 // loadlib all exist upstream to reach a shared object, and a sandbox that can
-// dlopen has no boundary left.
+// dlopen has no boundary left. Probed by name rather than pairs(): the
+// visible package is a read-only proxy, and 5.5 has no __pairs to teach an
+// empty proxy to enumerate.
 printf("package: %s\n", $sandbox->eval(
-	'local names = {} for name in pairs(package) do names[#names + 1] = name end
-	table.sort(names) return table.concat(names, ",")',
+	'local surface = {}
+	for _, name in ipairs({"loaded", "preload", "path", "cpath", "searchers", "loadlib"}) do
+		surface[#surface + 1] = name .. "=" .. type(package[name])
+	end
+	return table.concat(surface, ",")',
 	'=require',
 )[0]);
 
@@ -93,6 +98,6 @@ pkg              vfs-init
 only-at-resolver resolver:only-at-resolver
 resolver asked: only-at-resolver
 bool(true)
-package: loaded,path,preload
+package: loaded=table,preload=table,path=string,cpath=nil,searchers=nil,loadlib=nil
 path: /?.lua;/?/init.lua
 ungranted: require=nil package=nil

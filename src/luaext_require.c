@@ -833,6 +833,16 @@ bool luaext_require_preload(lua_State *L, luaext_sandbox *sandbox, const char *n
  * Install
  * ---------------------------------------------------------------------- */
 
+/*
+ * __newindex of the package proxy: every write to a field of `package`
+ * itself is refused. Catchable on purpose -- refusing the write IS the
+ * protection, and a script that pcalls it holds nothing.
+ */
+static int luaext_require_package_newindex(lua_State *L)
+{
+	return luaL_error(L, "the package table is read-only in this sandbox");
+}
+
 bool luaext_require_install(lua_State *L, luaext_sandbox *sandbox)
 {
 	if (!luaext_has_cap(&sandbox->policy, LUAEXT_CAP_REQUIRE)) {
@@ -903,9 +913,24 @@ bool luaext_require_install(lua_State *L, luaext_sandbox *sandbox)
 	/*
 	 * No cpath, no searchers, no loadlib. Every one of those exists to reach a
 	 * shared object; see the header. The table is frozen so a script cannot add
-	 * one back and cannot replace loaded/preload wholesale.
+	 * one back and cannot replace loaded/preload wholesale -- and the freeze is
+	 * real, not a comment: the `package` a script sees is an EMPTY proxy whose
+	 * __index reads the table built above and whose __newindex refuses every
+	 * write. A __newindex on the table itself would not have done it, because
+	 * that metamethod only fires for absent keys and path/loaded/preload
+	 * exist. (rawset can still plant a shadowing key on the proxy, but the
+	 * search never reads the script's view, so a script doing that only lies
+	 * to itself.) Writing INTO package.loaded[name] still works; only the
+	 * fields of package itself are pinned. __metatable = false keeps both
+	 * halves unreachable: getmetatable() answers false and setmetatable()
+	 * raises, so the proxy cannot be re-pointed.
 	 */
-	lua_createtable(L, 0, 2);
+	lua_createtable(L, 0, 0); /* [real, proxy] */
+	lua_createtable(L, 0, 3); /* [real, proxy, mt] */
+	lua_rotate(L, -3, -1);	  /* [proxy, mt, real] */
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, luaext_require_package_newindex);
+	lua_setfield(L, -2, "__newindex");
 	lua_pushboolean(L, 0);
 	lua_setfield(L, -2, "__metatable");
 	lua_setmetatable(L, -2);
