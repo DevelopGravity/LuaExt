@@ -1010,7 +1010,14 @@ static bool luaext_proxy_map_operator(luaext_proxy_class *record, zend_class_ent
 	return true;
 }
 
-/* The full mapping pass: the parameter route, else the attribute route. */
+/*
+ * The full mapping pass. Two sources MERGE, and that is deliberate: the map
+ * (the $operators parameter, else the #[LuaClass] field) exists to reach
+ * inherited vendor methods that cannot carry attributes, while a class's own
+ * methods speak for themselves with #[LuaOperator] — a wrapper subclass
+ * routinely needs both at once. A slot claimed by both sources is refused as
+ * the duplicate it is.
+ */
 static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_class_entry *ce,
 										   HashTable *operators)
 {
@@ -1042,8 +1049,6 @@ static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_clas
 			}
 		}
 		ZEND_HASH_FOREACH_END();
-
-		return true;
 	}
 
 	marker = zend_string_tolower(luaext_ce_lua_operator_attribute->name);
@@ -1120,49 +1125,15 @@ static void luaext_proxy_class_free(luaext_proxy_class *record)
 	pefree(record, 1);
 }
 
-bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, HashTable *allowlist,
-						   zend_string *lua_name, HashTable *operators)
+/* The pipeline past class resolution: everything that needs a vetted ce. */
+static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry *ce,
+									   HashTable *allowlist, zend_string *lua_name,
+									   HashTable *operators)
 {
-	zend_class_entry *ce;
 	luaext_proxy_class *walk;
 	luaext_proxy_class *record;
 	zend_string *resolved_name;
 	bool collected;
-
-	ce = zend_lookup_class(class_name);
-
-	if (ce == NULL) {
-		/* An autoloader that threw already explains the failure better. */
-		if (EG(exception) == NULL) {
-			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-									"Cannot register %s: the class does not exist",
-									ZSTR_VAL(class_name));
-		}
-
-		return false;
-	}
-
-	if (ce->ce_flags & ZEND_ACC_INTERFACE) {
-		zend_throw_exception_ex(
-			luaext_ce_configuration_error, 0,
-			"Cannot register interface %s: only classes have instances to proxy",
-			ZSTR_VAL(ce->name));
-		return false;
-	}
-
-	if (ce->ce_flags & ZEND_ACC_ENUM) {
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"Cannot register enum %s: enum cases are process-lifetime "
-								"singletons, not instances a proxy can own",
-								ZSTR_VAL(ce->name));
-		return false;
-	}
-
-	if (ce->ce_flags & ZEND_ACC_ANON_CLASS) {
-		zend_throw_exception(luaext_ce_configuration_error,
-							 "Cannot register an anonymous class: it has no usable Lua name", 0);
-		return false;
-	}
 
 	for (walk = sandbox->proxy_classes; walk != NULL; walk = walk->next) {
 		if (walk->ce == ce) {
@@ -1292,6 +1263,111 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 	sandbox->proxy_classes = record;
 
 	return true;
+}
+
+bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, HashTable *allowlist,
+						   zend_string *lua_name, HashTable *operators)
+{
+	zend_class_entry *ce;
+	zval carrier;
+	bool registered;
+
+	ce = zend_lookup_class(class_name);
+
+	if (ce == NULL) {
+		/* An autoloader that threw already explains the failure better. */
+		if (EG(exception) == NULL) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"Cannot register %s: the class does not exist",
+									ZSTR_VAL(class_name));
+		}
+
+		return false;
+	}
+
+	if (ce->ce_flags & ZEND_ACC_INTERFACE) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"Cannot register interface %s: only classes have instances to proxy",
+			ZSTR_VAL(ce->name));
+		return false;
+	}
+
+	if (ce->ce_flags & ZEND_ACC_ENUM) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"Cannot register enum %s: enum cases are process-lifetime "
+								"singletons, not instances a proxy can own",
+								ZSTR_VAL(ce->name));
+		return false;
+	}
+
+	if (ce->ce_flags & ZEND_ACC_ANON_CLASS) {
+		zend_throw_exception(luaext_ce_configuration_error,
+							 "Cannot register an anonymous class: it has no usable Lua name", 0);
+		return false;
+	}
+
+	/*
+	 * The #[LuaClass] carrier: each explicit argument that was NOT given falls
+	 * back to the attribute's field. A carrier, never a grant — an annotated
+	 * class still crosses nothing until a sandbox reaches this function. The
+	 * attribute object owns the fallback values, so it stays alive across the
+	 * whole pipeline below.
+	 */
+	ZVAL_UNDEF(&carrier);
+
+	{
+		zend_string *marker = zend_string_tolower(luaext_ce_lua_class_attribute->name);
+		zend_attribute *attribute = zend_get_attribute(ce->attributes, marker);
+
+		zend_string_release(marker);
+
+		if (attribute != NULL) {
+			zend_string *filename = ce->type == ZEND_USER_CLASS ? ce->info.user.filename : NULL;
+			zval holder;
+			zval *field;
+
+			if (zend_get_attribute_object(&carrier, luaext_ce_lua_class_attribute, attribute, ce,
+										  filename) != SUCCESS) {
+				return false;
+			}
+
+			if (lua_name == NULL) {
+				field = zend_read_property(luaext_ce_lua_class_attribute, Z_OBJ(carrier),
+										   ZEND_STRL("luaName"), true, &holder);
+
+				if (field != NULL && Z_TYPE_P(field) == IS_STRING) {
+					lua_name = Z_STR_P(field);
+				}
+			}
+
+			if (allowlist == NULL) {
+				field = zend_read_property(luaext_ce_lua_class_attribute, Z_OBJ(carrier),
+										   ZEND_STRL("methods"), true, &holder);
+
+				if (field != NULL && Z_TYPE_P(field) == IS_ARRAY) {
+					allowlist = Z_ARRVAL_P(field);
+				}
+			}
+
+			if (operators == NULL) {
+				field = zend_read_property(luaext_ce_lua_class_attribute, Z_OBJ(carrier),
+										   ZEND_STRL("operators"), true, &holder);
+
+				if (field != NULL && Z_TYPE_P(field) == IS_ARRAY) {
+					operators = Z_ARRVAL_P(field);
+				}
+			}
+		}
+	}
+
+	registered = luaext_proxy_register_with(sandbox, ce, allowlist, lua_name, operators);
+
+	if (!Z_ISUNDEF(carrier)) {
+		zval_ptr_dtor(&carrier);
+	}
+
+	return registered;
 }
 
 luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_class_entry *ce)

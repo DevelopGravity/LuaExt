@@ -522,6 +522,35 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 		RETURN_THROWS();
 	}
 
+	/*
+	 * SandboxConfig::$classes, registered exactly as registerClass() with no
+	 * parameter overrides — configuration comes from each class's attributes.
+	 * Last, and only once the sandbox is fully able to plant class tables:
+	 * the config validated the list's shape, but the classes themselves are
+	 * resolved here, at Sandbox construction, because a config object may
+	 * predate them. The first refusal fails construction whole.
+	 */
+	if (config != NULL) {
+		zval holder;
+		zval *classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(config),
+										   ZEND_STRL("classes"), true, &holder);
+
+		if (classes != NULL && Z_TYPE_P(classes) == IS_ARRAY) {
+			zval *class_name;
+
+			ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(classes), class_name)
+			{
+				ZVAL_DEREF(class_name);
+
+				if (Z_TYPE_P(class_name) != IS_STRING ||
+					!luaext_proxy_register(sandbox, Z_STR_P(class_name), NULL, NULL, NULL)) {
+					RETURN_THROWS();
+				}
+			}
+			ZEND_HASH_FOREACH_END();
+		}
+	}
+
 	luaext_sandbox_link(sandbox);
 }
 
