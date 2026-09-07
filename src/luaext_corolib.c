@@ -41,30 +41,54 @@ static void luaext_corolib_push_threads(lua_State *L)
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_threads);
 }
 
-/*
- * Recount the table, which is only ever done after a full collection.
- *
- * co_live is a running counter and is exact for threads this sandbox is still
- * tracking, but a coroutine that finished and became garbage stays counted until
- * something collects it. Recounting is how the cap distinguishes "sixty-four
- * live" from "sixty-four created, most of them dead".
- */
-static uint32_t luaext_corolib_recount(lua_State *L)
-{
-	uint32_t live = 0;
+static const char *luaext_corolib_status_name(lua_State *L, lua_State *co);
 
-	luaext_corolib_push_threads(L);
+/*
+ * Count the tracking table's entries, walking on whichever state is executing.
+ *
+ * only_alive selects between the two populations this file has to keep
+ * straight. The cap and the stat ask about threads that can still run
+ * (status != "dead"), so Limits::$maxLiveCoroutines and
+ * SandboxStats::$liveCoroutines describe the same thing and the figure a host
+ * reads can predict the refusal. The sweep's bookkeeping needs plain
+ * membership: a dead-but-referenced thread may still hold unclosed <close>
+ * variables that must run at end-of-call, so it has to keep the sweep's
+ * early-out armed even though nothing counts it as alive.
+ *
+ * The table is asked for, never created: counting is an observer -- this runs
+ * from stats() among other places -- and creating the table would grow the
+ * very heap the caller just sampled. No table means nothing to count: the
+ * capability is off, or the sweep detached it on its way out.
+ */
+static uint32_t luaext_corolib_count(lua_State *L, bool only_alive)
+{
+	uint32_t counted = 0;
+
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_threads) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return 0;
+	}
 
 	lua_pushnil(L);
 
 	while (lua_next(L, -2) != 0) {
+		lua_State *co = lua_tothread(L, -2);
+
 		lua_pop(L, 1); /* value; the key stays for lua_next */
-		live++;
+
+		/*
+		 * The weak table only drops a dead thread at the next collection, so
+		 * membership alone over-counts the living; status is what separates a
+		 * thread that finished from one that is merely uncollected.
+		 */
+		if (co != NULL && (!only_alive || strcmp(luaext_corolib_status_name(L, co), "dead") != 0)) {
+			counted++;
+		}
 	}
 
 	lua_pop(L, 1);
 
-	return live;
+	return counted;
 }
 
 /* -------------------------------------------------------------------------
@@ -106,9 +130,18 @@ static int luaext_corolib_create(lua_State *L)
 		 * stats()->gcCollections counts this one like a script-issued
 		 * collectgarbage("collect"). */
 		sandbox->gc_collections++;
-		sandbox->co_live = luaext_corolib_recount(L);
 
-		if (sandbox->co_live >= cap) {
+		/*
+		 * co_live is refreshed from MEMBERSHIP: it is the sweep's early-out,
+		 * and a dead thread the script still references must keep the sweep
+		 * armed for its unclosed <close> variables. The refusal below judges
+		 * the ALIVE population instead -- the one the limit's name promises
+		 * and stats()->liveCoroutines reports -- so a host watching that
+		 * figure can predict this refusal.
+		 */
+		sandbox->co_live = luaext_corolib_count(L, false);
+
+		if (luaext_corolib_count(L, true) >= cap) {
 			/*
 			 * Fatal, not a catchable error. A script that could pcall this would
 			 * retry in a loop, and the cap exists to bound the interpreter's
@@ -640,7 +673,6 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 uint32_t luaext_corolib_live_count(const luaext_sandbox *sandbox)
 {
 	lua_State *L = sandbox->L;
-	uint32_t live = 0;
 
 	/*
 	 * The fallbacks answer with the running counter: after close() there is
@@ -648,44 +680,13 @@ uint32_t luaext_corolib_live_count(const luaext_sandbox *sandbox)
 	 * the sweep the table is detached, and a stack that cannot grow cannot
 	 * walk. Everywhere else the table is the truth and the counter is only a
 	 * high-water mark -- it counts threads that finished and were collected
-	 * until something recounts it, which is exactly what this does.
+	 * until something recounts them away.
 	 */
 	if (L == NULL || sandbox->co_sweeping || !lua_checkstack(L, 3)) {
 		return sandbox->co_live;
 	}
 
-	/*
-	 * Asked for, never created: this runs from stats(), and creating the table
-	 * would grow the very heap the caller just sampled -- reading the memory
-	 * figures must not move them. No table means no live coroutine either: the
-	 * capability is off, or the end-of-call sweep detached it and zeroed the
-	 * counter on its way out.
-	 */
-	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_threads) != LUA_TTABLE) {
-		lua_pop(L, 1);
-		return sandbox->co_live;
-	}
-
-	lua_pushnil(L);
-
-	while (lua_next(L, -2) != 0) {
-		lua_State *co = lua_tothread(L, -2);
-
-		lua_pop(L, 1); /* value; the key stays for lua_next */
-
-		/*
-		 * The weak table only drops a dead thread at the next collection, so
-		 * membership alone still over-counts; status is what separates a
-		 * thread that finished from one that is merely uncollected.
-		 */
-		if (co != NULL && strcmp(luaext_corolib_status_name(L, co), "dead") != 0) {
-			live++;
-		}
-	}
-
-	lua_pop(L, 1);
-
-	return live;
+	return luaext_corolib_count(L, true);
 }
 
 void luaext_corolib_set_hook_all(luaext_sandbox *sandbox, lua_Hook hook, int mask, int count)
