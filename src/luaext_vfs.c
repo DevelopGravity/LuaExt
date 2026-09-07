@@ -721,9 +721,14 @@ static bool luaext_vfs_parse_mode(const char *mode, bool *readable, bool *writab
  * reached the quota, never what it is exactly, and a namespace far larger than
  * the quota must not cost proportionally more to refuse.
  *
- * Depth is bounded by the same quota the path canonicaliser uses, so a backend
- * reporting a cyclic namespace cannot recurse forever.
+ * Depth is bounded by VfsQuota::$maxPathDepth when one is configured, and by a
+ * fixed ceiling always: zero means "no bound from the quota" everywhere else in
+ * this extension, and this walk recurses on the C stack, so a quota that
+ * declined to bound it must not leave a cyclic backend namespace free to
+ * overflow it.
  */
+#define LUAEXT_VFS_COUNT_MAX_DEPTH 128u
+
 static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const char *dir,
 								   uint32_t ceiling, uint32_t depth, uint32_t *count)
 {
@@ -733,7 +738,7 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 	zval *entry;
 	uint32_t max_depth = sandbox->policy.vfs_quota.max_path_depth;
 
-	if (max_depth != 0 && depth > max_depth) {
+	if (depth > LUAEXT_VFS_COUNT_MAX_DEPTH || (max_depth != 0 && depth > max_depth)) {
 		return true;
 	}
 
@@ -783,6 +788,19 @@ static bool luaext_vfs_count_files(lua_State *L, luaext_sandbox *sandbox, const 
 		}
 
 		if (Z_TYPE_P(entry) != IS_STRING) {
+			continue;
+		}
+
+		/*
+		 * list() names direct children. An entry that is empty, carries a
+		 * separator, or is '.' or '..' is not a child name, and joining it
+		 * would walk somewhere else entirely -- a backend answering '..'
+		 * would walk this count in circles.
+		 */
+		if (Z_STRLEN_P(entry) == 0 ||
+			memchr(Z_STRVAL_P(entry), '/', Z_STRLEN_P(entry)) != NULL ||
+			zend_string_equals_literal(Z_STR_P(entry), ".") ||
+			zend_string_equals_literal(Z_STR_P(entry), "..")) {
 			continue;
 		}
 
@@ -1128,6 +1146,16 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 	lua_State *L = sandbox->L;
 
 	if (L == NULL || sandbox->vfs_open_handles == 0) {
+		return;
+	}
+
+	/*
+	 * The sweep runs right after a LUA_MULTRET pcall, which is precisely when
+	 * Lua guarantees no free slots at all. Same guard, same reasoning, same
+	 * give-up as luaext_corolib_sweep(): a stack that cannot grow forfeits
+	 * the flush rather than pushing into memory it has not got.
+	 */
+	if (!lua_checkstack(L, 4)) {
 		return;
 	}
 
