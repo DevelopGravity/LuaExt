@@ -135,10 +135,25 @@ void luaext_alloc_tune_gc(luaext_sandbox *sandbox)
 		return;
 	}
 
-	alloc->gc_last_tune = tier;
 	tuning = &luaext_gc_tiers[tier];
 
-	lua_gc(L, LUA_GCPARAM, LUA_GCPPAUSE, tuning->pause);
+	/*
+	 * lua_gc() refuses everything -- a no-op returning -1 -- while the
+	 * collector is internally stopped, and it is stopped exactly when a __gc
+	 * finaliser is running, whose allocations land here like any other.
+	 * Memoising a refused tier would short-circuit every later attempt at the
+	 * comparison above, leaving the collector untuned for good; so the memo
+	 * is written only once the collector has accepted the first parameter,
+	 * and a refusal leaves it untouched for the next allocation to retry.
+	 * The remaining three cannot be refused if the first was not: the stop
+	 * flags are per-state, not per-parameter.
+	 */
+	if (lua_gc(L, LUA_GCPARAM, LUA_GCPPAUSE, tuning->pause) < 0) {
+		return;
+	}
+
+	alloc->gc_last_tune = tier;
+
 	lua_gc(L, LUA_GCPARAM, LUA_GCPSTEPMUL, tuning->step_mul);
 	lua_gc(L, LUA_GCPARAM, LUA_GCPMINORMUL, tuning->minor_mul);
 	lua_gc(L, LUA_GCPARAM, LUA_GCPMINORMAJOR, tuning->minor_major);
