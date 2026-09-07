@@ -2,7 +2,7 @@
 
 This is the reference for what a Lua script actually sees inside a `Sandbox` — which standard library members exist, which are LuaExt's own replacements and why, which upstream members are simply absent, how `io`/`os` map onto the host-controlled virtual filesystem, `require()` semantics, and coroutine behavior.
 
-> **Status: pre-1.0, no tagged release.** The stdlib policy described here is **implemented and tested**: library exposure is assembled by LuaExt's own `luaext_openlibs.c`, which copies approved members out of a scratch table rather than scrubbing a fully-open Lua state, and `tools/audit-stdlib.php` enforces the resulting surface against committed golden files on every push.
+> The stdlib policy described here is **implemented and tested**: library exposure is assembled by LuaExt's own `luaext_openlibs.c`, which copies approved members out of a scratch table rather than scrubbing a fully-open Lua state, and `tools/audit-stdlib.php` enforces the resulting surface against committed golden files on every push.
 >
 > For the exact surface a default sandbox exposes, run `tools/audit-stdlib.php` — the golden files it checks are the authoritative answer, and this page is prose written to match them.
 

@@ -9,7 +9,9 @@ A PHP extension that embeds a vendored, patched **Lua 5.5.1** interpreter to run
 
 Package: `developgravity/lua-ext` · extension name `luaext` · namespace `DevelopGravity\LuaExt` · license MIT · PHP 8.5+.
 
-> **Status: pre-1.0, no tagged release, no external audit.** Every capability the extension defines is implemented, and the `.phpt` suite (150 tests and counting — `make test` prints the live figure) covers compilation, the PHP↔Lua boundary, the CPU/wall-clock/memory/output budgets, the capability-gated standard library, coroutines, the virtual filesystem, `require()`, the profiler, Lua language conformance, and the adversarial cases where a script tries to catch its own limit breach.
+> **Status: a young package — please report anything you hit.** Every capability the extension defines is implemented, and the `.phpt` suite (162 tests and counting — `make test` prints the live figure) covers compilation, the PHP↔Lua boundary, the CPU/wall-clock/memory/output budgets, the capability-gated standard library, coroutines, the virtual filesystem, `require()`, the profiler, Lua language conformance, and the adversarial cases where a script tries to catch its own limit breach.
+>
+> What it has not had is age: no external security audit, and not yet the variety of real workloads that shakes out the last defects in an extension like this. If something misbehaves — a wrong answer, a crash, a limit that did not hold — [open an issue](https://github.com/DevelopGravity/LuaExt/issues). For anything that looks like a sandbox escape, please use the private channel in [SECURITY.md](SECURITY.md) instead.
 
 ## Why this exists
 
@@ -73,13 +75,30 @@ Via [PIE](https://github.com/php/pie):
 pie install developgravity/lua-ext:dev-develop
 ```
 
-**The version is not optional yet.** The package is on Packagist but has no tagged release, so `dev-develop` is the only version that resolves — and it tracks the branch tip. Pin a commit (`dev-develop#<sha>`) if you need reproducibility before the first tag. Building from a checkout (`phpize && ./configure && make`) works too and is what CI exercises.
+**The version suffix is required.** Until the first tag lands, `dev-develop` is the only version that resolves, and it tracks the branch tip — so **pin a commit (`dev-develop#<sha>`) for anything you deploy**, or you will silently move with the branch. Building from a checkout (`phpize && ./configure && make`) works too and is what CI exercises.
 
 For IDE autocomplete and static analysis without loading the extension, add the stub package as a dev dependency once published:
 
 ```bash
 composer require --dev developgravity/lua-ext-stubs
 ```
+
+## Versioning
+
+[Semantic versioning](https://semver.org/), with plain tags and no `v` prefix (`1.2.0`, not `v1.2.0`).
+
+The promise that matters for a sandbox is what a *non-major* upgrade is allowed to do, so it is worth stating precisely:
+
+- **Patch and minor releases never change behaviour you already depend on.** No renamed or removed class, method, parameter or enum case; no parameter changing type or meaning; no default value changing; no exception class changing to a different one for the same condition; and nothing that was allowed becoming refused.
+- **Minor releases may add.** New capabilities, limits, config fields, statistics and exception subclasses arrive in minor versions, always defaulting to the previous behaviour. A new `Capabilities` flag defaults closed; a new `Limits` field defaults to what the previous version effectively did.
+- **Anything that tightens the sandbox is a major release**, even when the tightening is a bug fix. If a script could reach something it should not have, closing that hole changes what previously-working scripts can do — so it waits for a major and is called out in [CHANGELOG.md](CHANGELOG.md).
+
+Two things are deliberately outside the guarantee, because pinning them would freeze the sandbox rather than the API:
+
+- **The vendored Lua version.** A Lua patch release can arrive in a minor; a new Lua *minor* (5.5 → 5.6) is a major, since it changes the language user scripts are written in.
+- **A security fix with no compatible form.** If the only way to close a sandbox escape is to break something, it ships in a patch and says so loudly. That is the one exception, and the trade is the reason the project exists.
+
+Anything the API does that this file, [docs/configuration.md](docs/configuration.md) or the stubs do not describe is unspecified, not promised — internal struct layouts, message wording, `SandboxStats` field *values*, and the order of anything not documented as ordered.
 
 ## Quick start
 
@@ -155,7 +174,7 @@ $sandbox->registerObject('text', new TextService());
 **Trusting it**
 
 - [SECURITY.md](SECURITY.md) — the threat model: what is and is not defended against, the trust model, and how to report a vulnerability.
-- [CHANGELOG.md](CHANGELOG.md) — release notes (currently unreleased-only; no tags exist yet).
+- [CHANGELOG.md](CHANGELOG.md) — release notes.
 
 ## License
 

@@ -2,7 +2,7 @@
 
 Practical recipes for building a host around `Sandbox`. Each recipe assumes you've read the [configuration reference](configuration.md) and, for anything touching the filesystem or module loading, [docs/lua-api.md](lua-api.md).
 
-> **Status: pre-1.0, no tagged release.** These recipes are written against the pinned public API in `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` — class, method, and parameter names, including on `SandboxStats` and `FileStat`, are accurate and will not drift.
+> These recipes are written against the pinned public API in `stubs/luaext.stub.php` and `stubs/luaext_exceptions.stub.php` — class, method, and parameter names, including on `SandboxStats` and `FileStat`, are accurate and will not drift.
 >
 > Every recipe here runs against a working binary: sandbox construction, `eval`/`call`/`compile`, `registerLibrary`/`registerObject`, the limits, output capture, the exception hierarchy, a `FileSystem` backend, `require()` with vendored Lua libraries, coroutine patterns, and the profiler.
 

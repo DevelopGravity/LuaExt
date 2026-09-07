@@ -2,7 +2,7 @@
 
 LuaExt's entire purpose is running Lua code you do not trust. This document is the threat model: what the sandbox is designed to defend against, what it explicitly does not, the trust model that governs both, how to report a vulnerability, and the policy that keeps found issues from regressing.
 
-> **Status: pre-1.0, no tagged release, and no external audit.** Two of the three defenses described here are implemented and covered by tests: the **watchdog** (CPU, wall-clock, memory and output budgets, enforced from inside the interpreter's own dispatch loop) and the **stdlib policy** (an allow-list assembled member by member, enforced against committed golden files on every push). The adversarial suite covers a script trying to catch its own limit breach through `pcall`, nested `pcall`, `xpcall`, a `__gc` finaliser and a `<close>` handler.
+> **This threat model has not been externally audited, and an audit would be genuinely welcome** — see [reviewing this yourself](#reviewing-this-yourself) for where the interesting surface is. Everything below describes what the code is built and tested to do, not what an independent reviewer has confirmed it does; where those two turn out to disagree is exactly the report worth sending. Two of the three defenses described here are implemented and covered by tests: the **watchdog** (CPU, wall-clock, memory and output budgets, enforced from inside the interpreter's own dispatch loop) and the **stdlib policy** (an allow-list assembled member by member, enforced against committed golden files on every push). The adversarial suite covers a script trying to catch its own limit breach through `pcall`, nested `pcall`, `xpcall`, a `__gc` finaliser and a `<close>` handler.
 >
 > One coverage gap is worth stating plainly rather than burying: the **multi-threaded SAPI paths have no test coverage** — `.phpt` cannot spawn PHP threads, and the sanitizer legs build NTS php-src, so the watchdog has never been exercised against more than one PHP thread. See [what this does not defend against](#what-this-does-not-defend-against).
 >
@@ -144,9 +144,27 @@ Also out of scope: the failure modes documented under [what this does not defend
 
 ### What to expect
 
-This is a **pre-1.0 project with no external audit**, maintained on a best-effort basis. Rather than promise a response time nobody is staffed to honour: reports are read as soon as they are seen, and you will get an acknowledgement telling you whether it is being worked on. If a report goes unanswered for two weeks, assume it was missed and send it again — that is a likelier explanation than it being ignored. A GitHub advisory is the surer of the two channels for exactly that reason: it shows you its own state.
+There has been **no external audit**, and the project is maintained on a best-effort basis. Rather than promise a response time nobody is staffed to honour: reports are read as soon as they are seen, and you will get an acknowledgement telling you whether it is being worked on. If a report goes unanswered for two weeks, assume it was missed and send it again — that is a likelier explanation than it being ignored. A GitHub advisory is the surer of the two channels for exactly that reason: it shows you its own state.
 
 Disclosure timing is yours to set; say what you want in the report. Absent anything else, the intent is to fix first and publish the fix with the reproduction, because the adversarial suite below is append-only and a finding that lands there stays covered forever.
+
+## Reviewing this yourself
+
+**Community review is wanted, not merely tolerated.** A sandbox nobody has attacked but its author is a sandbox with one person's blind spots in it, and the fastest way to find those is somebody else reading the same code with different assumptions. There is no bounty and no NDA — the code is MIT, the tests are in the tree, and everything below reproduces from a checkout.
+
+Where the interesting surface actually is, roughly in the order a reviewer would get value from it:
+
+- **`third_party/lua-5.5.1/patches/`** — the ten patches applied to the interpreter, each guarded by `LUAEXT_LUA_HOOKS`. This is the smallest diff with the largest consequence: `tools/vendor-lua.sh --check` proves the tree is the pinned tarball plus exactly these, and building with the guard at `0` reproduces stock Lua.
+- **`src/luaext_openlibs.c`** — the standard-library allow-list, assembled member by member into a scratch table rather than scrubbed from an open state. `tests/golden/stdlib/exposed.txt` is the committed surface; `tools/audit-stdlib.php` regenerates it.
+- **Interrupt delivery** — `src/luaext_timers.c` and `src/luaext_watchdog.c`, plus the back-edge checks in the patched `lvm.c`. The question worth asking is whether a script can outrun, outlive or disarm a limit.
+- **The boundary** — `src/luaext_phpcall.c` and `src/luaext_convert.c`, where untrusted values become host values and back.
+- **`tests/03-adversarial/`** — read this first if you want to know what has already been tried. It is append-only, and every entry is an attack that once worked or was thought plausible.
+
+Reproducing the existing assurance takes three commands: `make dev` builds and runs the suite plus every gate, `make build-debug` turns Lua's own API checks and the internal assertions on (several past defects only segfault there), and `make fuzz` runs the libFuzzer targets under ASan and UBSan. `CONTRIBUTING.md` covers the debug-PHP build, which is the only one whose allocator reports leaks.
+
+**The thin spots, stated so you do not have to find them by surprise:** the multi-threaded SAPI paths have no test coverage at all; Windows runs only the language-conformance subset in CI, so the limit suites have never executed there; and `PanicError`, `ErrorHandlerError` and `ThreadAffinityError` have no behavioural tests. Those are where I would look first.
+
+If a review turns up nothing, that is worth saying too — a second pair of eyes reporting "I tried X, Y and Z and they held" is useful information, and I will happily record it here.
 
 ## Security regression policy
 
