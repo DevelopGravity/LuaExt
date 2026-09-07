@@ -368,6 +368,95 @@ static int luaext_proxy_method_call(lua_State *L)
 	return luaext_phpcall_invoke_target(L, &target);
 }
 
+/*
+ * Static dispatch. Upvalues: (1) the class record, (2) the vetted
+ * zend_function, (3) the Lua-visible name, (4) the class table itself — the
+ * colon guard: `money:zero()` desugars to `money.zero(money)`, so a first
+ * argument that IS the table is that mistake, named with its fix.
+ */
+static int luaext_proxy_static_call(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	zend_function *method = (zend_function *)lua_touserdata(L, lua_upvalueindex(2));
+	const char *name = lua_tostring(L, lua_upvalueindex(3));
+	luaext_phpcall_target target;
+
+	if (lua_gettop(L) >= 1 && lua_rawequal(L, 1, lua_upvalueindex(4))) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "static '%s' is called with a dot (%s.%s(...))", name,
+						   ZSTR_VAL(cls->lua_name), name);
+	}
+
+	target.fcc = NULL;
+	target.fn = method;
+	target.bound = NULL;
+	target.scope = cls->ce;
+	target.label = name;
+	target.first_arg = 1;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
+/*
+ * The exposed constructor, published as `.new` (or its override).
+ *
+ * The proxy is pushed BEFORE the constructor runs, deliberately: from that
+ * moment the new object is Lua-owned, so this frame owns nothing across the
+ * boundary call and a constructor that throws raises with nothing to leak —
+ * the discarded proxy releases the half-constructed object through the
+ * ordinary __gc/defer path. (The alternative — holding the object in a local
+ * zval across a call that can raise — is exactly the leak the NO_RAISE
+ * discipline exists to forbid.)
+ */
+static int luaext_proxy_new_call(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_phpcall_target target;
+	zend_object *object;
+	zval instance;
+
+	if (sandbox == NULL || sandbox->closed || sandbox->L == NULL) {
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s.%s cannot run: its sandbox is gone",
+						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
+	}
+
+	if (object_init_ex(&instance, cls->ce) == FAILURE || EG(exception) != NULL) {
+		luaext_error_raise_from_exception(L);
+	}
+
+	object = Z_OBJ(instance);
+
+	if (!luaext_proxy_try_push(sandbox, L, object)) {
+		/* Unreachable while registration implies findability; refuse loudly
+		 * rather than hand the script a raw refusal about its own class. */
+		zval_ptr_dtor(&instance);
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s.%s could not wrap its own instance",
+						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
+	}
+
+	/* Lua owns it now; the local reference goes before anything can raise. */
+	zval_ptr_dtor(&instance);
+
+	/* Stack: [arg1..argN, proxy] -> [proxy, arg1..argN], so the arguments sit
+	 * above first_arg and the proxy survives the call as slot 1. */
+	lua_insert(L, 1);
+
+	target.fcc = NULL;
+	target.fn = cls->constructor;
+	target.bound = object;
+	target.scope = cls->ce;
+	target.label = ZSTR_VAL(cls->constructor_lua_name);
+	target.first_arg = 2;
+
+	(void)luaext_phpcall_invoke_target(L, &target);
+
+	/* Drop the constructor's nil result; the proxy is the value of `.new`. */
+	lua_settop(L, 1);
+
+	return 1;
+}
+
 /* The __tostring metamethod, present only when __toString() was marked. */
 static int luaext_proxy_tostring(lua_State *L)
 {
@@ -393,6 +482,44 @@ static int luaext_proxy_tostring(lua_State *L)
 	target.first_arg = 2;
 
 	return luaext_phpcall_invoke_target(L, &target);
+}
+
+/*
+ * The allocating half of planting a class table, run under lua_pcall: every
+ * step can raise on a memory error, and the caller is a PHP method body where
+ * a raise has nothing to unwind to. Argument 1: the class record.
+ */
+static int luaext_proxy_plant_table(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, 1);
+	zend_string *name;
+	zend_function *method;
+
+	lua_settop(L, 0);
+	luaL_checkstack(L, 8, "luaext: no stack to build a class table");
+
+	lua_createtable(L, 0, (int)zend_hash_num_elements(cls->static_methods) + 1);
+
+	ZEND_HASH_MAP_FOREACH_STR_KEY_PTR(cls->static_methods, name, method)
+	{
+		lua_pushlightuserdata(L, cls);
+		lua_pushlightuserdata(L, method);
+		lua_pushlstring(L, ZSTR_VAL(name), ZSTR_LEN(name));
+		lua_pushvalue(L, 1); /* the table itself, for the colon guard */
+		lua_pushcclosure(L, luaext_proxy_static_call, 4);
+		lua_setfield(L, 1, ZSTR_VAL(name));
+	}
+	ZEND_HASH_FOREACH_END();
+
+	if (cls->constructor != NULL) {
+		lua_pushlightuserdata(L, cls);
+		lua_pushcclosure(L, luaext_proxy_new_call, 1);
+		lua_setfield(L, 1, ZSTR_VAL(cls->constructor_lua_name));
+	}
+
+	lua_setglobal(L, ZSTR_VAL(cls->lua_name));
+
+	return 0;
 }
 
 /* Push the proxymts map (metatable -> class light ud), creating it lazily. */
@@ -647,6 +774,15 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 	 * rule regardless of what a later registration exposes.
 	 */
 	if (lua_name != NULL) {
+		if (ZSTR_LEN(lua_name) == 0 ||
+			memchr(ZSTR_VAL(lua_name), '\0', ZSTR_LEN(lua_name)) != NULL) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"The Lua name for %s must be a non-empty string without NUL "
+									"bytes",
+									ZSTR_VAL(ce->name));
+			return false;
+		}
+
 		resolved_name = luaext_proxy_pstr(lua_name);
 	} else {
 		const char *backslash =
@@ -735,6 +871,28 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 	if (!collected) {
 		luaext_proxy_class_free(record);
 		return false;
+	}
+
+	/*
+	 * Plant the class table before the record is linked, so a refusal here is
+	 * atomic: on failure the record (and the dead closures inside the
+	 * never-published table, which reference it but can never run) is freed
+	 * and the script's view of the world is untouched. A class exposing only
+	 * instance methods plants nothing and simply becomes eligible to cross.
+	 */
+	if (zend_hash_num_elements(record->static_methods) > 0 || record->constructor != NULL) {
+		lua_State *L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+		int status;
+
+		lua_pushcfunction(L, luaext_proxy_plant_table);
+		lua_pushlightuserdata(L, record);
+		status = lua_pcall(L, 1, 0, 0);
+
+		if (status != LUA_OK) {
+			luaext_error_throw_from_lua(sandbox, L, status);
+			luaext_proxy_class_free(record);
+			return false;
+		}
 	}
 
 	record->next = sandbox->proxy_classes;
