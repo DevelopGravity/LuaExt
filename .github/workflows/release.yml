@@ -15,6 +15,9 @@ name: Release
 #      release carrying those assets.
 #   4. A maintainer publishes the draft. `post-publish-verify` then runs the
 #      real `pie install developgravity/lua-ext:<tag>` on all three OSes.
+#   5. The maintainer pushes the stub package by hand -- a subtree split of
+#      stubs/, see CONTRIBUTING.md. Deliberately not automated here: it would
+#      mean giving this workflow write access to a second repository.
 #
 # Packagist resolves versions from git tags, so the version is visible from
 # step 2 — a few minutes before the Windows assets are attached. Linux and
@@ -438,3 +441,4 @@ jobs:
             Write-Error "luaext did not appear in 'php -m' after pie install."
             exit 1
           }
+

@@ -119,6 +119,7 @@ check:
 	    actionlint; \
 	run workflow-php-version  "" "" tools/check-workflow-php-version.sh; \
 	run generated-artifacts   "" "" tools/check-generated.sh; \
+	run stub-package          "" "" $(PHP) -n tools/check-stub-package.php; \
 	: "-n so the stubs can be declared: a developer of this extension normally has"; \
 	: "it loaded system-wide, and that copy is whatever was last installed."; \
 	run docs-api              "" "" $(PHP) -n tools/check-docs-api.php; \

@@ -30,6 +30,13 @@
 # luaext_exceptions.stub.php for the error hierarchy -- so two arginfo
 # headers land in src/.
 #
+# stubs/ is also the root of the published stub package. release.yml runs
+# `git subtree split --prefix=stubs` and pushes the result to
+# developgravity/lua-ext-stubs, so composer.json, README.md and LICENSE sit
+# alongside the .stub.php files and ship with them. gen_stub.php only ever
+# looks at *.stub.php and ignores the rest; tools/check-stub-package.php
+# holds that side of the directory to what the package needs.
+#
 # Usage:
 #   tools/gen-stubs.sh            regenerate stubs/*_arginfo.h, then copy
 #                                  into src/

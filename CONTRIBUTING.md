@@ -281,6 +281,27 @@ Maintainers only. Pushing the tag is the trigger; there is nothing to click firs
    `post-publish-verify` — the literal `pie install developgravity/lua-ext:<tag>` on all
    three platforms — and it only fires for a human publish, because GitHub raises no
    workflow events for anything `GITHUB_TOKEN` does.
+5. Push the IDE stub package. `stubs/` is also the root of
+   `developgravity/lua-ext-stubs`, so a subtree split publishes it:
+
+   ```
+   git subtree split --prefix=stubs -b stubs-split
+   git push git@github.com:DevelopGravity/lua-ext-stubs.git stubs-split:main
+   git push git@github.com:DevelopGravity/lua-ext-stubs.git "$(git rev-parse stubs-split):refs/tags/1.2.0"
+   git branch -D stubs-split
+   ```
+
+   The tag is pushed by SHA because the name already exists here, on the extension commit.
+   Do this after publishing, so the stub package never describes a version that turned out
+   not to install.
+
+Step 5 is by hand on purpose. Automating it would mean giving the release workflow write
+access to a second repository, and one `git push` a release is a poor trade for that.
+
+The split is deterministic — the same history always yields the same commits — so it
+fast-forwards every time and never needs `--force`. That also means the stub repository is
+generated: a commit made directly over there breaks the fast-forward permanently. Change
+`stubs/` here instead.
 
 Pre-releases follow the same path with an `-rc.N` suffix and the pre-release checkbox.
 

@@ -72,16 +72,20 @@ This is a from-scratch rewrite, not a fork, and there is no compatibility shim �
 Via [PIE](https://github.com/php/pie):
 
 ```bash
-pie install developgravity/lua-ext:dev-develop
+pie install developgravity/lua-ext:0.1.0-rc.3
 ```
 
-**The version suffix is required.** Until the first tag lands, `dev-develop` is the only version that resolves, and it tracks the branch tip — so **pin a commit (`dev-develop#<sha>`) for anything you deploy**, or you will silently move with the branch. Building from a checkout (`phpize && ./configure && make`) works too and is what CI exercises.
+**The version suffix is required**, and while the releases are still release candidates it has to name one explicitly — a bare `pie install developgravity/lua-ext` looks for a stable version and finds none. Linux and macOS build from source; Windows x64 installs the prebuilt DLL attached to that release. Building from a checkout (`phpize && ./configure && make`) works too and is what CI exercises.
 
-For IDE autocomplete and static analysis without loading the extension, add the stub package as a dev dependency once published:
+`dev-develop` tracks the branch tip and is there for trying unreleased work — **pin a commit (`dev-develop#<sha>`) if you deploy it**, or you will silently move with the branch.
+
+For IDE autocomplete and static analysis without loading the extension, add the stub package as a dev dependency:
 
 ```bash
 composer require --dev developgravity/lua-ext-stubs
 ```
+
+It carries the same two stub files this repository generates its C arginfo from, so the signatures it describes cannot drift from the compiled binary. Autoloading is deliberately absent — the files declare real classes, and loading them alongside the installed extension is a fatal redeclare. PhpStorm needs no configuration; PHPStan and Psalm want the files listed as stubs, which the [package's README](https://github.com/DevelopGravity/lua-ext-stubs#wiring-it-up) spells out.
 
 ## Versioning
 

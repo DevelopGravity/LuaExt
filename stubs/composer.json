@@ -1,0 +1,33 @@
+{
+  "name": "developgravity/lua-ext-stubs",
+  "description": "IDE and static-analysis stubs for the luaext PHP extension: the public API declared in PHP, for editors and analysers that cannot load the binary.",
+  "type": "library",
+  "license": "MIT",
+  "homepage": "https://github.com/DevelopGravity/LuaExt",
+  "keywords": [
+    "lua",
+    "sandbox",
+    "stubs",
+    "ide",
+    "static-analysis",
+    "phpstan",
+    "psalm"
+  ],
+  "authors": [
+    {
+      "name": "Zachary DuBois",
+      "email": "zdubois@developgravity.com"
+    },
+    {
+      "name": "Develop Gravity LLC",
+      "homepage": "https://github.com/DevelopGravity"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/DevelopGravity/LuaExt/issues",
+    "source": "https://github.com/DevelopGravity/lua-ext-stubs"
+  },
+  "require": {
+    "php": ">=8.5"
+  }
+}
