@@ -57,11 +57,14 @@ $build = static function (bool $billWallTime): array {
 	return [$sandbox, $filesystem];
 };
 
+// The loop only exists as a landing strip for the interrupt after the nap;
+// it is kept small so the script's OWN wall time stays far under the budget
+// even on a valgrind- or sanitizer-slowed build.
 $script = <<<'LUA'
 	local f = io.open("/f.txt", "r")
 	local data = f:read("a")
 	local n = 0
-	for i = 1, 1000000 do n = n + 1 end
+	for i = 1, 100000 do n = n + 1 end
 	return data
 LUA;
 
@@ -84,9 +87,12 @@ $sandbox->close();
 $stats = $sandbox->stats();
 
 printf("unbilled: returned %s\n", $data);
-printf("unbilled: wall stayed under the limit: %s\n",
-	var_export($stats->wallClockSeconds < 0.1, true));
-printf("unbilled: the nap was still measured:  %s\n",
+// Relational rather than absolute, so a slowed build cannot flake it: the
+// unbilled wall stat covers only the script's own work, which is dwarfed by
+// the 0.25s nap the vfs stat measured.
+printf("unbilled: wall excludes the nap:      %s\n",
+	var_export($stats->wallClockSeconds < $stats->vfsWallClockSeconds, true));
+printf("unbilled: the nap was still measured: %s\n",
 	var_export($stats->vfsWallClockSeconds >= 0.2, true));
 
 $sandbox->close();
@@ -95,5 +101,5 @@ $sandbox->close();
 --EXPECT--
 billed:   WallClockLimitError, after the read completed: true
 unbilled: returned payload
-unbilled: wall stayed under the limit: true
-unbilled: the nap was still measured:  true
+unbilled: wall excludes the nap:      true
+unbilled: the nap was still measured: true
