@@ -69,6 +69,25 @@ conformance(<<<'LUA'
 	local wrapped = coroutine.wrap(function () error('wrapped', 0) end)
 	try('error via wrap', wrapped)
 
+	-- 5.5 prefixes a propagating wrap error with the CALLER's position when
+	-- the error object is a plain string. Through pcall the caller is C and
+	-- there is nothing to add (the row above); from Lua code the position
+	-- appears. The line number is volatile, so only the chunk name is pinned.
+	local prefixed = coroutine.wrap(function () error('positioned', 0) end)
+	local prefix_ok, prefix_err = pcall(function () return prefixed() end)
+	row('wrap adds position', prefix_ok, (prefix_err:gsub(':%d+: ', ': ')))
+
+	-- A wrapped coroutine that errors has its <close> handlers run AT the
+	-- error -- upstream's luaB_auxwrap calls lua_closethread right there --
+	-- not whenever the collector eventually finds the dead thread.
+	local closed_at = 'never'
+	local tbc = coroutine.wrap(function ()
+		local guard <close> = setmetatable({}, {__close = function () closed_at = 'at the error' end})
+		error('with tbc', 0)
+	end)
+	pcall(tbc)
+	row('wrap closes tbc', closed_at)
+
 	-- wrap's happy path is a plain function returning the yielded values.
 	local counter = coroutine.wrap(function ()
 		for index = 1, 3 do coroutine.yield(index) end
@@ -94,13 +113,21 @@ conformance(<<<'LUA'
 	end)
 	row('resume self', select(2, coroutine.resume(selfresume)))
 
-	-- CLOSING A COROUTINE THAT IS NOT SUSPENDED OR DEAD. Closing resets the
-	-- thread's stack, so doing it to one that is still executing resets the
-	-- stack the current frame is running on. Upstream refuses both cases; this
-	-- build did not until the same pass that found the resume bug above.
+	-- CLOSING A RUNNING COROUTINE. 5.5 lets a coroutine close ITSELF: its
+	-- <close> handlers run and the close unwinds straight to the resume
+	-- point, so the pcall around it never returns and the resume reports a
+	-- clean finish. A normal coroutine -- one waiting on a resume it made --
+	-- stays refused, and so does the main thread, which has no resume point
+	-- to unwind to.
+	local selfclosed = {}
 	local selfclose
-	selfclose = coroutine.create(function () return pcall(coroutine.close, selfclose) end)
-	row('close running', select(2, coroutine.resume(selfclose)))
+	selfclose = coroutine.create(function ()
+		local guard <close> = setmetatable({}, {__close = function () selfclosed[#selfclosed + 1] = 'closed' end})
+		pcall(coroutine.close, selfclose)
+		return 'unreachable'
+	end)
+	row('close self', coroutine.resume(selfclose), coroutine.status(selfclose), selfclosed)
+	try('close main', coroutine.close, coroutine.running())
 
 	local nested_inner, nested_outer
 	nested_inner = coroutine.create(function () return pcall(coroutine.close, nested_outer) end)
@@ -151,10 +178,13 @@ isyieldable inside = true
 error via resume = false, "inside"
 status after error = "dead"
 error via wrap = "! wrapped"
+wrap adds position = false, "conformance: positioned"
+wrap closes tbc = "at the error"
 wrap = 1, 2, 3, "done"
 resume dead again = false, "cannot resume dead coroutine"
 resume self = false, "cannot resume non-suspended coroutine"
-close running = false, "cannot close a running coroutine"
+close self = true, "dead", {"closed"}
+close main = "! cannot close main thread"
 close normal = false, "cannot close a normal coroutine"
 close = true, "dead", {"closed"}
 close again = true

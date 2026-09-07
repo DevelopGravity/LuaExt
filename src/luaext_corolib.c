@@ -303,6 +303,20 @@ static int luaext_corolib_wrapped(lua_State *L)
 	}
 
 	/*
+	 * An error raised INSIDE the coroutine -- as opposed to a refused resume,
+	 * which leaves lua_status(co) untouched -- leaves its to-be-closed
+	 * variables pending. Upstream's luaB_auxwrap closes them right here, so a
+	 * wrapped coroutine's <close> handlers run at the error rather than
+	 * whenever the collector finds the thread, or never. A handler that
+	 * itself raises replaces both the status and the error object, which is
+	 * why the fatality decisions below run on what lua_closethread left, not
+	 * on what lua_resume reported.
+	 */
+	if (lua_status(co) != LUA_OK && lua_status(co) != LUA_YIELD) {
+		status = lua_closethread(co, L);
+	}
+
+	/*
 	 * wrap propagates every error, so it looks safe already -- until a pcall is
 	 * put around it, which is the second attack in
 	 * tests/03-adversarial/coroutine-cannot-swallow-fatal.phpt. A fatal has to
@@ -317,6 +331,19 @@ static int luaext_corolib_wrapped(lua_State *L)
 	}
 
 	lua_xmove(co, L, 1);
+
+	/*
+	 * Upstream prefixes a plain string error with the wrap CALLER's position,
+	 * which is information only this frame has -- by the time the error
+	 * reaches a handler, level 1 is somebody else. Only strings: the
+	 * extension's own error userdata must arrive at the boundary intact, and
+	 * LUA_ERRMEM was already converted above.
+	 */
+	if (lua_type(L, -1) == LUA_TSTRING) {
+		luaL_where(L, 1);
+		lua_insert(L, -2);
+		lua_concat(L, 2);
+	}
 
 	return lua_error(L);
 }
@@ -344,8 +371,9 @@ static int luaext_corolib_yield(lua_State *L)
  * The one place a coroutine's status is decided.
  *
  * Split out from the status() method because close() has to make the same
- * judgement: a running or normal coroutine cannot be closed, and asking
- * lua_closethread() to do it anyway resets a stack that is still executing.
+ * judgement: a normal coroutine cannot be closed, a running one only by
+ * itself, and asking lua_closethread() to ignore either rule resets a stack
+ * that a frame below is still executing on.
  */
 static const char *luaext_corolib_status_name(lua_State *L, lua_State *co)
 {
@@ -407,18 +435,36 @@ static int luaext_corolib_close(lua_State *L)
 	luaL_argexpected(L, co != NULL, 1, "coroutine");
 
 	/*
-	 * ONLY A SUSPENDED OR DEAD COROUTINE MAY BE CLOSED, and the check has to be
-	 * here rather than left to lua_closethread(), which does not make it.
-	 * Closing resets the thread's stack and closes its upvalues -- on a
-	 * coroutine that is still executing, that is the stack the current frame is
-	 * running on. Without this guard `coroutine.close(co)` from inside `co`
-	 * returned true and left the caller reading a stack that had been reset
-	 * underneath it.
+	 * A NORMAL coroutine -- one that resumed somebody else and is waiting for
+	 * them -- may not be closed, and the check has to be here rather than
+	 * left to lua_closethread(), which does not make it: closing resets a
+	 * stack that a frame below is still executing on.
 	 */
 	state = luaext_corolib_status_name(L, co);
 
-	if (strcmp(state, "suspended") != 0 && strcmp(state, "dead") != 0) {
+	if (strcmp(state, "normal") == 0) {
 		return luaL_error(L, "cannot close a %s coroutine", state);
+	}
+
+	/*
+	 * A RUNNING coroutine here means co == L: the call is inside the very
+	 * coroutine it names. Lua 5.5 defines that self-close -- lua_closethread
+	 * runs the thread's <close> handlers and unwinds straight to the resume
+	 * point, never returning here -- so it is allowed, exactly as upstream's
+	 * luaB_close allows it. Only the main thread stays refused: it has no
+	 * resume point to unwind to. (An earlier guard refused every running
+	 * coroutine, reasoning from the 5.4-era lua_resetthread; 5.5's
+	 * lua_closethread is specified for the self-close.)
+	 */
+	if (strcmp(state, "running") == 0) {
+		lua_geti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+
+		if (lua_tothread(L, -1) == co) {
+			return luaL_error(L, "cannot close main thread");
+		}
+
+		lua_closethread(co, L);
+		/* The self-close does not return. */
 	}
 
 	status = lua_closethread(co, L);
