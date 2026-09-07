@@ -303,7 +303,13 @@ fast-forwards every time and never needs `--force`. That also means the stub rep
 generated: a commit made directly over there breaks the fast-forward permanently. Change
 `stubs/` here instead.
 
-Pre-releases follow the same path with an `-rc.N` suffix and the pre-release checkbox.
+Pre-releases follow the same path with an `-alpha.N`, `-beta.N` or `-rc.N` suffix and the
+pre-release checkbox. `tools/check-release-tag.sh` decides what is acceptable, and it runs
+from a checkout as well as in CI — `tools/check-release-tag.sh 1.3.0` before you tag will
+tell you whether that tag would be publishable. It enforces semver 2.0.0 exactly, then
+separately refuses the semver that Composer cannot resolve: `1.0.0-final` and `1.0.0-0.3.7`
+are valid semver that Packagist ignores outright, build metadata is silently dropped, and
+`-p`/`-pl`/`-patch` come out *stable* rather than as a pre-release.
 
 The tag is live from step 2, so Composer can resolve the version for the few minutes
 before the assets are attached. Linux and macOS build from source and are unaffected; a
