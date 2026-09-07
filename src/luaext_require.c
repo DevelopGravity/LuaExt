@@ -245,6 +245,7 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 		char *canonical;
 		size_t canonical_len = 0;
 		luaext_vfs_path_status status;
+		zend_string *anchored;
 		zval args[1];
 		zval result;
 		zend_string *refusal = NULL;
@@ -276,13 +277,27 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 			continue;
 		}
 
-		ZVAL_STR(&args[0], zend_string_init(canonical, canonical_len, 0));
+		/*
+		 * ANCHORED IN LUA, not owned by this frame. Both backend calls below
+		 * charge the per-call operation budget, and a spent budget raises -- a
+		 * longjmp past every dtor in this loop -- so a zend_string this frame
+		 * owned across them was leaked on every quota refusal mid-search. The
+		 * box holding the path sits on the stack until this iteration is done
+		 * with it; any unwind hands it to the collector instead.
+		 */
+		anchored = luaext_vfs_anchor_string(L, sandbox, canonical, canonical_len);
 		efree(canonical);
+
+		if (anchored == NULL) {
+			return -1;
+		}
+
+		ZVAL_STR(&args[0], anchored);
 
 		outcome = luaext_vfs_call(L, sandbox, "exists", 1, args, &result, &refusal);
 
 		if (outcome != LUAEXT_VFS_OK) {
-			zval_ptr_dtor(&args[0]);
+			lua_pop(L, 1);
 
 			if (refusal != NULL) {
 				/* The backend declined to answer for this path. Treated as "not
@@ -299,14 +314,14 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 		zval_ptr_dtor(&result);
 
 		if (!exists) {
-			zval_ptr_dtor(&args[0]);
+			lua_pop(L, 1);
 			continue;
 		}
 
 		outcome = luaext_vfs_call(L, sandbox, "read", 1, args, &result, &refusal);
 
 		if (outcome != LUAEXT_VFS_OK) {
-			zval_ptr_dtor(&args[0]);
+			lua_pop(L, 1);
 
 			if (refusal != NULL) {
 				zend_string_release(refusal);
@@ -317,7 +332,6 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 		}
 
 		if (Z_TYPE(result) != IS_STRING) {
-			zval_ptr_dtor(&args[0]);
 			zval_ptr_dtor(&result);
 			luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
 							   "FileSystem::read() did not return a string for a module");
@@ -348,7 +362,6 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 			lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
 			lua_pushfstring(L, "@%s", Z_STRVAL(args[0]));
 
-			zval_ptr_dtor(&args[0]);
 			zval_ptr_dtor(&result);
 
 			source = lua_tolstring(L, -2, &source_len);
@@ -360,7 +373,8 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 				return -1;
 			}
 
-			/* [source, name, chunk] -> [chunk] */
+			/* [box, source, name, chunk] -> [chunk] */
+			lua_remove(L, -4);
 			lua_remove(L, -3);
 			lua_remove(L, -2);
 
