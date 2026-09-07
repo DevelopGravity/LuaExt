@@ -24,7 +24,36 @@
 #include <string.h>
 
 #include <Zend/zend_attributes.h>
+#include <Zend/zend_enum.h>
 #include <Zend/zend_exceptions.h>
+
+/* -------------------------------------------------------------------------
+ * Operator slots
+ *
+ * The single source of truth tying the PHP Operator enum, Lua's metamethod
+ * names, and validation rules together. EQ carries no metamethod name: value
+ * equality is a step inside the __eq chain, never a separate handler.
+ * ---------------------------------------------------------------------- */
+
+static const struct {
+	const char *case_name;	/* the PHP enum case */
+	const char *metamethod; /* Lua event key; NULL for EQ */
+	const char *symbol;		/* how messages spell the operator */
+	bool comparison;		/* one required parameter + declared bool return */
+	bool unary;				/* no required parameters */
+} luaext_proxy_ops[LUAEXT_PROXY_OP__COUNT] = {
+	[LUAEXT_PROXY_OP_LT] = {"LessThan", "__lt", "<", true, false},
+	[LUAEXT_PROXY_OP_LE] = {"LessThanOrEqual", "__le", "<=", true, false},
+	[LUAEXT_PROXY_OP_EQ] = {"Equality", NULL, "==", true, false},
+	[LUAEXT_PROXY_OP_ADD] = {"Add", "__add", "+", false, false},
+	[LUAEXT_PROXY_OP_SUB] = {"Subtract", "__sub", "-", false, false},
+	[LUAEXT_PROXY_OP_MUL] = {"Multiply", "__mul", "*", false, false},
+	[LUAEXT_PROXY_OP_DIV] = {"Divide", "__div", "/", false, false},
+	[LUAEXT_PROXY_OP_MOD] = {"Modulo", "__mod", "%", false, false},
+	[LUAEXT_PROXY_OP_POW] = {"Power", "__pow", "^", false, false},
+	[LUAEXT_PROXY_OP_UNM] = {"UnaryMinus", "__unm", "-", false, true},
+	[LUAEXT_PROXY_OP_CONCAT] = {"Concatenate", "__concat", "..", false, false},
+};
 
 /* -------------------------------------------------------------------------
  * Small helpers
@@ -457,6 +486,96 @@ static int luaext_proxy_new_call(lua_State *L)
 	return 1;
 }
 
+/* Operand description for an operator error: class name or Lua type name. */
+static const char *luaext_proxy_operand_name(luaext_sandbox *sandbox, lua_State *L, int index)
+{
+	const luaext_proxy_ud *proxy = luaext_proxy_test(sandbox, L, index);
+
+	return proxy != NULL ? ZSTR_VAL(proxy->cls->lua_name) : luaL_typename(L, index);
+}
+
+/*
+ * Binary operator dispatch. Upvalues: (1) the class record, (2) the slot.
+ *
+ * Both operands must be proxies of the same registered class — one identity
+ * check, since subclasses already wrapped as their nearest registered
+ * ancestor. Any other shape raises the operator's own catchable error; mixed
+ * forms stay named method calls when the wrapper exposes one. Loosening this
+ * later is backward-compatible; tightening never would be.
+ */
+static int luaext_proxy_binop(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	int slot = (int)lua_tointeger(L, lua_upvalueindex(2));
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_ud *left = luaext_proxy_test(sandbox, L, 1);
+	luaext_proxy_ud *right = luaext_proxy_test(sandbox, L, 2);
+	luaext_phpcall_target target;
+
+	if (left == NULL || right == NULL || left->cls != cls || right->cls != cls) {
+		const char *first = luaext_proxy_operand_name(sandbox, L, 1);
+		const char *second = luaext_proxy_operand_name(sandbox, L, 2);
+
+		if (luaext_proxy_ops[slot].comparison) {
+			luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "cannot compare %s with %s", first,
+							   second);
+		}
+
+		if (slot == LUAEXT_PROXY_OP_CONCAT) {
+			luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "cannot concatenate %s and %s", first,
+							   second);
+		}
+
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "cannot apply '%s' to %s and %s",
+						   luaext_proxy_ops[slot].symbol, first, second);
+	}
+
+	target.fcc = NULL;
+	target.fn = cls->op_methods[slot];
+	target.bound = left->object;
+	target.scope = left->object->ce;
+	target.label = luaext_proxy_ops[slot].symbol;
+
+	/*
+	 * Keep BOTH operands anchored on the stack: removing the left proxy's
+	 * only anchor would let a mid-call GC finalise it while its zend_object
+	 * is in use as the receiver — survivable only because the defer queue
+	 * holds the reference until a drain that cannot run while in_lua > 0,
+	 * and that is nothing to lean on. The right operand converts from a
+	 * pushed copy instead; slots 1-2 stay put.
+	 */
+	lua_settop(L, 2);
+	lua_pushvalue(L, 2);
+	target.first_arg = 3;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
+/* Unary minus. Upvalue: the class record. Lua passes the operand twice. */
+static int luaext_proxy_unop(lua_State *L)
+{
+	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_ud *self = luaext_proxy_test(sandbox, L, 1);
+	luaext_phpcall_target target;
+
+	if (self == NULL || self->cls != cls) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "cannot apply unary '-' to %s",
+						   luaext_proxy_operand_name(sandbox, L, 1));
+	}
+
+	lua_settop(L, 1);
+
+	target.fcc = NULL;
+	target.fn = cls->op_methods[LUAEXT_PROXY_OP_UNM];
+	target.bound = self->object;
+	target.scope = self->object->ce;
+	target.label = "-";
+	target.first_arg = 2;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
 /*
  * The __eq metamethod, on every proxy metatable: an equality that tells the
  * truth and can never abort a script. Lua selects __eq for ANY userdata pair
@@ -636,6 +755,28 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 		lua_setfield(L, -2, "__tostring");
 	}
 
+	/* A slot's metamethod exists only when mapped; EQ lives inside __eq. */
+	{
+		int slot;
+
+		for (slot = 0; slot < LUAEXT_PROXY_OP__COUNT; slot++) {
+			if (cls->op_methods[slot] == NULL || luaext_proxy_ops[slot].metamethod == NULL) {
+				continue;
+			}
+
+			lua_pushlightuserdata(L, cls);
+
+			if (slot == LUAEXT_PROXY_OP_UNM) {
+				lua_pushcclosure(L, luaext_proxy_unop, 1);
+			} else {
+				lua_pushinteger(L, slot);
+				lua_pushcclosure(L, luaext_proxy_binop, 2);
+			}
+
+			lua_setfield(L, -2, luaext_proxy_ops[slot].metamethod);
+		}
+	}
+
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, cls);
 
@@ -742,6 +883,214 @@ void luaext_proxy_add_gc(const luaext_sandbox *sandbox, zend_get_gc_buffer *buff
 	for (index = 0; index < sandbox->proxy_gc_count; index++) {
 		zend_get_gc_buffer_add_obj(buffer, sandbox->proxy_gc_items[index]->object);
 	}
+}
+
+/* -------------------------------------------------------------------------
+ * Operator mapping
+ *
+ * PHP has no operator protocol, so operators are mapped, never inferred: the
+ * $operators parameter (which overrides everything), else per-method
+ * #[LuaOperator] attributes. A mapping is granted for its operator only —
+ * being mapped does not make a method callable by name.
+ * ---------------------------------------------------------------------- */
+
+/* Which slot an Operator enum case names. -1 is unreachable while the enum
+ * and luaext_proxy_ops agree; guarded anyway. */
+static int luaext_proxy_op_slot(zend_object *case_object)
+{
+	zend_string *case_name = Z_STR_P(zend_enum_fetch_case_name(case_object));
+	int slot;
+
+	for (slot = 0; slot < LUAEXT_PROXY_OP__COUNT; slot++) {
+		if (zend_string_equals_cstr(case_name, luaext_proxy_ops[slot].case_name,
+									strlen(luaext_proxy_ops[slot].case_name))) {
+			return slot;
+		}
+	}
+
+	return -1;
+}
+
+/* Validate one mapping and store it, or throw and return false. */
+static bool luaext_proxy_map_operator(luaext_proxy_class *record, zend_class_entry *ce,
+									  const zend_string *method_name, int slot)
+{
+	zend_function *method;
+
+	if (slot < 0) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"The operator map for %s names an Operator this build does not know",
+			ZSTR_VAL(ce->name));
+		return false;
+	}
+
+	method = (zend_function *)zend_hash_str_find_ptr_lc(&ce->function_table, ZSTR_VAL(method_name),
+														ZSTR_LEN(method_name));
+
+	if (method == NULL) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"%s has no method %s() to map to an operator", ZSTR_VAL(ce->name),
+								ZSTR_VAL(method_name));
+		return false;
+	}
+
+	/* Before the method's own checks: a second mapping to a taken slot is a
+	 * duplicate whatever the second method looks like. */
+	if (record->op_methods[slot] != NULL) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"Operator %s is mapped to two methods of %s",
+								luaext_proxy_ops[slot].case_name, ZSTR_VAL(ce->name));
+		return false;
+	}
+
+	if (method->common.fn_flags & ZEND_ACC_STATIC) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"%s::%s() cannot back an operator: it is static",
+								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+		return false;
+	}
+
+	if (!(method->common.fn_flags & ZEND_ACC_PUBLIC)) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"%s::%s() cannot back an operator: it is not public",
+								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+		return false;
+	}
+
+	if (method->common.fn_flags & ZEND_ACC_ABSTRACT) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"%s::%s() cannot back an operator: it is abstract",
+								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+		return false;
+	}
+
+	if (luaext_proxy_ops[slot].unary) {
+		if (method->common.required_num_args != 0) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"%s::%s() must take no required parameters to back unary minus",
+									ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+			return false;
+		}
+	} else if (method->common.required_num_args != 1) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"%s::%s() must take exactly one required parameter to back a binary operator",
+			ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+		return false;
+	}
+
+	/*
+	 * Comparisons must DECLARE bool: the metamethod's answer becomes control
+	 * flow, and a mapping that could return anything else is a mistake best
+	 * refused at registration. A vendor method without the declaration is
+	 * mapped through a wrapper-subclass override that adds it.
+	 */
+	if (luaext_proxy_ops[slot].comparison) {
+		bool declared = (method->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) != 0;
+
+		if (declared) {
+			zend_type return_type = method->common.arg_info[-1].type;
+
+			declared = !ZEND_TYPE_IS_COMPLEX(return_type) &&
+					   ZEND_TYPE_PURE_MASK(return_type) == MAY_BE_BOOL;
+		}
+
+		if (!declared) {
+			zend_throw_exception_ex(
+				luaext_ce_configuration_error, 0,
+				"%s::%s() must declare a bool return to back a comparison operator",
+				ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
+			return false;
+		}
+	}
+
+	record->op_methods[slot] = method;
+
+	return true;
+}
+
+/* The full mapping pass: the parameter route, else the attribute route. */
+static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_class_entry *ce,
+										   HashTable *operators)
+{
+	zend_string *marker;
+	zend_function *method;
+	bool mapped = true;
+
+	if (operators != NULL) {
+		zend_string *method_name;
+		zval *op_value;
+
+		ZEND_HASH_FOREACH_STR_KEY_VAL(operators, method_name, op_value)
+		{
+			ZVAL_DEREF(op_value);
+
+			if (method_name == NULL || ZSTR_LEN(method_name) == 0 ||
+				Z_TYPE_P(op_value) != IS_OBJECT ||
+				!instanceof_function(Z_OBJCE_P(op_value), luaext_ce_operator)) {
+				zend_throw_exception_ex(
+					luaext_ce_configuration_error, 0,
+					"The operator map for %s must map method names to Operator cases",
+					ZSTR_VAL(ce->name));
+				return false;
+			}
+
+			if (!luaext_proxy_map_operator(record, ce, method_name,
+										   luaext_proxy_op_slot(Z_OBJ_P(op_value)))) {
+				return false;
+			}
+		}
+		ZEND_HASH_FOREACH_END();
+
+		return true;
+	}
+
+	marker = zend_string_tolower(luaext_ce_lua_operator_attribute->name);
+
+	ZEND_HASH_MAP_FOREACH_PTR(&ce->function_table, method)
+	{
+		zend_attribute *attribute = zend_get_attribute(method->common.attributes, marker);
+		zend_string *filename = NULL;
+		zval marker_object;
+		zval holder;
+		zval *configured;
+		int slot = -1;
+
+		if (attribute == NULL) {
+			continue;
+		}
+
+		if (ce->type == ZEND_USER_CLASS) {
+			filename = ce->info.user.filename;
+		}
+
+		if (zend_get_attribute_object(&marker_object, luaext_ce_lua_operator_attribute, attribute,
+									  ce, filename) != SUCCESS) {
+			mapped = false;
+			break;
+		}
+
+		configured = zend_read_property(luaext_ce_lua_operator_attribute, Z_OBJ(marker_object),
+										ZEND_STRL("operator"), true, &holder);
+
+		if (configured != NULL && Z_TYPE_P(configured) == IS_OBJECT) {
+			slot = luaext_proxy_op_slot(Z_OBJ_P(configured));
+		}
+
+		zval_ptr_dtor(&marker_object);
+
+		mapped = luaext_proxy_map_operator(record, ce, method->common.function_name, slot);
+
+		if (!mapped) {
+			break;
+		}
+	}
+	ZEND_HASH_FOREACH_END();
+
+	zend_string_release(marker);
+
+	return mapped;
 }
 
 /* -------------------------------------------------------------------------
@@ -886,41 +1235,30 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 		collected = false;
 	}
 
-	/*
-	 * Shape check only: keys are method names, values are Operator cases.
-	 * Full slot validation (arity, bool returns, duplicates) is the operator
-	 * subsystem's, which also fills op_methods.
-	 */
-	if (collected && operators != NULL) {
-		zend_string *op_key;
-		zval *op_value;
-
-		ZEND_HASH_FOREACH_STR_KEY_VAL(operators, op_key, op_value)
-		{
-			ZVAL_DEREF(op_value);
-
-			if (op_key == NULL || ZSTR_LEN(op_key) == 0 || Z_TYPE_P(op_value) != IS_OBJECT ||
-				!instanceof_function(Z_OBJCE_P(op_value), luaext_ce_operator)) {
-				zend_throw_exception_ex(
-					luaext_ce_configuration_error, 0,
-					"The operator map for %s must map method names to Operator cases",
-					ZSTR_VAL(ce->name));
-				collected = false;
-				break;
-			}
-		}
-		ZEND_HASH_FOREACH_END();
+	if (collected) {
+		collected = luaext_proxy_collect_operators(record, ce, operators);
 	}
 
 	if (collected && zend_hash_num_elements(record->instance_methods) == 0 &&
 		zend_hash_num_elements(record->static_methods) == 0 && record->constructor == NULL &&
-		record->to_string == NULL &&
-		(operators == NULL || zend_hash_num_elements(operators) == 0)) {
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"Nothing of %s is exposed: no method carries #[LuaMethod], no "
-								"allowlist was given, and no operator is mapped",
-								ZSTR_VAL(ce->name));
-		collected = false;
+		record->to_string == NULL) {
+		bool has_operator = false;
+		int slot;
+
+		for (slot = 0; slot < LUAEXT_PROXY_OP__COUNT; slot++) {
+			if (record->op_methods[slot] != NULL) {
+				has_operator = true;
+				break;
+			}
+		}
+
+		if (!has_operator) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"Nothing of %s is exposed: no method carries #[LuaMethod], no "
+									"allowlist was given, and no operator is mapped",
+									ZSTR_VAL(ce->name));
+			collected = false;
+		}
 	}
 
 	if (!collected) {
