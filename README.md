@@ -85,7 +85,7 @@ For IDE autocomplete and static analysis without loading the extension, add the 
 composer require --dev developgravity/lua-ext-stubs
 ```
 
-It carries the same two stub files this repository generates its C arginfo from, so the signatures it describes cannot drift from the compiled binary. Autoloading is deliberately absent — the files declare real classes, and loading them alongside the installed extension is a fatal redeclare. PhpStorm needs no configuration; PHPStan and Psalm want the files listed as stubs, which the [package's README](https://github.com/DevelopGravity/lua-ext-stubs#wiring-it-up) spells out.
+It carries the same two stub files this repository generates its C arginfo from, so the signatures it describes cannot drift from the compiled binary. Autoloading is deliberately absent — the files declare real classes, and loading them alongside the installed extension is a fatal redeclare. PhpStorm needs no configuration; PHPStan and Psalm want the files listed as stubs, which the [package's README](https://github.com/DevelopGravity/LuaExt-Stubs#wiring-it-up) spells out.
 
 ## Versioning
 

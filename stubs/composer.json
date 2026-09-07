@@ -25,7 +25,7 @@
   ],
   "support": {
     "issues": "https://github.com/DevelopGravity/LuaExt/issues",
-    "source": "https://github.com/DevelopGravity/lua-ext-stubs"
+    "source": "https://github.com/DevelopGravity/LuaExt-Stubs"
   },
   "require": {
     "php": ">=8.5"

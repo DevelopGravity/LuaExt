@@ -286,8 +286,8 @@ Maintainers only. Pushing the tag is the trigger; there is nothing to click firs
 
    ```
    git subtree split --prefix=stubs -b stubs-split
-   git push git@github.com:DevelopGravity/lua-ext-stubs.git stubs-split:main
-   git push git@github.com:DevelopGravity/lua-ext-stubs.git "$(git rev-parse stubs-split):refs/tags/1.2.0"
+   git push git@github.com:DevelopGravity/LuaExt-Stubs.git stubs-split:main
+   git push git@github.com:DevelopGravity/LuaExt-Stubs.git "$(git rev-parse stubs-split):refs/tags/1.2.0"
    git branch -D stubs-split
    ```
 
