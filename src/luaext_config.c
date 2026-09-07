@@ -1474,7 +1474,7 @@ static void luaext_config_stats_fill(zend_object *object, const luaext_sandbox *
 	ZVAL_DOUBLE(&value, luaext_timers_wall_seconds(sandbox));
 	LUAEXT_SET(object, "wallClockSeconds", &value);
 
-	ZVAL_LONG(&value, (zend_long)sandbox->out.written);
+	ZVAL_LONG(&value, (zend_long)sandbox->out.emitted);
 	LUAEXT_SET(object, "outputBytes", &value);
 	ZVAL_BOOL(&value, sandbox->out.truncated);
 	LUAEXT_SET(object, "outputTruncated", &value);

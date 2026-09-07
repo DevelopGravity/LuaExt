@@ -25,7 +25,9 @@ var_dump($sandbox->getOutput() === $sandbox->getOutput());
 (void) $sandbox->eval('print("again")');
 var_dump($sandbox->getOutput());
 
-// takeOutput() hands the buffer over and resets the byte count with it.
+// takeOutput() hands the buffer over and refills the output BUDGET with it;
+// the stat keeps the lifetime total, because a drain must not erase the
+// script's history from the snapshot a host bills from.
 var_dump($sandbox->takeOutput());
 var_dump($sandbox->getOutput());
 var_dump($sandbox->stats()->outputBytes);
@@ -56,8 +58,8 @@ world
 again
 "
 string(0) ""
-int(0)
+int(18)
 bool(false)
 string(6) "fresh
 "
-int(6)
+int(24)

@@ -522,6 +522,11 @@ final readonly class SandboxStats implements \JsonSerializable
 
     public float $wallClockSeconds;
 
+    /**
+     * Bytes the script emitted over the sandbox's lifetime. Draining the
+     * buffer with takeOutput() refills the Limits::$outputBytes budget but
+     * never rewinds this figure.
+     */
     public int $outputBytes;
 
     public bool $outputTruncated;
@@ -838,7 +843,11 @@ final class Sandbox
     /** Buffered output, left in place. */
     public function getOutput(): string {}
 
-    /** Buffered output, clearing the buffer. */
+    /**
+     * Buffered output, clearing the buffer. The drained bytes hand their
+     * Limits::$outputBytes budget back to the script; stats()->outputBytes
+     * keeps counting them.
+     */
     #[\NoDiscard]
     public function takeOutput(): string {}
 

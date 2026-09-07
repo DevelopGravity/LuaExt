@@ -376,7 +376,18 @@ typedef struct {
 	uint8_t mode; /* luaext_output_mode */
 	smart_str buf;
 	zval callback;
+
+	/*
+	 * Two counters because they answer two different questions. `written` is
+	 * the refillable budget Limits::$outputBytes judges -- takeOutput()
+	 * resets it, handing the bytes' budget back with the bytes. `emitted` is
+	 * the lifetime total stats()->outputBytes reports, and nothing resets
+	 * it: a stat a drain could zero would erase the script's history from
+	 * the very snapshot a host bills from.
+	 */
 	size_t written;
+	size_t emitted;
+
 	size_t limit;
 	size_t chunk;
 	bool truncated;

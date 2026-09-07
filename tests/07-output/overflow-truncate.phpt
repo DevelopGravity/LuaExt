@@ -34,9 +34,9 @@ var_dump($sandbox->stats()->outputTruncated);
 var_dump($sandbox->stats()->outputBytes);
 var_dump($sandbox->stats()->outputBytes, $sandbox->stats()->outputTruncated);
 
-// Taking the output empties the buffer and resets the count -- but the
-// truncation flag stays, because a host that took the output still needs to
-// know it was incomplete.
+// Taking the output empties the buffer and refills the budget -- but the
+// stat keeps the lifetime total, and the truncation flag stays, because a
+// host that took the output still needs to know it was incomplete.
 var_dump($sandbox->takeOutput());
 var_dump($sandbox->getOutput());
 var_dump($sandbox->stats()->outputBytes);
@@ -67,6 +67,6 @@ bool(true)
 string(10) "012345678
 "
 string(0) ""
-int(0)
+int(15)
 bool(true)
 bool(true)

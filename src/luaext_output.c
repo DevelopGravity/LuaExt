@@ -441,6 +441,7 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config)
 	out->chunk = chunk;
 	out->limit = sandbox->policy.limits.output_bytes;
 	out->written = 0;
+	out->emitted = 0;
 	out->truncated = false;
 
 	/*
@@ -538,12 +539,13 @@ luaext_output_status luaext_output_write_channel(luaext_sandbox *sandbox, const 
 	}
 
 	/*
-	 * The counter records what the script EMITTED, not what survived. A budget
+	 * The counters record what the script EMITTED, not what survived. A budget
 	 * report that shrank when the sink dropped the excess would tell a host its
 	 * script behaved, which is the opposite of what happened. Saturating for
 	 * the same reason: a wrap would read as compliance.
 	 */
 	out->written = length > SIZE_MAX - out->written ? SIZE_MAX : out->written + length;
+	out->emitted = length > SIZE_MAX - out->emitted ? SIZE_MAX : out->emitted + length;
 
 	if (overflowed) {
 		/* True under both behaviours: output was dropped either way, and a host
@@ -640,9 +642,11 @@ zend_string *luaext_output_get(luaext_sandbox *sandbox, bool take)
 	luaext_alloc_discharge(sandbox, charged);
 
 	/*
-	 * The byte count goes with the bytes, so a host that drains in a loop gives
-	 * the script its budget back a batch at a time. The truncation flag does
-	 * NOT: a host that took the output still needs to know it was incomplete.
+	 * The BUDGET goes with the bytes, so a host that drains in a loop gives
+	 * the script its allowance back a batch at a time. Only the budget:
+	 * `emitted` keeps counting for stats()->outputBytes, and the truncation
+	 * flag stays set too -- a host that took the output still needs to know
+	 * it was incomplete.
 	 */
 	out->written = 0;
 
