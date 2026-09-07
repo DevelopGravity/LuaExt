@@ -163,10 +163,17 @@ jobs:
         with:
           release: ${{ env.LUAEXT_TAG }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          # draft: false (default). Confirmed by a real run: the action finds
-          # an existing draft by tag_name and uploads onto it, no `draft: true`
-          # needed. The README only documents `draft` as "create a draft
-          # release if the release does not exist", which left this open.
+          # REQUIRED, and the default of false is actively wrong here. The
+          # action does find an existing draft by tag_name and upload onto it
+          # -- but with draft false it then PUBLISHES it, which creates the git
+          # tag, exposes the version to Packagist, and does both before the
+          # smoke tests below have looked at the assets. Exactly what the
+          # draft-first flow exists to prevent, observed on 0.1.0-rc.1.
+          #
+          # Publishing that way also runs on GITHUB_TOKEN, and events raised by
+          # that token create no workflow run -- so `post-publish-verify` never
+          # fires either. The failure hides the failure.
+          draft: true
 
   # -------------------------------------------------------------------
   # Pre-publish smoke test, part 1: source build via PIE on Unix.
@@ -304,6 +311,9 @@ jobs:
   # -------------------------------------------------------------------
   post-publish-verify:
     name: "pie install <tag> / ${{ matrix.os }}"
+    # Fires when a PERSON publishes. An automated publish would run on
+    # GITHUB_TOKEN, whose events create no workflow run -- which is the second
+    # reason attach-release-assets must not publish. See its `draft` input.
     if: github.event.action == 'published'
     runs-on: ${{ matrix.os }}
     strategy:
