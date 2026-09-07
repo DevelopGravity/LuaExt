@@ -17,12 +17,11 @@
  * into the closure's own storage and released when Lua collects it, so the
  * caller keeps ownership of nothing.
  *
- * The state is the caller's to name, and passing the wrong one is a live bug
- * rather than a style question: a sandbox running a coroutine has two, and a
- * closure pushed onto one while the consumer reads the other resolves an index
- * against a stack that never held it. Pass the state the value will be read
+ * The state is the caller's to name: a sandbox running a coroutine has two,
+ * and a closure pushed onto one while the consumer reads the other resolves an
+ * index against a stack that never held it. Pass the state the value is read
  * back from -- luaext_exec_state(sandbox) for anything the luaext_exec_*
- * helpers will consume, or the running state itself from inside a lua_CFunction.
+ * helpers consume, or the running state from inside a lua_CFunction.
  */
 bool luaext_phpcall_push(luaext_sandbox *sandbox, lua_State *L, zval *callable, const char *name);
 

@@ -143,21 +143,14 @@ struct luaext_watch_slot {
 	uint64_t epoch;
 
 	/*
-	 * The deadline of the entry this slot currently has in the heap, when it
-	 * has one.
+	 * The deadline this slot currently has in the heap, when it has one.
 	 *
-	 * The epoch above keeps at most one entry per slot LIVE, but a superseded
-	 * entry still occupies the heap until its own deadline passes and it is
-	 * popped and dropped. A script crossing into the host in a loop republishes
-	 * far faster than those deadlines arrive, so the heap grows by one entry per
-	 * crossing for the length of the call -- process-wide memory a script
-	 * controls, plus a lock acquisition and a condvar signal it need not have
-	 * paid for.
-	 *
-	 * Knowing what is already outstanding lets a republish be skipped when it
-	 * would not make the slot fire any sooner. Skipping is safe in the one
-	 * direction that matters: the outstanding entry fires EARLIER, the watchdog
-	 * re-evaluates the slot when it does, and reschedules from what it finds.
+	 * The epoch keeps one entry per slot live, but a superseded entry still
+	 * occupies the heap until its own deadline passes -- so a script crossing
+	 * into the host in a loop grows it by one entry per crossing. Knowing what
+	 * is outstanding lets a republish be skipped when it would not make the
+	 * slot fire sooner; the earlier entry still wakes the watchdog, which then
+	 * reschedules from what it finds.
 	 */
 	uint64_t queued_deadline;
 	bool queued;
@@ -553,15 +546,11 @@ static bool luaext_watch_deadline(luaext_watch_slot *slot, uint64_t *deadline)
 	{
 		/*
 		 * Saturated rather than wrapped. A limit past LUAEXT_LIMIT_MAX_SECONDS
-		 * saturates to UINT64_MAX nanoseconds at configuration time, and once
-		 * any of it has been spent `remaining` is huge without being the
-		 * exactly-UINT64_MAX sentinel the early return above catches -- so the
-		 * addition wrapped to a deadline in the past, the thread woke
-		 * immediately, re-evaluated, published another wrapped deadline, and
-		 * spun at full speed holding the process-wide lock.
-		 *
-		 * UINT64_MAX sorts last in the heap and never fires, which is the
-		 * honest meaning of a ceiling nobody will reach.
+		 * becomes UINT64_MAX nanoseconds, and once any of it is spent
+		 * `remaining` is huge without being the sentinel the early return
+		 * catches -- so the addition wrapped to a deadline in the past and the
+		 * thread spun on it. UINT64_MAX sorts last and never fires, which is
+		 * what a ceiling nobody reaches should do.
 		 */
 		uint64_t now = luaext_clock_monotonic_ns();
 

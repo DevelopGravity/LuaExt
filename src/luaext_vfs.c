@@ -1073,14 +1073,11 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 }
 
 /*
- * The body of luaext_vfs_handle_close, with charging made optional for the same
- * reason luaext_vfs_call_maybe_charged makes it optional: the sweep runs after
- * lua_pcall has returned, where a raise has no handler and lands on lua_atpanic.
- * Uncharged, the flush cannot raise at all -- the quota check is the one raise
- * a script can arrange (spend maxOperations - 1 and leave a dirty handle for
- * the sweep), and the other two raises in luaext_vfs_call need a sandbox with
- * no filesystem (which cannot hold an open handle) or a FileSystem missing
- * write() (which instanceof refused at configuration).
+ * The body of luaext_vfs_handle_close, with charging optional for the reason
+ * luaext_vfs_call_maybe_charged makes it optional: the sweep runs after
+ * lua_pcall returned, where a raise has no handler and lands on lua_atpanic.
+ * The quota check is the one raise a script can arrange there -- spend
+ * maxOperations - 1 and leave a dirty handle behind.
  */
 static bool luaext_vfs_handle_close_maybe_charged(lua_State *L, luaext_sandbox *sandbox,
 												  luaext_vfs_handle *handle, zend_string **refusal,

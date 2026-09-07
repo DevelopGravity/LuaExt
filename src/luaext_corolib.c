@@ -511,17 +511,13 @@ void luaext_corolib_sweep(luaext_sandbox *sandbox)
 	}
 
 	/*
-	 * Two defences against the same attack, and both are needed. Closing a
-	 * thread runs its <close> handlers, and a handler that created a coroutine
-	 * mid-sweep would insert into the table lua_next is walking -- a rehash
-	 * under the iterator skips entries, and a skipped suspended coroutine
-	 * survives the call that created it, resumable from the next one. Measured
-	 * before this shape: 45 of 50 adversarial calls leaked one.
-	 *
-	 * So creation is refused for the duration (see luaext_corolib_create),
-	 * which is what makes co_live = 0 below true rather than asserted -- and
-	 * the table is detached anyway, so nothing a handler does can reach the
-	 * one being walked.
+	 * Closing a thread runs its <close> handlers, and a handler creating a
+	 * coroutine mid-sweep would insert into the table lua_next is walking: the
+	 * rehash skips entries, and a skipped suspended coroutine survives the call
+	 * that created it. Two defences, both needed -- creation is refused for the
+	 * duration (see luaext_corolib_create), which is what makes co_live = 0
+	 * below true rather than asserted, and the table is detached so a handler
+	 * cannot reach the one being walked.
 	 */
 	sandbox->co_sweeping = true;
 

@@ -21,19 +21,11 @@ name: Release
 #      Do NOT `git tag`/`git push` the version yourself — that would create
 #      the tag immediately and let Packagist see it before Windows DLLs
 #      exist, defeating the entire point of this workflow.
-#   3. Dispatch this workflow by hand against the draft:
+#   3. Dispatch this workflow by hand — a draft fires no events at all, so
+#      nothing starts on its own:
 #        gh workflow run release.yml --ref main -f tag=1.2.0
-#      It runs everything below up to and including a smoke test, entirely
-#      against the draft's target commit — no git tag exists yet, so nothing
-#      under this file needs one.
-#
-#      A DRAFT CANNOT TRIGGER THIS AUTOMATICALLY, and an earlier version of
-#      this comment claimed otherwise. GitHub is explicit: "Workflows are not
-#      triggered for the `created`, `edited`, or `deleted` activity types for
-#      draft releases." So `release: created` never arrives for step 2, and
-#      the manual dispatch is what stands in for it. Everything else about
-#      the draft-first flow still holds — the tag genuinely does not exist
-#      until step 4.
+#      It runs everything up to and including a smoke test against the
+#      dispatched commit. No git tag exists yet, and nothing here needs one.
 #   4. Once "attach-release-assets" and the smoke tests are green, a
 #      maintainer clicks "Publish release" (or `gh release edit --draft=false`).
 #      Publishing is the moment GitHub actually creates the git tag — which
@@ -44,15 +36,9 @@ name: Release
 # RC/pre-releases use the same flow with a `-rc.N` suffix (still no "v"
 # prefix) and the GitHub "set as a pre-release" checkbox.
 #
-# WHY `published` AND NOTHING ELSE. It is the only activity type that arrives
-# for both stable releases and pre-releases, including ones published from a
-# draft -- which is every release this project cuts. GitHub again: "The
-# `prereleased` type will not trigger for pre-releases published from draft
-# releases, but the `published` type will trigger", and "if you want a
-# workflow to run when stable and pre-releases publish, subscribe to
-# `published` instead of `released` and `prereleased`". Subscribing to
-# `released`/`prereleased` meant an RC published from a draft ran no
-# post-publish verification at all.
+# `published` is the only activity type that arrives for both stable and
+# pre-releases published from a draft, which is every release cut here.
+# `released` and `prereleased` do not, so an RC would publish unverified.
 # --------------------------------------------------------------------------
 
 on:
@@ -62,11 +48,10 @@ on:
     inputs:
       tag:
         description: >-
-          Existing release tag to re-run the gate/build/smoke-test steps for
-          (does not publish anything). Dispatch this from the branch the
-          release's target_commitish points to — smoke-test-source's
-          dev-<branch>#<sha> constraint uses the dispatch context's own
-          branch/sha, not the tag object itself.
+          The release's version string. It need not exist as a tag — on the
+          pre-publish path it will not. The build comes from the commit this
+          dispatch runs against, so set --ref to the branch the draft targets.
+          Publishes nothing.
         required: true
 
 permissions:
@@ -85,24 +70,24 @@ jobs:
   # -------------------------------------------------------------------
   version-gate:
     name: Version consistency gate
-    # The dispatch is the intended pre-publish path (step 3 above). `published`
-    # is kept as a backstop so a release cut WITHOUT the draft dance still gets
-    # its DLLs built and attached -- late, after the tag exists, but attached.
+    # Dispatch is the intended pre-publish path; `published` is the backstop
+    # for a release cut without the draft step, which still gets its DLLs.
     if: github.event_name == 'workflow_dispatch' || github.event.action == 'published'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # For a real release event this is the draft/release's target
-          # commitish. For a manual workflow_dispatch re-run there is no
-          # release event context, so fall back to the tag itself (assumed
-          # to already exist, per the workflow_dispatch input's description).
-          ref: ${{ github.event.release.target_commitish || inputs.tag || github.sha }}
+          # The tag on a published release; the dispatched commit otherwise,
+          # where no tag exists yet. Deliberately not `target_commitish`: it
+          # holds a branch name, so a release would build whatever that branch
+          # points at now rather than the commit it was cut from. `inputs.tag`
+          # is a version string to validate against, never a ref.
+          ref: ${{ github.event.release.tag_name || github.sha }}
 
       - name: Validate tag shape and header version match
         env:
-          LUAEXT_RELEASE_REF: ${{ github.event.release.target_commitish || inputs.tag || github.sha }}
+          LUAEXT_RELEASE_REF: ${{ github.event.release.tag_name || github.sha }}
         run: |
           set -euo pipefail
           TAG="${LUAEXT_TAG}"

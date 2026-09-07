@@ -53,21 +53,15 @@
 #define LUAEXT_ERROR_TRACE_FRAMES 64
 
 /*
- * Headroom granted while an error is being described, and the ceiling on how
- * much of a script-supplied message is kept.
+ * Headroom while an error is described, and the ceiling on how much of a
+ * script-supplied message is kept.
  *
- * Reporting that a script ran out of memory must not itself fail for want of
- * memory, so the message handler needs room the script has already spent. It
- * used to get that as an unlimited ceiling, which handed a script the primitive
- * it was being stopped for: luaL_tolstring() runs the error value's __tostring,
- * that is script code, and under no ceiling it can allocate without bound --
- * from a default sandbox, since error() and setmetatable() need no capability.
- * The result was then copied into a persistent zend_string with no length
- * bound, so the allocation outlived the sandbox's accounting entirely.
- *
- * Both are bounded now. The headroom covers what describing an error actually
- * costs -- at most LUAEXT_ERROR_TRACE_FRAMES frames of short strings plus one
- * clamped message -- with a wide margin, and nothing beyond it.
+ * Reporting an exhausted budget must not itself fail for want of memory, but
+ * the handler calls luaL_tolstring(), which runs the error value's __tostring
+ * -- script code, needing no capability. An unlimited ceiling there hands a
+ * script the primitive it was being stopped for. The headroom covers what
+ * describing an error costs, at most LUAEXT_ERROR_TRACE_FRAMES frames plus one
+ * clamped message, and nothing beyond it.
  */
 #define LUAEXT_ERROR_REPORT_HEADROOM ((size_t)256 * 1024)
 #define LUAEXT_ERROR_SCRIPT_MESSAGE_MAX ((size_t)8 * 1024)
