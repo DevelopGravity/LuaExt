@@ -1014,10 +1014,10 @@ static void GCTM (lua_State *L) {
       ** answers the question with no interpreter involvement at all.
       **
       ** 'errorJmp' is checked because luaD_throw with no handler aborts the
-      ** process. The only way to reach here without one is the finalizer
-      ** sweep inside lua_close(), where the extension has already cleared
-      ** the flag -- but "would abort" is not a thing to leave to a
-      ** documented ordering somewhere else.
+      ** process. The one path here without a handler is the finalizer sweep
+      ** inside lua_close() -- entered with the interrupt flag deliberately
+      ** RAISED (see luaext_timers_detach), so this test alone is what keeps
+      ** close-time finalizers on upstream's warning path. Never remove it.
       **
       ** Note what is NOT restored on this path: g->gcstp and L->allowhook
       ** already were, three lines up. What the throw does abandon is the

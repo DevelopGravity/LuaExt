@@ -235,9 +235,11 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	sandbox->closed = true;
 
 	/*
-	 * Before lua_close(). Detaching clears the interrupt flag, and finalisers
-	 * run during teardown -- one that saw a pending interrupt would throw out
-	 * of the close itself.
+	 * Before lua_close(). Detaching deliberately leaves the interrupt RAISED
+	 * -- see luaext_timers_detach for the reasoning -- so a script __gc
+	 * finaliser cannot hang teardown; the vendored patch 0008's L->errorJmp
+	 * check is what keeps its cut-short error on the warning path instead of
+	 * aborting the close.
 	 */
 	luaext_timers_detach(sandbox);
 	luaext_output_shutdown(sandbox);
