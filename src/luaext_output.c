@@ -258,7 +258,6 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 	zval args[2];
 	uint8_t paused = 0;
 	luaext_host_span host_span;
-	bool called;
 
 	ZVAL_UNDEF(&callback_result);
 	ZVAL_STR_COPY(&args[0], chunk);
@@ -281,8 +280,9 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 
 	luaext_timers_span_begin(sandbox, &sandbox->php_span_depth, &host_span);
 
-	called = call_user_function(NULL, NULL, &sandbox->out.callback, &callback_result, 2, args) ==
-			 SUCCESS;
+	/* Through the cache resolved at construction: a known fcc cannot be
+	 * refused, so the only failure left is the callback throwing. */
+	zend_call_known_fcc(&sandbox->out.fcc, &callback_result, 2, args, NULL);
 
 	luaext_timers_span_end(sandbox, &sandbox->php_span_depth, &host_span,
 						   &sandbox->php_time_wall_ns, &sandbox->php_time_cpu_ns);
@@ -296,7 +296,7 @@ static bool luaext_output_emit(luaext_sandbox *sandbox, zend_string *chunk)
 	zval_ptr_dtor(&args[0]);
 	zval_ptr_dtor(&callback_result);
 
-	return called && EG(exception) == NULL;
+	return EG(exception) == NULL;
 }
 
 /*
@@ -436,6 +436,8 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config)
 		chunk = (size_t)Z_LVAL_P(chunk_value);
 	}
 
+	zend_fcall_info_cache resolved = empty_fcall_info_cache;
+
 	if (mode == (uint8_t)LUAEXT_OUTPUT_CALLBACK &&
 		(callback == NULL || Z_TYPE_P(callback) != IS_OBJECT)) {
 		zend_throw_exception(luaext_ce_configuration_error,
@@ -443,6 +445,18 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config)
 							 "stream to. Without one a script's output would go nowhere, which "
 							 "OutputMode::Discard says deliberately.",
 							 0);
+		return false;
+	}
+
+	/*
+	 * Resolved ONCE, here, and dispatched through the cache for every chunk --
+	 * the same treatment luaext_phpcall gives registered callables. Resolving
+	 * is also the refusal point, so it runs before anything is committed.
+	 */
+	if (mode == (uint8_t)LUAEXT_OUTPUT_CALLBACK &&
+		!zend_is_callable_ex(callback, NULL, 0, NULL, &resolved, NULL)) {
+		zend_throw_exception(luaext_ce_configuration_error,
+							 "SandboxConfig::$outputCallback is not callable", 0);
 		return false;
 	}
 
@@ -464,6 +478,7 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config)
 	 */
 	if (mode == (uint8_t)LUAEXT_OUTPUT_CALLBACK) {
 		ZVAL_COPY(&out->callback, callback);
+		zend_fcc_dup(&out->fcc, &resolved);
 	}
 
 	return true;
@@ -482,6 +497,11 @@ void luaext_output_shutdown(luaext_sandbox *sandbox)
 	(void)luaext_output_flush(sandbox, true);
 
 	luaext_output_release(sandbox);
+
+	if (ZEND_FCC_INITIALIZED(out->fcc)) {
+		zend_fcc_dtor(&out->fcc);
+		out->fcc = empty_fcall_info_cache;
+	}
 
 	if (Z_TYPE(out->callback) != IS_UNDEF) {
 		zval_ptr_dtor(&out->callback);
@@ -583,8 +603,8 @@ luaext_output_status luaext_output_write_channel(luaext_sandbox *sandbox, const 
 	 */
 	if (!luaext_output_flush(sandbox, false)) {
 		/* Normally raises the callback's own exception and never returns. The
-		 * exception-free failure -- call_user_function refusing a callback
-		 * validated at construction -- is close enough to unreachable that it
+		 * cached fcc cannot be refused by the engine, so the exception-free
+		 * arrival here is the coroutine sweep declining to raise -- which
 		 * keeps the budget error rather than growing a fourth status. */
 		luaext_output_report_exception(sandbox);
 		return LUAEXT_OUTPUT_REFUSED_BUDGET;

@@ -356,6 +356,10 @@ static HashTable *luaext_sandbox_get_gc(zend_object *object, zval **table, int *
 	zend_get_gc_buffer_add_zval(buffer, &sandbox->module_resolver_zv);
 	zend_get_gc_buffer_add_zval(buffer, &sandbox->module_paths_zv);
 	zend_get_gc_buffer_add_zval(buffer, &sandbox->out.callback);
+	/* The resolved fcc holds its own reference to the callback (and to
+	 * whatever a Closure captured), so it must be visible to the collector
+	 * alongside the zval or a cycle through either reference leaks. */
+	zend_get_gc_buffer_add_fcc(buffer, &sandbox->out.fcc);
 	zend_get_gc_buffer_use(buffer, table, count);
 
 	return zend_std_get_properties(object);

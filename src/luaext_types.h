@@ -396,6 +396,15 @@ typedef struct {
 	zval callback;
 
 	/*
+	 * The callback resolved once, at construction. Dispatching through the
+	 * cached entry skips re-resolving the callable on every chunk -- the same
+	 * treatment luaext_phpcall gives every registered callable. The zval above
+	 * stays: it is the "does a callback exist" test and the GC's view, and both
+	 * it and this cache are handed to the cycle collector.
+	 */
+	zend_fcall_info_cache fcc;
+
+	/*
 	 * Two counters because they answer two different questions. `written` is
 	 * the refillable budget Limits::$outputBytes judges -- takeOutput()
 	 * resets it, handing the bytes' budget back with the bytes. `emitted` is
