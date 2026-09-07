@@ -513,7 +513,14 @@ void luaext_timers_span_end(luaext_sandbox *sandbox, uint32_t *depth, luaext_hos
 		return;
 	}
 
-	*wall_ns += luaext_clock_monotonic_ns() - span->wall_start;
+	/* Guarded like the CPU half below: a failed or regressed clock read would
+	 * wrap the subtraction and poison the accumulated stat permanently. A span
+	 * the clock cannot measure contributes nothing rather than everything. */
+	now = luaext_clock_monotonic_ns();
+
+	if (now >= span->wall_start) {
+		*wall_ns += now - span->wall_start;
+	}
 
 	if (span->cpu_ok && luaext_watchdog_read_own_cpu(sandbox->slot, &now) &&
 		now >= span->cpu_start) {

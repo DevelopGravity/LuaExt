@@ -464,10 +464,16 @@ static int luaext_phpcall_invoke(lua_State *L)
 	 * Long callbacks, the only ones that can meaningfully overshoot, pay one
 	 * sample against work that dwarfs it.
 	 */
-	if (call_started_ns != 0 &&
-		luaext_clock_monotonic_ns() - call_started_ns >= LUAEXT_PHPCALL_SAMPLE_AFTER_NS &&
-		luaext_timers_final_check(sandbox)) {
-		luaext_raise_interrupt(L);
+	if (call_started_ns != 0) {
+		/* Same regression guard as the span accounting: a failed clock read
+		 * here only makes the sampling predicate spuriously true, but the two
+		 * subtractions should not disagree about whether that can happen. */
+		uint64_t now = luaext_clock_monotonic_ns();
+
+		if (now >= call_started_ns && now - call_started_ns >= LUAEXT_PHPCALL_SAMPLE_AFTER_NS &&
+			luaext_timers_final_check(sandbox)) {
+			luaext_raise_interrupt(L);
+		}
 	}
 
 	LUAEXT_CHECK(L);
