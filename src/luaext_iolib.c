@@ -254,6 +254,7 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 	{
 		zval args[3];
 		zval result;
+		size_t string_limit = sandbox->policy.limits.max_string_length;
 		int produced;
 
 		ZVAL_STR(&args[0], handle->path);
@@ -285,6 +286,21 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 			luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
 							   "RangedFileSystem::readRange() returned more than the extension "
 							   "can address in one read");
+			return -1;
+		}
+
+		/*
+		 * Refused BEFORE Lua sees the bytes, releasing the reply first: the
+		 * vendored string-length gate makes lua_pushlstring raise past this
+		 * limit, and that longjmp would leak the zval still held here. The
+		 * same ordering the two guards above use, and a message that names
+		 * the backend rather than the interpreter's generic one.
+		 */
+		if (string_limit != 0 && Z_STRLEN(result) > string_limit) {
+			zval_ptr_dtor(&result);
+			luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+							   "RangedFileSystem::readRange() returned more than "
+							   "Limits::$maxStringLength permits");
 			return -1;
 		}
 

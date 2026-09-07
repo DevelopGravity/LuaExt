@@ -378,29 +378,38 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 
 		{
 			/*
-			 * The source and the chunk name are moved into LUA-owned memory, and
-			 * every PHP-side allocation is released, before anything that can
-			 * raise runs.
+			 * The source moves into LUA-owned memory and the backend's reply is
+			 * released, before anything that can raise runs.
 			 *
 			 * Ordering alone is not enough here, which is the trap worth
-			 * recording: luaext_require_load() raises on a source that does not
-			 * compile, and a raise is a longjmp, so a zend_string still held --
-			 * even one held only to pass to the very call that raises -- is
-			 * simply lost. Lua strings survive that, because unwinding drops
-			 * them and the collector takes them.
+			 * recording: the vendored string-length gate makes lua_pushlstring
+			 * itself raise past Limits::$maxStringLength, and a raise is a
+			 * longjmp, so a zend_string still held -- even one held only to
+			 * feed the very push that raises -- is simply lost. So the length
+			 * is refused first, and the reply is released the moment Lua owns
+			 * the source: the chunk-name push that follows can still raise (a
+			 * long module path under a tiny limit) and must hold nothing.
+			 * Lua strings survive the unwind; the collector takes them.
 			 *
 			 * '@' is Lua's convention for "this chunk came from a file", and is
 			 * what makes a traceback name the module rather than quote it.
 			 */
 			size_t source_len;
+			size_t string_limit = sandbox->policy.limits.max_string_length;
 			const char *source;
 			const char *chunk_name;
 			bool loaded;
 
-			lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
-			lua_pushfstring(L, "@%s", Z_STRVAL(args[0]));
+			if (string_limit != 0 && Z_STRLEN(result) > string_limit) {
+				zval_ptr_dtor(&result);
+				luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
+								   "That module's source exceeds Limits::$maxStringLength");
+				return -1;
+			}
 
+			lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
 			zval_ptr_dtor(&result);
+			lua_pushfstring(L, "@%s", Z_STRVAL(args[0]));
 
 			source = lua_tolstring(L, -2, &source_len);
 			chunk_name = lua_tostring(L, -1);
@@ -543,9 +552,26 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		 * move into Lua-owned memory first, then the PHP side is released.
 		 */
 		size_t source_len;
+		size_t string_limit = sandbox->policy.limits.max_string_length;
 		const char *source;
 		const char *chunk;
 		bool bytecode = is_bytecode != NULL && Z_TYPE_P(is_bytecode) == IS_TRUE;
+
+		/*
+		 * Checked BEFORE the pushes: the vendored string-length gate makes
+		 * lua_pushlstring itself raise past this limit, and a raise there
+		 * would longjmp out of the bracket with the ModuleSource still held.
+		 * Both properties go through the same pushes, so both are gated.
+		 */
+		if (string_limit != 0 &&
+			(Z_STRLEN_P(code) > string_limit || Z_STRLEN_P(chunk_name) > string_limit)) {
+			zval_ptr_dtor(&result);
+			LUAEXT_NO_RAISE_END(L);
+			luaext_error_raise(L, LUAEXT_ERR_MODULE, false, "%s",
+							   "That module's source or chunk name exceeds "
+							   "Limits::$maxStringLength");
+			return -1;
+		}
 
 		lua_pushlstring(L, Z_STRVAL_P(code), Z_STRLEN_P(code));
 		lua_pushlstring(L, Z_STRVAL_P(chunk_name), Z_STRLEN_P(chunk_name));
