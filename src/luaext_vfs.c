@@ -1050,8 +1050,19 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 	return true;
 }
 
-bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_handle *handle,
-							 zend_string **refusal)
+/*
+ * The body of luaext_vfs_handle_close, with charging made optional for the same
+ * reason luaext_vfs_call_maybe_charged makes it optional: the sweep runs after
+ * lua_pcall has returned, where a raise has no handler and lands on lua_atpanic.
+ * Uncharged, the flush cannot raise at all -- the quota check is the one raise
+ * a script can arrange (spend maxOperations - 1 and leave a dirty handle for
+ * the sweep), and the other two raises in luaext_vfs_call need a sandbox with
+ * no filesystem (which cannot hold an open handle) or a FileSystem missing
+ * write() (which instanceof refused at configuration).
+ */
+static bool luaext_vfs_handle_close_maybe_charged(lua_State *L, luaext_sandbox *sandbox,
+												  luaext_vfs_handle *handle,
+												  zend_string **refusal, bool charge)
 {
 	*refusal = NULL;
 
@@ -1066,7 +1077,8 @@ bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_h
 		ZVAL_STR(&args[0], handle->path);
 		ZVAL_STR(&args[1], handle->buffer);
 
-		if (luaext_vfs_call(L, sandbox, "write", 2, args, &result, refusal) != LUAEXT_VFS_OK) {
+		if (luaext_vfs_call_maybe_charged(L, sandbox, "write", 2, args, &result, refusal,
+										  charge) != LUAEXT_VFS_OK) {
 			/*
 			 * Released even so. The bytes are gone either way -- there is nowhere
 			 * else to put them -- and keeping the handle open would leak the
@@ -1084,6 +1096,12 @@ bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_h
 	luaext_vfs_handle_release(sandbox, handle);
 
 	return true;
+}
+
+bool luaext_vfs_handle_close(lua_State *L, luaext_sandbox *sandbox, luaext_vfs_handle *handle,
+							 zend_string **refusal)
+{
+	return luaext_vfs_handle_close_maybe_charged(L, sandbox, handle, refusal, true);
 }
 
 void luaext_vfs_sweep(luaext_sandbox *sandbox)
@@ -1111,8 +1129,13 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 			 * script is left to hear it. What must NOT happen is a pending PHP
 			 * exception escaping into the caller's teardown, so it is cleared --
 			 * the flush was best-effort by the time we reached the sweep.
+			 *
+			 * Uncharged, because this frame runs after lua_pcall returned and a
+			 * raise here has no handler: charging the flush would let a script
+			 * spend maxOperations - 1 and leave a dirty handle, making the
+			 * sweep's own close the breaching operation. See the close helper.
 			 */
-			(void)luaext_vfs_handle_close(L, sandbox, handle, &refusal);
+			(void)luaext_vfs_handle_close_maybe_charged(L, sandbox, handle, &refusal, false);
 
 			if (refusal != NULL) {
 				zend_string_release(refusal);

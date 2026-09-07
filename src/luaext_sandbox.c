@@ -991,6 +991,27 @@ static void luaext_sandbox_push_chunk_key(lua_State *L, const char *chunk_name,
 	luaL_pushresult(&buffer);
 }
 
+/*
+ * Build the cache table and the key under a protected call, leaving both on the
+ * stack. Creating the table and assembling the key both allocate inside the
+ * interpreter, and this runs from a PHP method body where a raise has no
+ * handler -- the same trampoline every other host-side push uses.
+ *
+ * Argument 1 is the chunk name, argument 2 the source, both as lightuserdata.
+ */
+static int luaext_sandbox_push_cache_and_key(lua_State *L)
+{
+	const char *chunk_name = (const char *)lua_touserdata(L, 1);
+	const zend_string *code = (const zend_string *)lua_touserdata(L, 2);
+
+	lua_settop(L, 0);
+
+	luaext_sandbox_push_chunk_cache(L);
+	luaext_sandbox_push_chunk_key(L, chunk_name, code);
+
+	return 2;
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 {
 	luaext_sandbox *sandbox;
@@ -1022,8 +1043,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 			RETURN_THROWS();
 		}
 
-		luaext_sandbox_push_chunk_cache(L);
-		luaext_sandbox_push_chunk_key(L, resolved_name, code);
+		lua_pushcfunction(L, luaext_sandbox_push_cache_and_key);
+		lua_pushlightuserdata(L, (void *)(uintptr_t)resolved_name);
+		lua_pushlightuserdata(L, (void *)code);
+
+		if (lua_pcall(L, 2, 2, 0) != LUA_OK) {
+			lua_pop(L, 1);
+			zend_throw_exception(luaext_ce_memory_limit_error,
+								 "Cannot evaluate a chunk: its cache key does not fit in the "
+								 "sandbox's memory budget",
+								 0);
+			RETURN_THROWS();
+		}
+
 		lua_pushvalue(L, -1); /* keep the key; a miss needs it to store under */
 
 		if (lua_rawget(L, -3) == LUA_TFUNCTION) {
