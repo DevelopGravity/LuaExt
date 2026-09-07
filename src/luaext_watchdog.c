@@ -142,6 +142,26 @@ struct luaext_watch_slot {
 	 */
 	uint64_t epoch;
 
+	/*
+	 * The deadline of the entry this slot currently has in the heap, when it
+	 * has one.
+	 *
+	 * The epoch above keeps at most one entry per slot LIVE, but a superseded
+	 * entry still occupies the heap until its own deadline passes and it is
+	 * popped and dropped. A script crossing into the host in a loop republishes
+	 * far faster than those deadlines arrive, so the heap grows by one entry per
+	 * crossing for the length of the call -- process-wide memory a script
+	 * controls, plus a lock acquisition and a condvar signal it need not have
+	 * paid for.
+	 *
+	 * Knowing what is already outstanding lets a republish be skipped when it
+	 * would not make the slot fire any sooner. Skipping is safe in the one
+	 * direction that matters: the outstanding entry fires EARLIER, the watchdog
+	 * re-evaluates the slot when it does, and reschedules from what it finds.
+	 */
+	uint64_t queued_deadline;
+	bool queued;
+
 	/* -----------------------------------------------------------------
 	 * Owner-thread-only. The watchdog never reads these, so they need no
 	 * lock and are deliberately not atomic: making them atomic would imply
@@ -544,6 +564,19 @@ static void luaext_watch_stamp(luaext_watch_slot *slot, luaext_watch_entry *entr
 	entry->generation = slot->generation;
 	entry->epoch = ++slot->epoch;
 	entry->deadline = deadline;
+
+	slot->queued = true;
+	slot->queued_deadline = deadline;
+}
+
+/*
+ * True when the heap already holds an entry for this slot that fires no later
+ * than `deadline`, so publishing another would add a duplicate without moving
+ * the wake-up earlier. Caller holds slot->lock.
+ */
+static bool luaext_watch_covered(const luaext_watch_slot *slot, uint64_t deadline)
+{
+	return slot->queued && slot->queued_deadline <= deadline;
 }
 
 /* Publish. Caller holds NOTHING: taking watchdog.lock while holding slot->lock
@@ -587,6 +620,10 @@ static void luaext_watch_service(const luaext_watch_entry *entry)
 	 * detach that never touches the watchdog lock from leaking heap entries.
 	 */
 	if (slot->generation == entry->generation && slot->epoch == entry->epoch) {
+		/* This entry IS the outstanding one, and it is being consumed here --
+		 * so nothing covers the slot until the stamp below republishes. */
+		slot->queued = false;
+
 		if (!luaext_watch_evaluate(slot)) {
 			uint64_t deadline;
 
@@ -839,6 +876,11 @@ luaext_watch_slot *luaext_watchdog_acquire(luaext_irq *irq)
 	slot->has_limits = false;
 	slot->hook_ticks = 0;
 
+	/* Recycled slots start owing the heap nothing: the previous tenant's
+	 * entries were invalidated by its generation bump. */
+	slot->queued = false;
+	slot->queued_deadline = 0;
+
 	/* Slots are recycled, so a clock failure recorded by the previous tenant must
 	 * not be inherited by this one. */
 	slot->cpu_open_failed = false;
@@ -877,6 +919,7 @@ void luaext_watchdog_release(luaext_watch_slot *slot)
 	slot->open = 0;
 	slot->paused = 0;
 	slot->has_limits = false;
+	slot->queued = false;
 
 	/*
 	 * Invalidates every outstanding heap entry. Note what is NOT done here: the
@@ -934,7 +977,8 @@ static void luaext_watchdog_republish(luaext_watch_slot *slot)
 	 * budget that is already spent trips synchronously and the script stops at
 	 * the next back-edge check, with no watchdog round trip to lose.
 	 */
-	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline);
+	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline) &&
+			!luaext_watch_covered(slot, deadline);
 
 	if (queue) {
 		luaext_watch_stamp(slot, &entry, deadline);
@@ -1085,7 +1129,8 @@ void luaext_watchdog_arm(luaext_watch_slot *slot)
 	 * exhausted. The flag is sticky, so the boundary that returns to PHP reports
 	 * it even if the chunk never ticks the hook at all.
 	 */
-	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline);
+	queue = !luaext_watch_evaluate(slot) && luaext_watch_deadline(slot, &deadline) &&
+			!luaext_watch_covered(slot, deadline);
 
 	if (queue) {
 		luaext_watch_stamp(slot, &entry, deadline);
@@ -1203,7 +1248,7 @@ bool luaext_watchdog_resume(luaext_watch_slot *slot, uint8_t mask)
 		spent = luaext_watch_evaluate(slot);
 
 		if (!spent) {
-			queue = luaext_watch_deadline(slot, &deadline);
+			queue = luaext_watch_deadline(slot, &deadline) && !luaext_watch_covered(slot, deadline);
 
 			if (queue) {
 				luaext_watch_stamp(slot, &entry, deadline);
