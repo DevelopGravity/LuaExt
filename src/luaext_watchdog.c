@@ -64,6 +64,14 @@
 /* Default floor on wake-ups, overridden from luaext.watchdog_resolution_us. */
 #define LUAEXT_WATCH_DEFAULT_FLOOR_NS UINT64_C(500000)
 
+/*
+ * Ceiling on the floor: one second. The INI layer clamps to the same bound in
+ * microseconds, but this side must not trust that -- a floor of hours would
+ * park every deadline far past the limit it exists to deliver, and a caller
+ * bug (or an unclamped conversion wrapping) must not be able to hand one in.
+ */
+#define LUAEXT_WATCH_MAX_FLOOR_NS UINT64_C(1000000000)
+
 #define LUAEXT_WATCH_BOTH ((uint8_t)(LUAEXT_WATCH_CPU | LUAEXT_WATCH_WALL))
 
 /* -------------------------------------------------------------------------
@@ -824,6 +832,10 @@ void luaext_watchdog_shutdown(void)
 
 void luaext_watchdog_set_resolution_ns(uint64_t ns)
 {
+	if (ns > LUAEXT_WATCH_MAX_FLOOR_NS) {
+		ns = LUAEXT_WATCH_MAX_FLOOR_NS;
+	}
+
 	luaext_watch.floor_ns = ns == 0 ? LUAEXT_WATCH_DEFAULT_FLOOR_NS : ns;
 }
 

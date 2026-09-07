@@ -127,6 +127,39 @@ static PHP_INI_MH(luaext_ini_update_hook_count)
 	return SUCCESS;
 }
 
+/*
+ * luaext.watchdog_resolution_us is multiplied by 1000 into a uint64_t on its
+ * way to the watchdog. The stock OnUpdateLong accepted any zend_long, so a
+ * large enough value wrapped that conversion into an unrelated floor -- and
+ * even an unwrapped huge value is a floor of hours, parking every deadline far
+ * past the limit it exists to deliver. Negatives are refused like hook_count's,
+ * and the ceiling is one second: already an enormous overshoot bound for a
+ * knob whose default is 500us, and small enough the conversion can never wrap.
+ * The watchdog clamps to the same bound on its side (LUAEXT_WATCH_MAX_FLOOR_NS)
+ * rather than trusting this one.
+ */
+static PHP_INI_MH(luaext_ini_update_watchdog_resolution)
+{
+	zend_long parsed = zend_ini_parse_quantity_warn(new_value, entry->name);
+
+	(void)mh_arg1;
+	(void)mh_arg2;
+	(void)mh_arg3;
+	(void)stage;
+
+	if (parsed < 0) {
+		return FAILURE;
+	}
+
+	if (parsed > (zend_long)1000000) {
+		parsed = (zend_long)1000000;
+	}
+
+	LUAEXT_G(watchdog_resolution_us) = parsed;
+
+	return SUCCESS;
+}
+
 PHP_INI_BEGIN()
 /*
 	 * Instruction interval of the fallback interrupt hook, armed only when the
@@ -141,10 +174,10 @@ PHP_INI_ENTRY("luaext.hook_count", "1000", PHP_INI_SYSTEM, luaext_ini_update_hoo
 /*
 	 * Floor on watchdog wake-ups, in microseconds. It bounds how far past its
 	 * budget a script can run, and how much a mostly-idle process pays for the
-	 * watchdog thread.
+	 * watchdog thread. Validated (ceiling one second) by the handler above.
 	 */
-STD_PHP_INI_ENTRY("luaext.watchdog_resolution_us", "500", PHP_INI_SYSTEM, OnUpdateLong,
-				  watchdog_resolution_us, zend_luaext_globals, luaext_globals)
+PHP_INI_ENTRY("luaext.watchdog_resolution_us", "500", PHP_INI_SYSTEM,
+			  luaext_ini_update_watchdog_resolution)
 
 /*
 	 * Whether an UNSEALED binary chunk may be loaded at all, by compileBinary()

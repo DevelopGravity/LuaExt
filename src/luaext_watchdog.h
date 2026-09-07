@@ -63,7 +63,9 @@ void luaext_watchdog_startup(void);
  * Floor on wake-ups, from luaext.watchdog_resolution_us.
  *
  * Set at startup rather than read where it is used: an INI value is a PHP
- * concept and this side of the split cannot see one. Zero restores the default.
+ * concept and this side of the split cannot see one. Zero restores the
+ * default, and anything past one second is clamped to it -- the floor bounds
+ * limit-delivery latency, so it must never be able to dwarf the limits.
  */
 void luaext_watchdog_set_resolution_ns(uint64_t ns);
 
