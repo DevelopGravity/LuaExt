@@ -199,7 +199,15 @@ jobs:
           fi
 
       - name: Verify extension loaded
-        run: php -m | grep -qi luaext
+        # Captured once, then matched -- `php -m | grep -q` is a trap under
+        # pipefail, and pie-install.yml met it first. See the note there.
+        run: |
+          set -euo pipefail
+          modules="$(php -m)"
+          if ! printf '%s\n' "$modules" | grep -qi luaext; then
+            echo "::error::PIE reported a successful install, but luaext is not loaded in $(command -v php)." >&2
+            exit 1
+          fi
 
   # -------------------------------------------------------------------
   # Pre-publish smoke test, part 2: the built DLLs actually load on
@@ -289,8 +297,15 @@ jobs:
       - name: Load the DLL and verify the extension registers
         shell: pwsh
         run: |
-          php -d "extension=$env:LUAEXT_DLL_PATH" -m | Select-String -Pattern luaext -Quiet
-          if (-not $?) {
+          # Captured, then matched. `$?` reports whether Select-String itself
+          # errored, not whether it matched -- so testing it made this check
+          # unable to fail. The -Quiet boolean is the answer; bind it.
+          $modules = php -d "extension=$env:LUAEXT_DLL_PATH" -m
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "php -m failed with exit code $LASTEXITCODE."
+            exit 1
+          }
+          if (-not ($modules | Select-String -Pattern luaext -Quiet)) {
             Write-Error "luaext did not appear in 'php -m' with the built DLL loaded."
             exit 1
           }
@@ -386,7 +401,14 @@ jobs:
               "${LUAEXT_PACKAGE_NAME}:${LUAEXT_TAG}" --no-interaction
           fi
 
-          php -m | grep -qi luaext
+          # Captured once, then matched -- `php -m | grep -q` is a trap under
+          # pipefail, and pie-install.yml met it first. See the note there.
+          # This job met it too, on macOS, after a wholly successful install.
+          modules="$(php -m)"
+          if ! printf '%s\n' "$modules" | grep -qi luaext; then
+            echo "::error::pie install succeeded, but luaext is not loaded in $(command -v php)." >&2
+            exit 1
+          fi
 
       - name: pie install (Windows)
         if: runner.os == 'Windows'
@@ -407,8 +429,12 @@ jobs:
             Write-Error "pie install failed with exit code $LASTEXITCODE."
             exit 1
           }
-          $loaded = php -m | Select-String -Pattern luaext -Quiet
-          if (-not $loaded) {
+          $modules = php -m
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "php -m failed with exit code $LASTEXITCODE."
+            exit 1
+          }
+          if (-not ($modules | Select-String -Pattern luaext -Quiet)) {
             Write-Error "luaext did not appear in 'php -m' after pie install."
             exit 1
           }
