@@ -355,11 +355,18 @@ jobs:
       # pass here on the first run, and a failure in it means a real difference
       # between this build and the others rather than a property of the runner.
       #
-      # The rest stays out for now. Windows' CPU clock is a ~15.6 ms scheduler
-      # tick and tests/02-limits/ asserts far below it, so those need guards --
-      # and writing guards against failures nobody has observed is guesswork.
-      # Widening this to the whole suite is a follow-up with a real run's output
-      # behind it, which is the same rule that kept the build-only job honest.
+      # The rest stays out for now. A release build did run the whole suite
+      # here once, which is the real output that guesswork was waiting on:
+      # 158 of 162 passed, and exactly four did not --
+      #
+      #   02-limits/cpu-limit-not-refunded, 02-limits/usage-accounting
+      #     the ~15.6 ms scheduler tick, as predicted
+      #   03-adversarial/os-env-allow-list-bound
+      #     a different environment, not a different sandbox
+      #   03-adversarial/host-exit-is-not-cancelled-by-the-sandbox
+      #     exit handling, and the one worth actually investigating
+      #
+      # Widening this means guarding those four, not the suite.
       run-tests: true
       test-runner-args: 'tests/10-lua'
 

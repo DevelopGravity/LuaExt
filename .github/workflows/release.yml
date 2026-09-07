@@ -141,6 +141,12 @@ jobs:
       arch-list: 'x64'
       ts-list: 'nts, ts'
       run-tests: true
+      # Scoped exactly as ci.yml scopes it, and for the same reason: the rest
+      # of the suite asserts timings far below Windows' ~15.6 ms clock tick.
+      # Without this the whole suite ran here and the release could never be
+      # built -- 158 of 162 passed, and the four that did not are the
+      # platform-specific ones ci.yml already holds back.
+      test-runner-args: 'tests/10-lua'
 
   # -------------------------------------------------------------------
   # Attach the built DLL zips to the (draft) release.
