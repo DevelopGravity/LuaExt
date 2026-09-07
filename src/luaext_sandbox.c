@@ -328,10 +328,55 @@ static zend_object *luaext_sandbox_create_object(zend_class_entry *ce)
 	return &sandbox->std;
 }
 
+/*
+ * Teardown runs in the destructor phase, not the free phase.
+ *
+ * Closing runs untrusted Lua finalisers, and those call back into the host --
+ * an open file handle's __gc flushes through the FileSystem object. When the
+ * cycle collector reclaims a sandbox, the destructor phase is the last point
+ * at which every other object in the cycle is still intact; by the free phase
+ * their contents are already torn down, and a finaliser reaching one would be
+ * touching a corpse. free_obj keeps its close() call as the backstop for the
+ * shutdown paths that skip destructors -- close() is idempotent, so the second
+ * call is a no-op.
+ */
+static void luaext_sandbox_dtor_object(zend_object *object)
+{
+	luaext_sandbox_close(luaext_sandbox_from_obj(object));
+	zend_objects_destroy_object(object);
+}
+
 static void luaext_sandbox_free_object(zend_object *object)
 {
 	luaext_sandbox_close(luaext_sandbox_from_obj(object));
 	zend_object_std_dtor(object);
+}
+
+/*
+ * Every zval this struct owns outside the properties table, or the cycle
+ * collector cannot see it. The config, the FileSystem, the ModuleResolver,
+ * the module paths and the output callback all routinely point back at the
+ * host object graph that holds the sandbox -- without this handler such a
+ * cycle is uncollectable and pins the whole malloc'd Lua heap until
+ * RSHUTDOWN, which is no help to a worker that serves many requests.
+ *
+ * References held inside the interpreter (wrapped callables, preloads) are
+ * deliberately absent: they live in Lua's heap, which the collector cannot
+ * traverse; close() is what releases those.
+ */
+static HashTable *luaext_sandbox_get_gc(zend_object *object, zval **table, int *count)
+{
+	luaext_sandbox *sandbox = luaext_sandbox_from_obj(object);
+	zend_get_gc_buffer *buffer = zend_get_gc_buffer_create();
+
+	zend_get_gc_buffer_add_zval(buffer, &sandbox->config_zv);
+	zend_get_gc_buffer_add_zval(buffer, &sandbox->filesystem_zv);
+	zend_get_gc_buffer_add_zval(buffer, &sandbox->module_resolver_zv);
+	zend_get_gc_buffer_add_zval(buffer, &sandbox->module_paths_zv);
+	zend_get_gc_buffer_add_zval(buffer, &sandbox->out.callback);
+	zend_get_gc_buffer_use(buffer, table, count);
+
+	return zend_std_get_properties(object);
 }
 
 void luaext_sandbox_startup(void)
@@ -339,7 +384,9 @@ void luaext_sandbox_startup(void)
 	memcpy(&luaext_sandbox_handlers, &std_object_handlers, sizeof(zend_object_handlers));
 
 	luaext_sandbox_handlers.offset = XtOffsetOf(struct luaext_sandbox, std);
+	luaext_sandbox_handlers.dtor_obj = luaext_sandbox_dtor_object;
 	luaext_sandbox_handlers.free_obj = luaext_sandbox_free_object;
+	luaext_sandbox_handlers.get_gc = luaext_sandbox_get_gc;
 
 	/*
 	 * A sandbox owns an interpreter and a thread affinity; a copy of one could

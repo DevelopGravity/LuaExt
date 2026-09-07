@@ -70,12 +70,31 @@ static void luaext_function_free_object(zend_object *object)
 	zend_object_std_dtor(object);
 }
 
+/*
+ * The sandbox reference lives in the C struct, not the properties table, so
+ * without this handler a handle kept alive by something its own sandbox
+ * references -- a config, a callback -- forms a cycle the collector cannot
+ * see. The registry slot needs no entry here: it names memory in Lua's heap,
+ * which the collector does not traverse.
+ */
+static HashTable *luaext_function_get_gc(zend_object *object, zval **table, int *count)
+{
+	luaext_function_obj *function = luaext_function_from_obj(object);
+	zend_get_gc_buffer *buffer = zend_get_gc_buffer_create();
+
+	zend_get_gc_buffer_add_zval(buffer, &function->sandbox_zv);
+	zend_get_gc_buffer_use(buffer, table, count);
+
+	return zend_std_get_properties(object);
+}
+
 void luaext_function_startup(void)
 {
 	memcpy(&luaext_function_handlers, &std_object_handlers, sizeof(zend_object_handlers));
 
 	luaext_function_handlers.offset = XtOffsetOf(luaext_function_obj, std);
 	luaext_function_handlers.free_obj = luaext_function_free_object;
+	luaext_function_handlers.get_gc = luaext_function_get_gc;
 
 	/*
 	 * A copy could only ever be a second handle onto one registry slot, which
