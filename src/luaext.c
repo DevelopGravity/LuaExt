@@ -240,23 +240,23 @@ static void luaext_register_classes(void)
 	luaext_ce_lua_method_attribute = register_class_DevelopGravity_LuaExt_LuaMethod();
 
 	/*
-	 * The stub carries no #[Attribute] marker: gen_stub only resolves class
-	 * constants it declares itself. Registering it here is what makes
-	 * #[LuaMethod] usable on a method, and restricting it to methods is what
-	 * keeps registerObject()'s selection rule meaningful.
+	 * The stub carries the #[Attribute] marker (as a literal target, the one
+	 * spelling gen_stub can evaluate), so the generated register function has
+	 * already attached it with its flags. What remains is php-src's own
+	 * pattern: marking the class internal, which is what makes the engine
+	 * validate targets at compile time. zend_internal_attribute_register()
+	 * would attach a SECOND marker on top of the generated one.
 	 */
-	zend_internal_attribute_register(luaext_ce_lua_method_attribute, ZEND_ATTRIBUTE_TARGET_METHOD);
+	zend_mark_internal_attribute(luaext_ce_lua_method_attribute);
 
 	luaext_ce_operator = register_class_DevelopGravity_LuaExt_Operator();
 
-	/* Same gen_stub rule as LuaMethod: the markers are registered here.
-	 * LuaOperator targets methods; LuaClass is the class-level configuration
+	/* LuaOperator targets methods; LuaClass is the class-level configuration
 	 * CARRIER for registerClass() — never a grant. */
 	luaext_ce_lua_operator_attribute = register_class_DevelopGravity_LuaExt_LuaOperator();
-	zend_internal_attribute_register(luaext_ce_lua_operator_attribute,
-									 ZEND_ATTRIBUTE_TARGET_METHOD);
+	zend_mark_internal_attribute(luaext_ce_lua_operator_attribute);
 	luaext_ce_lua_class_attribute = register_class_DevelopGravity_LuaExt_LuaClass();
-	zend_internal_attribute_register(luaext_ce_lua_class_attribute, ZEND_ATTRIBUTE_TARGET_CLASS);
+	zend_mark_internal_attribute(luaext_ce_lua_class_attribute);
 
 	luaext_ce_capabilities = register_class_DevelopGravity_LuaExt_Capabilities();
 	luaext_ce_limits = register_class_DevelopGravity_LuaExt_Limits();

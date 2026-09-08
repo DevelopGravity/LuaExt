@@ -142,11 +142,13 @@ enum Operator
  * `$methods` allowlist is invisible to scripts, so adding a public method to a
  * host class can never silently widen what untrusted code may call.
  *
- * Carries no #[Attribute] marker here because gen_stub cannot resolve constants
- * it does not itself declare; MINIT calls zend_internal_attribute_register()
- * with ZEND_ATTRIBUTE_TARGET_METHOD instead, and the published IDE stubs
- * restore the marker for editors.
+ * The target is the literal 4 (Attribute::TARGET_METHOD) because gen_stub
+ * cannot resolve constants of classes it was not given -- Attribute lives in
+ * php-src's own stubs -- but it evaluates integer literals fine. The literal
+ * is what lets the marker ship in the published stub package, where static
+ * analysers demand it on any class used as an attribute.
  */
+#[\Attribute(4)]
 final class LuaMethod
 {
     /** Name seen by Lua; defaults to the PHP method name. */
@@ -162,9 +164,9 @@ final class LuaMethod
  * Mapping grants the operator only: it does not make the method callable by
  * name, which still takes #[LuaMethod] or the allowlist, independently.
  *
- * Registered in MINIT like LuaMethod, for the same gen_stub reason; the
- * published IDE stubs restore the #[Attribute] marker.
+ * The literal 4 is Attribute::TARGET_METHOD; see LuaMethod.
  */
+#[\Attribute(4)]
 final class LuaOperator
 {
     public Operator $operator;
@@ -184,7 +186,10 @@ final class LuaOperator
  *
  * PHP attributes cannot be attached to inherited methods, so this is how a
  * vendor class is wrapped once, declaratively, in a host-authored subclass.
+ *
+ * The literal 1 is Attribute::TARGET_CLASS; see LuaMethod.
  */
+#[\Attribute(1)]
 final class LuaClass
 {
     public ?string $luaName;
