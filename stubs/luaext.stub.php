@@ -885,7 +885,7 @@ final class Sandbox
      *
      * Only methods carrying the LuaMethod attribute, or named in $methods, are
      * exposed; properties are never reachable and the object itself never
-     * crosses into Lua.
+     * crosses into Lua unless its class is registered with registerClass().
      *
      * @param null|list<string> $methods Explicit allowlist, overriding attributes.
      * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method.

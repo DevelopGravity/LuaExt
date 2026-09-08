@@ -153,7 +153,51 @@ $sandbox->registerObject('text', new TextService());
 [$shouted] = $sandbox->eval('return text.upper("hi there")');
 ```
 
-**`new Sandbox()` with no arguments is the untrusted baseline** — every capability closed except coroutines, `os.time`, `debug.traceback` and `utf8`, and every limit at its default. There is no separate "safe mode" flag to forget. Object identity never crosses the boundary: Lua only ever gets bound method callables, never a proxy it can introspect or mutate.
+### Wrapping host objects
+
+When instances themselves should cross, `registerClass()` turns them into unforgeable userdata proxies: scripts hold many independent objects, call marked methods with Lua's colon syntax, construct through marked statics or `.new`, chain fluently, and use mapped operators — with no Lua-side glue at all. A `#[LuaClass]` attribute carries the configuration on a wrapper class you author (PHP attributes cannot attach to inherited methods, which is exactly what the class-level maps are for), and `SandboxConfig::$classes` grants it at construction, written once for every sandbox built from that config:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Carbon\CarbonImmutable;
+use DevelopGravity\LuaExt\LuaClass;
+use DevelopGravity\LuaExt\LuaOperator;
+use DevelopGravity\LuaExt\Operator;
+use DevelopGravity\LuaExt\Sandbox;
+use DevelopGravity\LuaExt\SandboxConfig;
+
+#[LuaClass(
+    luaName: 'Carbon',
+    methods: ['parse', 'now', 'copy', 'addDays', 'format'],
+    operators: ['lessThan' => Operator::LessThan],
+)]
+final class LuaCarbon extends CarbonImmutable
+{
+    // New methods may carry attributes — only inherited ones cannot.
+    #[LuaOperator(Operator::Add)]
+    public function plus(self $other): static
+    {
+        return $this->addSeconds($other->getTimestamp());
+    }
+}
+
+$config = new SandboxConfig(classes: [LuaCarbon::class]);
+$sandbox = new Sandbox($config); // the Carbon table is ready, nothing else to call
+```
+
+```lua
+local launch = Carbon.parse("2026-09-07 12:00:00")
+local freeze = launch:copy():addDays(-14)
+print(launch:addDays(10):format("Y-m-d"))
+print(freeze < launch)
+```
+
+Three things wrapper authors should know. **Subclass matching walks the instance's own parent chain**, so a plain vendor instance made elsewhere in host code is not an instance of your wrapper and will not wrap under its registration — construct the wrapper class at the boundary, or register the vendor class directly with the array parameters. **Operator validation checks arity, never parameter types** — map methods that genuinely accept the registered instance. And **the wrapped objects' memory is host memory**: it is deliberately not charged to `Limits::$memoryBytes` (PHP's own `memory_limit` is the bound, since object allocation goes through ZendMM), with `stats()->liveObjectProxies` as the observability hook for a script hoarding instances.
+
+**`new Sandbox()` with no arguments is the untrusted baseline** — every capability closed except coroutines, `os.time`, `debug.traceback` and `utf8`, and every limit at its default. There is no separate "safe mode" flag to forget. Object identity never crosses the boundary uninvited: `registerObject()` hands Lua bound method callables, and only classes explicitly registered with `registerClass()` cross as proxies — unforgeable userdata whose reachable surface is exactly the methods you marked.
 
 ## Documentation
 
