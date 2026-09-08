@@ -959,7 +959,7 @@ LUALIB_API const char *luaL_tolstring (lua_State *L, int idx, size_t *len) {
         int tt = luaL_getmetafield(L, idx, "__name");  /* try name */
         const char *kind = (tt == LUA_TSTRING) ? lua_tostring(L, -1) :
                                                  luaL_typename(L, idx);
-#if defined(LUAEXT_LUA_HOOKS) && LUAEXT_LUA_HOOKS
+#if LUAEXT_LUA_HOOKS
         /* Upstream prints the raw heap address here. That is the primary
         ** pointer-disclosure path in the whole library -- it backs tostring(),
         ** print() and every "attempt to index a ..." error message -- and it
