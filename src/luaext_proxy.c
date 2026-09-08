@@ -83,12 +83,28 @@ static zend_string *luaext_proxy_pstr(const zend_string *source)
  */
 static const char *luaext_proxy_method_refusal(const zend_function *method)
 {
+	const zend_string *method_name = method->common.function_name;
+
 	if (!(method->common.fn_flags & ZEND_ACC_PUBLIC)) {
 		return "it is not public";
 	}
 
 	if (method->common.fn_flags & ZEND_ACC_ABSTRACT) {
 		return "it is abstract";
+	}
+
+	/*
+	 * Magic methods are refused for the same reason the phpcall boundary
+	 * refuses them wholesale: exposing __call would turn one selection into
+	 * every name the class can be asked for. The two the collectors route to
+	 * dedicated slots — __construct becomes .new, __toString becomes the
+	 * metamethod — are the deliberate exceptions, vetted here like any other.
+	 */
+	if (method_name != NULL && ZSTR_LEN(method_name) >= 2 && ZSTR_VAL(method_name)[0] == '_' &&
+		ZSTR_VAL(method_name)[1] == '_' &&
+		!zend_string_equals_literal_ci(method_name, "__construct") &&
+		!zend_string_equals_literal_ci(method_name, "__toString")) {
+		return "it is a magic method, and magic methods are never exposed";
 	}
 
 	return NULL;
@@ -277,6 +293,18 @@ static bool luaext_proxy_collect_allowlist(luaext_proxy_class *record, zend_clas
 			return false;
 		}
 
+		/* Eligibility before routing, matching the attribute route: the
+		 * constructor and __toString earn their dedicated slots only when
+		 * they would have been exposable as ordinary methods. */
+		refusal = luaext_proxy_method_refusal(method);
+
+		if (refusal != NULL) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"%s::%s() cannot be exposed to Lua: %s", ZSTR_VAL(ce->name),
+									ZSTR_VAL(requested), refusal);
+			return false;
+		}
+
 		if (method == ce->constructor) {
 			constructor = method;
 			continue;
@@ -285,15 +313,6 @@ static bool luaext_proxy_collect_allowlist(luaext_proxy_class *record, zend_clas
 		if (ce->__tostring != NULL && method == ce->__tostring) {
 			record->to_string = method;
 			continue;
-		}
-
-		refusal = luaext_proxy_method_refusal(method);
-
-		if (refusal != NULL) {
-			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-									"%s::%s() cannot be exposed to Lua: %s", ZSTR_VAL(ce->name),
-									ZSTR_VAL(requested), refusal);
-			return false;
 		}
 
 		if (method->common.fn_flags & ZEND_ACC_STATIC) {
