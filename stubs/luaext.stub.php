@@ -175,8 +175,12 @@ final class LuaOperator
 /**
  * Class-level configuration CARRIER for Sandbox::registerClass(). Never a
  * grant: an annotated class still crosses nothing until a sandbox registers
- * it. Explicit registerClass() parameters override these fields, which in
- * turn override method-level attributes.
+ * it. Explicit registerClass() parameters override these fields. A method
+ * allowlist (either source) then overrides method-level LuaMethod
+ * attributes, while an operator map MERGES with method-level LuaOperator
+ * attributes — the map reaches inherited vendor methods that cannot carry
+ * attributes, a class's own methods speak for themselves, and a slot claimed
+ * by both sources is refused as the duplicate it is.
  *
  * PHP attributes cannot be attached to inherited methods, so this is how a
  * vendor class is wrapped once, declaratively, in a host-authored subclass.

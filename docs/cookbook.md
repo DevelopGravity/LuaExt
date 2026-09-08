@@ -433,7 +433,7 @@ $sandbox = new Sandbox(new SandboxConfig(
 (void) $sandbox->call('run');
 ```
 
-Callback chunks flush at whichever comes first: the `outputChunkBytes` threshold, a newline, the outermost `call()`/`eval()` returning, or `close()`. If `Limits::outputOverflow` is `OverflowBehavior::Fail` instead of `Truncate`, exceeding `outputBytes` raises an *uncatchable* `OutputLimitError` — a script can't wrap its own `print` calls in `pcall` to buy itself unlimited output.
+Callback chunks flush at whichever comes first: the `outputChunkBytes` threshold, a newline, a channel change, `getOutput()`/`takeOutput()`, or `close()` — a `call()`/`eval()` returning is deliberately not a flush point, so a trailing partial line stays buffered across calls until one of those events delivers it. If `Limits::outputOverflow` is `OverflowBehavior::Fail` instead of `Truncate`, exceeding `outputBytes` raises an *uncatchable* `OutputLimitError` — a script can't wrap its own `print` calls in `pcall` to buy itself unlimited output.
 
 ## Recording per-script resource usage
 
@@ -464,8 +464,8 @@ final class MeteredLuaRunner
         // cpuSeconds, wallClockSeconds, outputBytes, outputTruncated,
         // liveCoroutines, peakCoroutineDepth, modulesLoaded, cachedChunks,
         // vfsOperations, vfsBytes, vfsWallClockSeconds, vfsCpuSeconds,
-        // gcCollections, luaCallsIn, phpCallsOut, phpWallClockSeconds, and
-        // phpCpuSeconds.
+        // gcCollections, liveObjectProxies, luaCallsIn, phpCallsOut,
+        // phpWallClockSeconds, and phpCpuSeconds.
         $this->metricsClient->record('lua.sandbox.usage', $usageSnapshot);
 
         return $returnValues;

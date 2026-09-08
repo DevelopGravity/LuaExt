@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 2d3047b3c7bd9030442a50aab1a0a8549e411b09 */
+ * Stub hash: ea70c3641c3d3353a07359797706ed496028fb9a */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
