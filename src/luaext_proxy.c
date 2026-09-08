@@ -558,6 +558,35 @@ static const char *luaext_proxy_operand_name(luaext_sandbox *sandbox, lua_State 
 }
 
 /*
+ * Dispatch a binary metamethod: `method` (or the left operand's override of
+ * it) on the left operand, with the right operand as its one argument.
+ *
+ * Keeps BOTH operands anchored on the stack: removing the left proxy's only
+ * anchor would let a mid-call GC finalise it while its zend_object is in use
+ * as the receiver — survivable only because the defer queue holds the
+ * reference until a drain that cannot run while in_lua > 0, and that is
+ * nothing to lean on. The right operand converts from a pushed copy instead;
+ * slots 1-2 stay put.
+ */
+static int luaext_proxy_call_binary(lua_State *L, luaext_proxy_ud *left, zend_function *method,
+									const char *label)
+{
+	luaext_phpcall_target target;
+
+	target.fcc = NULL;
+	target.fn = luaext_proxy_resolve_method(left->object, left->cls, method);
+	target.bound = left->object;
+	target.scope = left->object->ce;
+	target.label = label;
+
+	lua_settop(L, 2);
+	lua_pushvalue(L, 2);
+	target.first_arg = 3;
+
+	return luaext_phpcall_invoke_target(L, &target);
+}
+
+/*
  * Binary operator dispatch. Upvalues: (1) the class record, (2) the slot.
  *
  * Both operands must be proxies of the same registered class — one identity
@@ -573,7 +602,6 @@ static int luaext_proxy_binop(lua_State *L)
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	luaext_proxy_ud *left = luaext_proxy_test(sandbox, L, 1);
 	luaext_proxy_ud *right = luaext_proxy_test(sandbox, L, 2);
-	luaext_phpcall_target target;
 
 	if (left == NULL || right == NULL || left->cls != cls || right->cls != cls) {
 		const char *first = luaext_proxy_operand_name(sandbox, L, 1);
@@ -593,25 +621,7 @@ static int luaext_proxy_binop(lua_State *L)
 						   luaext_proxy_ops[slot].symbol, first, second);
 	}
 
-	target.fcc = NULL;
-	target.fn = luaext_proxy_resolve_method(left->object, cls, cls->op_methods[slot]);
-	target.bound = left->object;
-	target.scope = left->object->ce;
-	target.label = luaext_proxy_ops[slot].symbol;
-
-	/*
-	 * Keep BOTH operands anchored on the stack: removing the left proxy's
-	 * only anchor would let a mid-call GC finalise it while its zend_object
-	 * is in use as the receiver — survivable only because the defer queue
-	 * holds the reference until a drain that cannot run while in_lua > 0,
-	 * and that is nothing to lean on. The right operand converts from a
-	 * pushed copy instead; slots 1-2 stay put.
-	 */
-	lua_settop(L, 2);
-	lua_pushvalue(L, 2);
-	target.first_arg = 3;
-
-	return luaext_phpcall_invoke_target(L, &target);
+	return luaext_proxy_call_binary(L, left, cls->op_methods[slot], luaext_proxy_ops[slot].symbol);
 }
 
 /* Unary minus. Upvalue: the class record. Lua passes the operand twice. */
@@ -660,7 +670,6 @@ static int luaext_proxy_eq(lua_State *L)
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	luaext_proxy_ud *left = luaext_proxy_test(sandbox, L, 1);
 	luaext_proxy_ud *right = luaext_proxy_test(sandbox, L, 2);
-	luaext_phpcall_target target;
 
 	if (left == NULL || right == NULL) {
 		lua_pushboolean(L, 0);
@@ -677,20 +686,7 @@ static int luaext_proxy_eq(lua_State *L)
 		return 1;
 	}
 
-	target.fcc = NULL;
-	target.fn = luaext_proxy_resolve_method(left->object, left->cls,
-											left->cls->op_methods[LUAEXT_PROXY_OP_EQ]);
-	target.bound = left->object;
-	target.scope = left->object->ce;
-	target.label = "==";
-
-	/* Keep both operands anchored; the right one converts from a pushed copy
-	 * so a mid-call GC can never finalise an operand still in use. */
-	lua_settop(L, 2);
-	lua_pushvalue(L, 2);
-	target.first_arg = 3;
-
-	return luaext_phpcall_invoke_target(L, &target);
+	return luaext_proxy_call_binary(L, left, left->cls->op_methods[LUAEXT_PROXY_OP_EQ], "==");
 }
 
 /* The __tostring metamethod, present only when __toString() was marked. */
@@ -1080,25 +1076,19 @@ static bool luaext_proxy_map_operator(luaext_proxy_class *record, zend_class_ent
 		return false;
 	}
 
-	if (method->common.fn_flags & ZEND_ACC_STATIC) {
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"%s::%s() cannot back an operator: it is static",
-								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
-		return false;
-	}
+	{
+		/* Static is the one refusal method exposure does not share: statics
+		 * back the class table happily, but an operator needs a receiver. */
+		const char *refusal = (method->common.fn_flags & ZEND_ACC_STATIC)
+								  ? "it is static"
+								  : luaext_proxy_method_refusal(method);
 
-	if (!(method->common.fn_flags & ZEND_ACC_PUBLIC)) {
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"%s::%s() cannot back an operator: it is not public",
-								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
-		return false;
-	}
-
-	if (method->common.fn_flags & ZEND_ACC_ABSTRACT) {
-		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
-								"%s::%s() cannot back an operator: it is abstract",
-								ZSTR_VAL(ce->name), ZSTR_VAL(method_name));
-		return false;
+		if (refusal != NULL) {
+			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+									"%s::%s() cannot back an operator: %s", ZSTR_VAL(ce->name),
+									ZSTR_VAL(method_name), refusal);
+			return false;
+		}
 	}
 
 	if (luaext_proxy_ops[slot].unary) {
