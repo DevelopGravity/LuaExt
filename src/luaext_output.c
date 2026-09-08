@@ -448,6 +448,18 @@ bool luaext_output_init(luaext_sandbox *sandbox, zval *config)
 		return false;
 	}
 
+	/* The mirror image is refused too: a callback the mode will never call is
+	 * a host expecting streamed output and silently getting none. */
+	if (mode != (uint8_t)LUAEXT_OUTPUT_CALLBACK && callback != NULL &&
+		Z_TYPE_P(callback) == IS_OBJECT) {
+		zend_throw_exception(luaext_ce_configuration_error,
+							 "SandboxConfig::$outputCallback does nothing without "
+							 "OutputMode::Callback. Pass outputMode: OutputMode::Callback to "
+							 "stream to it, or drop the callback.",
+							 0);
+		return false;
+	}
+
 	/*
 	 * Resolved ONCE, here, and dispatched through the cache for every chunk --
 	 * the same treatment luaext_phpcall gives registered callables. Resolving
