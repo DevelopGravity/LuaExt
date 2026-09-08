@@ -738,6 +738,10 @@ void luaext_watchdog_startup(void)
 	luaext_watch.running = false;
 	luaext_watch.stop = false;
 	luaext_watch.ready = false;
+	/* Cleared with the rest: shutdown leaves it standing, and a stale failure
+	 * from a previous module lifetime would arm the fallback hook -- and
+	 * degrade features() -- in a process whose thread never failed. */
+	luaext_watch.failed = false;
 
 	{
 		luaext_once fresh = LUAEXT_ONCE_INIT;
