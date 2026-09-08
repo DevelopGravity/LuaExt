@@ -450,6 +450,16 @@ static int luaext_proxy_new_call(lua_State *L)
 						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
 	}
 
+	/*
+	 * BEFORE the object exists: a pre-existing pending exception raised after
+	 * object_init_ex() would longjmp while this frame owns the new instance.
+	 * Ordered this way, every raise below the init owns nothing (init failure
+	 * leaves the zval undef) or has already handed the object to Lua.
+	 */
+	if (EG(exception) != NULL) {
+		luaext_error_raise_from_exception(L);
+	}
+
 	if (object_init_ex(&instance, cls->ce) == FAILURE || EG(exception) != NULL) {
 		luaext_error_raise_from_exception(L);
 	}
