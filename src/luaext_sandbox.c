@@ -557,8 +557,17 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 			{
 				ZVAL_DEREF(class_name);
 
-				if (Z_TYPE_P(class_name) != IS_STRING ||
-					!luaext_proxy_register(sandbox, Z_STR_P(class_name), NULL, NULL, NULL)) {
+				/* Config creation refuses this shape, so reaching it means a
+				 * path around that check; throw rather than trip
+				 * RETURN_THROWS()'s pending-exception contract. */
+				if (Z_TYPE_P(class_name) != IS_STRING || Z_STRLEN_P(class_name) == 0) {
+					zend_throw_exception(
+						luaext_ce_configuration_error,
+						"SandboxConfig::$classes must hold non-empty class-name strings", 0);
+					RETURN_THROWS();
+				}
+
+				if (!luaext_proxy_register(sandbox, Z_STR_P(class_name), NULL, NULL, NULL)) {
 					RETURN_THROWS();
 				}
 			}

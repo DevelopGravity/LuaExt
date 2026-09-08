@@ -1232,6 +1232,32 @@ LUAEXT_CONFIG_WITH_METHOD(DevelopGravity_LuaExt_VfsQuota, luaext_ce_vfs_quota)
  * SandboxConfig
  * ---------------------------------------------------------------------- */
 
+/*
+ * The one shape rule for $classes, shared by __construct and with(): entries
+ * must be non-empty strings. The classes themselves need not be loaded yet —
+ * a config object may predate them, and the Sandbox constructor is where each
+ * name is resolved and registered.
+ */
+static bool luaext_config_classes_shape_ok(const HashTable *classes)
+{
+	zval *class_entry_name;
+
+	ZEND_HASH_FOREACH_VAL(classes, class_entry_name)
+	{
+		ZVAL_DEREF(class_entry_name);
+
+		if (Z_TYPE_P(class_entry_name) != IS_STRING || Z_STRLEN_P(class_entry_name) == 0) {
+			zend_throw_exception(luaext_ce_configuration_error,
+								 "SandboxConfig::$classes must hold non-empty class-name strings",
+								 0);
+			return false;
+		}
+	}
+	ZEND_HASH_FOREACH_END();
+
+	return true;
+}
+
 /* The require() search patterns a sandbox gets when the host names none. */
 static void luaext_config_default_module_paths(zval *out)
 {
@@ -1314,22 +1340,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, __construct)
 	 * need not be loaded yet — a config object may predate them, and the
 	 * Sandbox constructor is where each name is resolved and registered.
 	 */
-	if (classes != NULL) {
-		zval *class_entry_name;
-
-		ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(classes), class_entry_name)
-		{
-			ZVAL_DEREF(class_entry_name);
-
-			if (Z_TYPE_P(class_entry_name) != IS_STRING || Z_STRLEN_P(class_entry_name) == 0) {
-				zend_throw_exception(luaext_ce_configuration_error,
-									 "SandboxConfig::$classes must hold non-empty class-name "
-									 "strings",
-									 0);
-				RETURN_THROWS();
-			}
-		}
-		ZEND_HASH_FOREACH_END();
+	if (classes != NULL && !luaext_config_classes_shape_ok(Z_ARRVAL_P(classes))) {
+		RETURN_THROWS();
 	}
 
 	if (capabilities != NULL) {
@@ -1449,12 +1461,21 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with)
 	 * with() can reach a combination the source did not have — dropping the
 	 * filesystem while vfs stays on, say — so the derived object is checked
 	 * too. It is discarded on failure, which is the only way nothing
-	 * unsatisfiable escapes this call.
+	 * unsatisfiable escapes this call. The $classes shape gets the same
+	 * treatment: the constructor refused it, so a derivation must too.
 	 */
-	if (!luaext_config_resolve(return_value, &policy)) {
-		zval_ptr_dtor(return_value);
-		RETVAL_NULL();
-		RETURN_THROWS();
+	{
+		zval holder;
+		zval *classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(return_value),
+										   ZEND_STRL("classes"), true, &holder);
+		bool ok = classes == NULL || Z_TYPE_P(classes) != IS_ARRAY ||
+				  luaext_config_classes_shape_ok(Z_ARRVAL_P(classes));
+
+		if (!ok || !luaext_config_resolve(return_value, &policy)) {
+			zval_ptr_dtor(return_value);
+			RETVAL_NULL();
+			RETURN_THROWS();
+		}
 	}
 }
 
