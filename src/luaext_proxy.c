@@ -790,7 +790,13 @@ static int luaext_proxy_plant_table(lua_State *L)
 	}
 
 	lua_pop(L, 1); /* the anchor; the pin and the closures hold it now */
-	lua_setglobal(L, ZSTR_VAL(cls->lua_name));
+
+	/* Raw, like every host-side write into the globals table: a script-
+	 * installed _G metamethod must not run unmetered inside a host call. */
+	lua_pushglobaltable(L);
+	lua_pushlstring(L, ZSTR_VAL(cls->lua_name), ZSTR_LEN(cls->lua_name));
+	lua_pushvalue(L, 1);
+	lua_rawset(L, 2);
 
 	return 0;
 }

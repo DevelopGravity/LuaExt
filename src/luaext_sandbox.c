@@ -1520,8 +1520,13 @@ static int luaext_sandbox_clear_global(lua_State *L)
 	const char *name = (const char *)lua_touserdata(L, 1);
 
 	lua_settop(L, 0);
+
+	/* Raw, like every host-side write into the globals table: a script-
+	 * installed _G metamethod must not run unmetered inside a host call. */
+	lua_pushglobaltable(L);
+	lua_pushstring(L, name);
 	lua_pushnil(L);
-	lua_setglobal(L, name);
+	lua_rawset(L, 1);
 
 	return 0;
 }
