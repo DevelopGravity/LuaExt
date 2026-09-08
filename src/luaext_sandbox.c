@@ -1562,6 +1562,15 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister)
 	}
 
 	L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+
+	/* The running state can be a coroutine with no ambient slack; refuse
+	 * like the registrars rather than trust it. */
+	if (!lua_checkstack(L, 4)) {
+		zend_throw_exception(luaext_ce_memory_limit_error,
+							 "Cannot unregister a name: the interpreter stack cannot grow", 0);
+		RETURN_THROWS();
+	}
+
 	lua_pushcfunction(L, luaext_sandbox_clear_global);
 	lua_pushlightuserdata(L, (void *)ZSTR_VAL(name));
 	status = lua_pcall(L, 1, 0, 0);

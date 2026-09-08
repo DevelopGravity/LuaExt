@@ -1477,6 +1477,15 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 		lua_State *L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
 		int status;
 
+		/* The running state can be a coroutine with no ambient slack; refuse
+		 * like the sibling registrars rather than trust it. */
+		if (!lua_checkstack(L, 4)) {
+			zend_throw_exception(luaext_ce_memory_limit_error,
+								 "Cannot register a class: the interpreter stack cannot grow", 0);
+			luaext_proxy_class_free(record);
+			return false;
+		}
+
 		lua_pushcfunction(L, luaext_proxy_plant_table);
 		lua_pushlightuserdata(L, record);
 		status = lua_pcall(L, 1, 0, 0);
