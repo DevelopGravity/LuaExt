@@ -198,7 +198,10 @@ static void luaext_function_invoke(zval *this_zv, zval *return_value, zval *args
  *
  * `failed` exists because the writer runs INSIDE the interpreter: throwing from
  * there would longjmp straight through lua_dump's own bookkeeping, so a problem
- * is recorded and reported once control is back on our side.
+ * is recorded and reported once control is back on our side. The one problem
+ * the writer can actually detect is the dump outgrowing Limits::$maxStringLength
+ * (`limit`, 0 = unbounded) -- the same ceiling every other way of materialising
+ * a string for the host already honours.
  *
  * The buffer is NOT charged against the memory limit, and that is the rule
  * rather than an oversight: the callback bridge bills and discharges because it
@@ -207,10 +210,11 @@ static void luaext_function_invoke(zval *this_zv, zval *return_value, zval *args
  * would spend a budget nothing ever gives back. This is why the hand-grown
  * allocation in luaext_output.c is not copied here; that exists to consult
  * luaext_alloc_charge() before taking memory, which this path deliberately
- * does not do.
+ * does not do. The string ceiling above is what bounds it instead.
  */
 typedef struct {
 	smart_str buf;
+	size_t limit;
 	bool failed;
 } luaext_function_dump_ctx;
 
@@ -222,6 +226,14 @@ static int luaext_function_dump_writer(lua_State *L, const void *chunk, size_t s
 
 	/* Non-zero stops lua_dump. Once given up, stay given up. */
 	if (ctx->failed) {
+		return 1;
+	}
+
+	/* Subtraction, not addition: the accumulated length never exceeds the
+	 * limit here, so the right side cannot underflow and the left cannot be
+	 * asked to overflow. */
+	if (ctx->limit != 0 && size > ctx->limit - smart_str_get_len(&ctx->buf)) {
+		ctx->failed = true;
 		return 1;
 	}
 
@@ -384,13 +396,23 @@ ZEND_METHOD(DevelopGravity_LuaExt_LuaFunction, dump)
 	}
 
 	/* The writer must not raise; it reports through ctx.failed instead. */
+	ctx.limit = sandbox->policy.limits.max_string_length;
 	LUAEXT_NO_RAISE_BEGIN(L);
 	status = lua_dump(L, luaext_function_dump_writer, &ctx, strip ? 1 : 0);
 	LUAEXT_NO_RAISE_END(L);
 
 	lua_pop(L, 1);
 
-	if (status != 0 || ctx.failed) {
+	if (ctx.failed) {
+		smart_str_free(&ctx.buf);
+		zend_throw_exception_ex(luaext_ce_runtime_error, 0,
+								"This function's bytecode dump exceeds Limits::$maxStringLength "
+								"(%zu bytes)",
+								sandbox->policy.limits.max_string_length);
+		RETURN_THROWS();
+	}
+
+	if (status != 0) {
 		smart_str_free(&ctx.buf);
 		zend_throw_exception_ex(luaext_ce_runtime_error, 0,
 								"The interpreter could not serialise this function to bytecode "
