@@ -848,6 +848,24 @@ static int luaext_iolib_file_gc(lua_State *L)
 	return 0;
 }
 
+/*
+ * __close, so `local f <close> = io.open(...)` works the way stock Lua 5.5
+ * promises. Upstream reuses f_gc for both slots; here the two differ, because
+ * only one of them may talk to the host: a <close> slot runs in the
+ * interpreter at scope exit, where a flush is exactly what :close() would do
+ * -- EXCEPT when the scope is ending because a host exception is already in
+ * flight, where the engine refuses backend calls and this takes the sweep's
+ * forfeit instead: release the memory, skip the flush.
+ */
+static int luaext_iolib_file_closevar(lua_State *L)
+{
+	if (EG(exception) != NULL) {
+		return luaext_iolib_file_gc(L);
+	}
+
+	return luaext_iolib_file_close(L);
+}
+
 static int luaext_iolib_file_tostring(lua_State *L)
 {
 	luaext_vfs_handle *handle = luaext_iolib_check_handle_any(L, 1);
@@ -1106,6 +1124,9 @@ static void luaext_iolib_install_file_mt(lua_State *L)
 
 	lua_pushcfunction(L, luaext_iolib_file_gc);
 	lua_setfield(L, -2, "__gc");
+
+	lua_pushcfunction(L, luaext_iolib_file_closevar);
+	lua_setfield(L, -2, "__close");
 
 	lua_pushcfunction(L, luaext_iolib_file_tostring);
 	lua_setfield(L, -2, "__tostring");
