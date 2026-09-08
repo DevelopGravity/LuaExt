@@ -751,8 +751,10 @@ final class PlaygroundToolkit
  * Register the user-defined host classes from the UI panel.
  *
  * Each snippet is eval()'d — deliberately unsandboxed host PHP (see the file
- * header) — and must return either an object (registered via registerObject,
- * #[LuaMethod]-marked methods become visible) or a non-empty map of named
+ * header) — and must return an object (registered via registerObject,
+ * #[LuaMethod]-marked methods become visible), a class-string (registered via
+ * registerClass, so instances cross into Lua as proxies with methods,
+ * constructors, statics and mapped operators), or a non-empty map of named
  * callables (registered via registerLibrary). Every failure is collected as a
  * per-entry error rather than aborting the run.
  *
@@ -788,7 +790,9 @@ function registerUserDefinedHostClasses(Sandbox $sandbox, array $entries): array
             $normalizedSource = preg_replace('/^\s*<\?php\s+/', '', $phpSource) ?? $phpSource;
             $evaluated = eval($normalizedSource);
 
-            if (is_object($evaluated)) {
+            if (is_string($evaluated) && $evaluated !== '' && class_exists($evaluated)) {
+                $sandbox->registerClass($evaluated, luaName: $luaName);
+            } elseif (is_object($evaluated)) {
                 $sandbox->registerObject($luaName, $evaluated);
             } elseif (
                 is_array($evaluated)
@@ -798,7 +802,8 @@ function registerUserDefinedHostClasses(Sandbox $sandbox, array $entries): array
                 $sandbox->registerLibrary($luaName, $evaluated);
             } else {
                 throw new PlaygroundRequestError(
-                    'the snippet must return an object or a non-empty array<string, callable>'
+                    'the snippet must return an object, a class-string, or a non-empty '
+                    . 'array<string, callable>'
                 );
             }
         } catch (\Throwable $registrationError) {
@@ -1487,6 +1492,25 @@ const PRESET_EXAMPLES = [
             return toolkit.value(), toolkit.recall("greeting")
             LUA,
     ],
+    'proxy-demo' => [
+        'label' => 'Object proxies (registerClass)',
+        'description' => 'Instances cross into Lua: .new, statics, chaining, tostring and operators.',
+        'requiredCapabilities' => [],
+        'seedFiles' => [],
+        'lua' => <<<'LUA'
+            -- `Duration` comes from the Host classes panel: a class-string entry
+            -- registered with registerClass(). Each value below is a live PHP
+            -- object crossing the boundary as an unforgeable proxy.
+            local nap = Duration.minutes(5)
+            local brew = Duration.new(90)
+            local total = nap + brew
+            print("Nap: " .. tostring(nap))
+            print("Brew: " .. tostring(brew))
+            print("Total: " .. tostring(total) .. " (" .. total:seconds() .. "s)")
+            print("Nap shorter than total? " .. tostring(nap < total))
+            return total:seconds(), nap < total
+            LUA,
+    ],
     'host-classes-demo' => [
         'label' => 'User-defined host classes',
         'description' => 'Uses the default greeter/mathx entries from the Host classes panel.',
@@ -1982,7 +2006,7 @@ Loopback-only development tool. The <strong>Host classes</strong> panel evaluate
 
 <section>
 <h2>Host classes <span class="muted">(unsandboxed PHP)</span></h2>
-<p class="muted">Each snippet is <code>eval()</code>'d per run and must <code>return</code> an object (registered via <code>registerObject</code>; <code>#[LuaMethod]</code>-marked methods become visible) or an <code>array&lt;string, callable&gt;</code> (registered via <code>registerLibrary</code>). Stored in your browser, sent with every run.</p>
+<p class="muted">Each snippet is <code>eval()</code>'d per run and must <code>return</code> an object (registered via <code>registerObject</code>; <code>#[LuaMethod]</code>-marked methods become visible), a class-string (registered via <code>registerClass</code>; instances cross into Lua as proxies with methods, statics, <code>.new</code> and mapped operators), or an <code>array&lt;string, callable&gt;</code> (registered via <code>registerLibrary</code>). Stored in your browser, sent with every run.</p>
 <div id="host-class-list"></div>
 <div class="actions"><button id="host-class-add">Add host class</button></div>
 </section>
@@ -2070,13 +2094,56 @@ const defaultHostClasses = [
             '];',
         ].join('\n'),
     },
+    {
+        luaName: 'Duration',
+        phpSource: [
+            'final class PlaygroundDuration',
+            '{',
+            '    #[\\DevelopGravity\\LuaExt\\LuaMethod]',
+            '    public function __construct(private int $seconds = 0) {}',
+            '',
+            '    #[\\DevelopGravity\\LuaExt\\LuaMethod]',
+            '    public static function minutes(int $count): self',
+            '    {',
+            '        return new self($count * 60);',
+            '    }',
+            '',
+            '    #[\\DevelopGravity\\LuaExt\\LuaMethod]',
+            '    public function seconds(): int',
+            '    {',
+            '        return $this->seconds;',
+            '    }',
+            '',
+            '    #[\\DevelopGravity\\LuaExt\\LuaMethod]',
+            '    public function __toString(): string',
+            '    {',
+            '        return sprintf(\'%dm%02ds\', intdiv($this->seconds, 60), $this->seconds % 60);',
+            '    }',
+            '',
+            '    #[\\DevelopGravity\\LuaExt\\LuaOperator(\\DevelopGravity\\LuaExt\\Operator::Add)]',
+            '    public function plus(self $other): self',
+            '    {',
+            '        return new self($this->seconds + $other->seconds);',
+            '    }',
+            '',
+            '    #[\\DevelopGravity\\LuaExt\\LuaOperator(\\DevelopGravity\\LuaExt\\Operator::LessThan)]',
+            '    public function shorterThan(self $other): bool',
+            '    {',
+            '        return $this->seconds < $other->seconds;',
+            '    }',
+            '}',
+            '',
+            'return PlaygroundDuration::class;',
+        ].join('\n'),
+    },
 ];
 
 const statFieldOrder = [
     'memoryBytes', 'peakMemoryBytes', 'memoryLimitBytes', 'cpuSeconds', 'wallClockSeconds',
     'outputBytes', 'outputTruncated', 'liveCoroutines', 'peakCoroutineDepth', 'modulesLoaded',
     'cachedChunks', 'vfsOperations', 'vfsBytes', 'vfsWallClockSeconds', 'vfsCpuSeconds',
-    'gcCollections', 'luaCallsIn', 'phpCallsOut', 'phpWallClockSeconds', 'phpCpuSeconds',
+    'gcCollections', 'liveObjectProxies', 'luaCallsIn', 'phpCallsOut', 'phpWallClockSeconds',
+    'phpCpuSeconds',
 ];
 
 let hostClasses = [];
