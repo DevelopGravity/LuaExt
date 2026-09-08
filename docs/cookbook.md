@@ -96,7 +96,58 @@ Note the indexing when it does. Array keys are carried across unchanged rather t
 
 `RuntimeError` is the one exception type a callback should throw for a condition the script is meant to handle — a malformed query, a permission problem, anything a Lua-side `pcall` should be able to catch. Throwing anything else (or letting an unexpected exception escape) is fatal to the call, and the original PHP exception is preserved end-to-end and rethrown to the host with a Lua traceback attached, per the extension's callback contract.
 
-Object identity never crosses the boundary either direction — Lua gets bound closures, never a reference to `$instance` it could otherwise introspect, and passing a PHP object as an argument into Lua is always a `ConversionError`. This is deliberate: `registerObject`/`registerLibrary` is the *only* bridge, and it's a one-way, method-at-a-time one.
+Through this bridge, object identity never crosses the boundary — Lua gets bound closures, never a reference to `$instance` it could otherwise introspect. Instances of a class you have NOT registered stay a `ConversionError` at every crossing. When instances genuinely should cross, that is a separate, equally explicit grant: `registerClass()` below.
+
+## Wrapping instances with `registerClass()`
+
+Where `registerObject()` publishes one instance's methods, `registerClass()` lets *instances themselves* cross as unforgeable userdata proxies — scripts hold many independent objects, call `#[LuaMethod]`-marked methods with the colon syntax, construct through marked statics or an exposed constructor, chain through auto-wrapped returns, and use operators mapped with `#[LuaOperator]` or the `operators:` parameter. Trust stays per-sandbox and exposure stays explicit, exactly as with `registerObject()`.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use DevelopGravity\LuaExt\LuaMethod;
+use DevelopGravity\LuaExt\LuaOperator;
+use DevelopGravity\LuaExt\Operator;
+use DevelopGravity\LuaExt\Sandbox;
+
+final class Duration
+{
+    #[LuaMethod]
+    public function __construct(private int $seconds = 0) {}
+
+    #[LuaMethod]
+    public static function minutes(int $count): self
+    {
+        return new self($count * 60);
+    }
+
+    #[LuaMethod]
+    public function seconds(): int
+    {
+        return $this->seconds;
+    }
+
+    #[LuaOperator(Operator::Add)]
+    public function plus(self $other): self
+    {
+        return new self($this->seconds + $other->seconds);
+    }
+}
+
+$sandbox = new Sandbox();
+$sandbox->registerClass(Duration::class);
+
+[$totalSeconds] = $sandbox->eval(<<<'LUA'
+    local total = Duration.minutes(5) + Duration.new(90)
+    return total:seconds()
+LUA);
+```
+
+A proxy passed back to PHP unwraps to the **original instance** (`===` holds), destructors run at the call boundary rather than inside Lua's collector, and `stats()->liveObjectProxies` counts what the interpreter still holds. For self-contained wrappers — a `#[LuaClass]` attribute carrying the maps plus `SandboxConfig::$classes` granting them at construction — and the three authoring caveats (nearest-ancestor matching, operator parameter types, host-side memory), see the [README's "Wrapping host objects"](../README.md#wrapping-host-objects).
+
+Every registration — `registerLibrary()`, `registerObject()`, `registerClass()` — claims its Lua name exactly once for the sandbox's lifetime; a later registration wanting a claimed name is a `ConfigurationError`, and `unregister()` is the way back (a retired class stops wrapping new instances, while proxies a script already holds keep working).
 
 ## Implementing a `FileSystem` backend
 
