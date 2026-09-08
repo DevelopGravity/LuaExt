@@ -731,7 +731,13 @@ static int luaext_proxy_eq(lua_State *L)
 	return luaext_proxy_call_binary(L, left, left->cls->op_methods[LUAEXT_PROXY_OP_EQ], "==");
 }
 
-/* The __tostring metamethod, present only when __toString() was marked. */
+/*
+ * The __tostring metamethod, present only when __toString() was marked.
+ * Upvalues: (1) the class record, (2) the class's Lua name — the refusal
+ * message reads the STRING, never the record: a forged value can reach this
+ * closure after its record was reclaimed, and only a live proxy of this very
+ * class proves the record is still there to dereference.
+ */
 static int luaext_proxy_tostring(lua_State *L)
 {
 	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
@@ -741,7 +747,7 @@ static int luaext_proxy_tostring(lua_State *L)
 	if (self == NULL || self->cls != cls) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
 						   "tostring() received a value that is not a %s proxy",
-						   ZSTR_VAL(cls->lua_name));
+						   lua_tostring(L, lua_upvalueindex(2)));
 	}
 
 	/* Lua calls __tostring with just the value; drop anything above it so the
@@ -878,7 +884,8 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 
 	if (cls->to_string != NULL) {
 		lua_pushlightuserdata(L, cls);
-		lua_pushcclosure(L, luaext_proxy_tostring, 1);
+		lua_pushlstring(L, ZSTR_VAL(cls->lua_name), ZSTR_LEN(cls->lua_name));
+		lua_pushcclosure(L, luaext_proxy_tostring, 2);
 		lua_setfield(L, -2, "__tostring");
 	}
 
