@@ -153,6 +153,22 @@ double luaext_timers_cpu_resolution_seconds(void)
  * Per-sandbox lifecycle
  * ---------------------------------------------------------------------- */
 
+/*
+ * The fallback decision, shared by attach and the two limit setters: the
+ * count hook is armed only when the watchdog thread could not be started,
+ * where its strided clock self-check becomes the only thing that can notice
+ * an overrun. Re-decided at every arming point because the thread starts
+ * lazily -- a sandbox whose first limit arrives through setLimits() would
+ * otherwise be left with neither enforcer. Re-installing the same hook is a
+ * no-op, so calling this again costs nothing on the healthy path.
+ */
+static void luaext_timers_install_fallback_hook(luaext_sandbox *sandbox)
+{
+	if (luaext_timers_hook_armed() && luaext_watchdog_thread_failed()) {
+		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
+	}
+}
+
 bool luaext_timers_attach(luaext_sandbox *sandbox)
 {
 	atomic_store_explicit(&sandbox->irq.reason, (unsigned char)LUAEXT_IRQ_NONE,
@@ -191,9 +207,7 @@ bool luaext_timers_attach(luaext_sandbox *sandbox)
 		luaext_watchdog_prime();
 	}
 
-	if (luaext_timers_hook_armed() && luaext_watchdog_thread_failed()) {
-		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
-	}
+	luaext_timers_install_fallback_hook(sandbox);
 
 	/*
 	 * The limits the host configured take effect from construction, not from
@@ -277,6 +291,16 @@ static bool luaext_timers_refuse(const char *field, const char *why)
 bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns)
 {
 	if (ns != 0) {
+		/*
+		 * The thread starts lazily, so prime it NOW and re-decide the
+		 * fallback: can_enforce() below must judge a process that has
+		 * actually tried, and a failure must leave this sandbox with the
+		 * hook rather than with nothing. Construction did the same; a limit
+		 * first armed through setLimits() reaches only this path.
+		 */
+		luaext_watchdog_prime();
+		luaext_timers_install_fallback_hook(sandbox);
+
 		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
 				"cpuSeconds", "the watchdog thread could not be started and luaext.hook_count is "
@@ -323,6 +347,10 @@ bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns)
 bool luaext_timers_set_wall_limit(luaext_sandbox *sandbox, uint64_t ns)
 {
 	if (ns != 0) {
+		/* Prime and re-decide the fallback first; see the CPU setter. */
+		luaext_watchdog_prime();
+		luaext_timers_install_fallback_hook(sandbox);
+
 		if (!luaext_timers_can_enforce()) {
 			return luaext_timers_refuse(
 				"wallClockSeconds",
