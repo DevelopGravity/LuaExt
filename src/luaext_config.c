@@ -265,9 +265,10 @@ static uint32_t luaext_config_open_libs(uint32_t caps)
 	 * satisfy it would open upstream's whole debug library to *every* untrusted
 	 * sandbox: debug.sethook, which lets a script displace the hook the CPU
 	 * limit is delivered through, and debug.setupvalue, which reaches straight
-	 * out of the sandbox. The debug table a script sees is assembled from the
-	 * individual debug* capabilities by the library policy; until that exists,
-	 * a sandbox gets no debug table at all, which is the safe direction.
+	 * out of the sandbox. The debug table a script sees is assembled member by
+	 * member from the individual debug* capabilities by luaext_debuglib.c,
+	 * installed unconditionally — this scratch-select bitset path is simply
+	 * not how debug is built, so its bit stays clear for good.
 	 */
 
 	return libs;
