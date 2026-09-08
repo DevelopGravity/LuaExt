@@ -940,7 +940,15 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_State *L,
 												luaext_proxy_class *cls)
 {
-	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_newuserdatauv(L, sizeof(*slot), 0);
+	luaext_proxy_ud *slot;
+
+	/* Reserved here, with the code that consumes it: a first push builds the
+	 * metatable, whose __index table and per-method upvalues need more room
+	 * than the conversion layer's per-level reservation was sized for. Both
+	 * call sites run under a protected frame, so raising is the refusal. */
+	luaL_checkstack(L, 8, "luaext: no stack to push a proxy");
+
+	slot = (luaext_proxy_ud *)lua_newuserdatauv(L, sizeof(*slot), 0);
 
 	memset(slot, 0, sizeof(*slot));
 
