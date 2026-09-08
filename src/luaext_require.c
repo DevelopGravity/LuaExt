@@ -595,7 +595,8 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		 * cleanup -- held across it, the ModuleSource leaked with its whole
 		 * source. So the strings leave the PHP side first: refcounted copies
 		 * (which cannot fail), the object released, the bracket closed, and
-		 * each copy adopted by a collector-owned box before anything pushes.
+		 * both copies adopted by ONE call -- adopting one at a time would
+		 * leave the second owned across the first one's refusal.
 		 */
 		source_copy = zend_string_copy(Z_STR_P(code));
 		name_copy = zend_string_copy(Z_STR_P(chunk_name));
@@ -603,8 +604,7 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		zval_ptr_dtor(&result);
 		LUAEXT_NO_RAISE_END(L);
 
-		luaext_vfs_anchor_adopt(L, sandbox, source_copy);
-		luaext_vfs_anchor_adopt(L, sandbox, name_copy);
+		luaext_vfs_anchor_adopt_pair(L, sandbox, source_copy, name_copy);
 
 		lua_pushlstring(L, ZSTR_VAL(source_copy), ZSTR_LEN(source_copy));
 		lua_pushlstring(L, ZSTR_VAL(name_copy), ZSTR_LEN(name_copy));

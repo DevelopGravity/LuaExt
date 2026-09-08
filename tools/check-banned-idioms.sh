@@ -82,6 +82,37 @@ for rule in "${RULES[@]}"; do
 	EOF
 done
 
+# Two adoptions in one frame. luaext_vfs_anchor_adopt() releases the string it
+# was HANDED on every refusal, but a frame owning TWO strings that adopts them
+# one call at a time still owns the second while the first can raise -- the
+# pair leak luaext_vfs_anchor_adopt_pair() exists to close. Two adoption calls
+# within a few lines of each other are that mistake's shape. The implementing
+# file is exempt: it defines the entry points side by side.
+adopt_scan_files=()
+for source_file in src/*.c; do
+	[ "$source_file" = "src/luaext_vfs.c" ] && continue
+	adopt_scan_files+=("$source_file")
+done
+
+adjacent_adopts=$(awk '
+	/luaext_vfs_anchor_adopt(_pair)?[[:space:]]*\(/ {
+		if (FILENAME == previous_file && FNR - previous_line <= 6) {
+			printf "  %s:%d: a second adoption %d line(s) after the one at line %d\n", \
+				FILENAME, FNR, FNR - previous_line, previous_line
+		}
+		previous_file = FILENAME
+		previous_line = FNR
+	}
+' "${adopt_scan_files[@]}")
+
+if [ -n "$adjacent_adopts" ]; then
+	printf '%s: adjacent adoptions found.\n\n%s\n' "${PROGRAM_NAME}" "$adjacent_adopts" >&2
+	printf '      adjacent adoptions: a frame that owns two strings hands BOTH to one\n' >&2
+	printf '      luaext_vfs_anchor_adopt_pair() call; adopting one at a time leaves the\n' >&2
+	printf '      second owned across the first one'"'"'s raise.\n' >&2
+	status=1
+fi
+
 # One rule outside src/: the default `build` target in Makefile.dev must not
 # reconfigure a tree that is already configured. Bare `make` reaches it through
 # GNUmakefile from every context, including CI jobs that just configured with

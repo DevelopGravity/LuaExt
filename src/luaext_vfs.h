@@ -252,8 +252,17 @@ zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, con
  *
  * The box stays on the stack like anchor_string's; a caller whose stack shape
  * matters removes it once the value it guards is safely in Lua's hands.
+ *
+ * ADOPT CANNOT STRAND. Every refusal inside — a closing sandbox, a stack that
+ * will not grow, the box allocation refused at Limits::$memoryBytes — releases
+ * the caller's reference before raising, so handing a string over is safe even
+ * though adopting can fail. A frame that owns TWO strings must hand both to
+ * one adopt_pair call: adopting them one at a time leaves the second owned
+ * across the first one's raise, which is the very leak this API closes.
  */
 void luaext_vfs_anchor_adopt(lua_State *L, luaext_sandbox *sandbox, zend_string *string);
+void luaext_vfs_anchor_adopt_pair(lua_State *L, luaext_sandbox *sandbox, zend_string *first,
+								  zend_string *second);
 
 /*
  * Charge `bytes` of new buffering against VfsQuota::$maxTotalBytes.

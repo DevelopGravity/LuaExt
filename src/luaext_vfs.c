@@ -494,18 +494,100 @@ zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, con
 	return box->held;
 }
 
-void luaext_vfs_anchor_adopt(lua_State *L, luaext_sandbox *sandbox, zend_string *string)
+/* The allocating half of adopt, run under lua_pcall: lua_newuserdatauv
+ * refuses at Limits::$memoryBytes with a raise the C API cannot forbid, and
+ * adopt's caller still owns the string it is handing over. Argument 1: the
+ * sandbox, argument 2: how many boxes to push. */
+static int luaext_vfs_adopt_alloc(lua_State *L)
 {
-	luaext_vfs_string_ud *box = luaext_vfs_push_box(L, sandbox);
+	luaext_sandbox *sandbox = (luaext_sandbox *)lua_touserdata(L, 1);
+	int count = (int)lua_tointeger(L, 2);
+	int index;
 
-	if (box == NULL) {
-		/* push_box raises rather than returns on the closing path, so this is
-		 * defensive: whatever the caller handed over must not strand. */
-		zend_string_release(string);
+	lua_settop(L, 0);
+
+	for (index = 0; index < count; index++) {
+		(void)luaext_vfs_push_box(L, sandbox);
+	}
+
+	return count;
+}
+
+/*
+ * The shared body of the two adopt entry points. THE CONTRACT IS THAT NOTHING
+ * STRANDS: every path that raises releases the caller's string(s) first, which
+ * is the whole reason adopting exists — push_box raising after ownership
+ * transferred was the same frame-holds-allocation-across-a-raise leak this
+ * API closes for its callers. The non-raising checks run bare with a release
+ * before each refusal; the userdata allocation, which can only raise, runs
+ * under lua_pcall so the refusal comes back as a status instead.
+ */
+static void luaext_vfs_anchor_adopt_boxes(lua_State *L, luaext_sandbox *sandbox,
+										  zend_string **strings, int count)
+{
+	int index;
+	int status;
+
+	if (sandbox == NULL || sandbox->closed) {
+		for (index = 0; index < count; index++) {
+			zend_string_release(strings[index]);
+		}
+
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+						   "This sandbox is closing: its filesystem is no longer reachable");
 		return;
 	}
 
-	box->held = string;
+	/* Two slots for the pcall's function and arguments, plus one per box the
+	 * helper leaves behind. Checked non-raising, released before refusing. */
+	if (!lua_checkstack(L, 2 + count)) {
+		for (index = 0; index < count; index++) {
+			zend_string_release(strings[index]);
+		}
+
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+						   "luaext: no stack to hold a string for the filesystem");
+		return;
+	}
+
+	lua_pushcfunction(L, luaext_vfs_adopt_alloc);
+	lua_pushlightuserdata(L, sandbox);
+	lua_pushinteger(L, count);
+	status = lua_pcall(L, 2, count, 0);
+
+	if (status != LUA_OK) {
+		/* The refusal is already on the stack; the strings leave first, and
+		 * only then does it continue unwinding. */
+		for (index = 0; index < count; index++) {
+			zend_string_release(strings[index]);
+		}
+
+		lua_error(L);
+		return;
+	}
+
+	/* Plain assignments from here: ownership moves with nothing left that
+	 * can raise between the first transfer and the last. */
+	for (index = 0; index < count; index++) {
+		luaext_vfs_string_ud *box = (luaext_vfs_string_ud *)lua_touserdata(L, -count + index);
+
+		box->held = strings[index];
+	}
+}
+
+void luaext_vfs_anchor_adopt(lua_State *L, luaext_sandbox *sandbox, zend_string *string)
+{
+	luaext_vfs_anchor_adopt_boxes(L, sandbox, &string, 1);
+}
+
+void luaext_vfs_anchor_adopt_pair(lua_State *L, luaext_sandbox *sandbox, zend_string *first,
+								  zend_string *second)
+{
+	zend_string *strings[2];
+
+	strings[0] = first;
+	strings[1] = second;
+	luaext_vfs_anchor_adopt_boxes(L, sandbox, strings, 2);
 }
 
 /*
