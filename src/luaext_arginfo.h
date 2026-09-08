@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: fd9fc1ec577598f6b0ed1c2864e82ce1e8e52707 */
+ * Stub hash: 61ba6b932a2ec083da6d81bba6ffe156a350f7ba */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -593,7 +593,7 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaMethod(void)
 	zend_class_entry ce, *class_entry;
 
 	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "LuaMethod", class_DevelopGravity_LuaExt_LuaMethod_methods);
-	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL|ZEND_ACC_NO_DYNAMIC_PROPERTIES);
 
 	zval property_name_default_value;
 	ZVAL_UNDEF(&property_name_default_value);
@@ -612,7 +612,7 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaOperator(void)
 	zend_class_entry ce, *class_entry;
 
 	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "LuaOperator", class_DevelopGravity_LuaExt_LuaOperator_methods);
-	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL|ZEND_ACC_NO_DYNAMIC_PROPERTIES);
 
 	zval property_operator_default_value;
 	ZVAL_UNDEF(&property_operator_default_value);
@@ -634,7 +634,7 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_LuaClass(void)
 	zend_class_entry ce, *class_entry;
 
 	INIT_NS_CLASS_ENTRY(ce, "DevelopGravity\\LuaExt", "LuaClass", class_DevelopGravity_LuaExt_LuaClass_methods);
-	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL);
+	class_entry = zend_register_internal_class_with_flags(&ce, NULL, ZEND_ACC_FINAL|ZEND_ACC_NO_DYNAMIC_PROPERTIES);
 
 	zval property_luaName_default_value;
 	ZVAL_UNDEF(&property_luaName_default_value);

@@ -147,6 +147,8 @@ enum Operator
  * php-src's own stubs -- but it evaluates integer literals fine. The literal
  * is what lets the marker ship in the published stub package, where static
  * analysers demand it on any class used as an attribute.
+ *
+ * @strict-properties
  */
 #[\Attribute(4)]
 final class LuaMethod
@@ -165,6 +167,8 @@ final class LuaMethod
  * name, which still takes #[LuaMethod] or the allowlist, independently.
  *
  * The literal 4 is Attribute::TARGET_METHOD; see LuaMethod.
+ *
+ * @strict-properties
  */
 #[\Attribute(4)]
 final class LuaOperator
@@ -188,6 +192,8 @@ final class LuaOperator
  * vendor class is wrapped once, declaratively, in a host-authored subclass.
  *
  * The literal 1 is Attribute::TARGET_CLASS; see LuaMethod.
+ *
+ * @strict-properties
  */
 #[\Attribute(1)]
 final class LuaClass
