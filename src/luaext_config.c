@@ -1118,15 +1118,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, with)
 		RETURN_THROWS();
 	}
 
+	ZVAL_UNDEF(&holder);
 	allow_list = zend_read_property(luaext_ce_capabilities, Z_OBJ_P(return_value),
 									ZEND_STRL("osEnvAllowList"), true, &holder);
 
 	if (allow_list != NULL && Z_TYPE_P(allow_list) == IS_ARRAY &&
 		!luaext_config_env_allow_list_ok(Z_ARRVAL_P(allow_list))) {
+		zval_ptr_dtor(&holder);
 		zval_ptr_dtor(return_value);
 		RETVAL_NULL();
 		RETURN_THROWS();
 	}
+
+	zval_ptr_dtor(&holder);
 }
 
 /* -------------------------------------------------------------------------
@@ -1533,10 +1537,15 @@ ZEND_METHOD(DevelopGravity_LuaExt_SandboxConfig, with)
 	 */
 	{
 		zval holder;
-		zval *classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(return_value),
-										   ZEND_STRL("classes"), true, &holder);
-		bool ok = classes == NULL || Z_TYPE_P(classes) != IS_ARRAY ||
-				  luaext_config_classes_shape_ok(Z_ARRVAL_P(classes));
+		zval *classes;
+		bool ok;
+
+		ZVAL_UNDEF(&holder);
+		classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(return_value),
+									 ZEND_STRL("classes"), true, &holder);
+		ok = classes == NULL || Z_TYPE_P(classes) != IS_ARRAY ||
+			 luaext_config_classes_shape_ok(Z_ARRVAL_P(classes));
+		zval_ptr_dtor(&holder);
 
 		if (!ok || !luaext_config_resolve(return_value, &policy)) {
 			zval_ptr_dtor(return_value);

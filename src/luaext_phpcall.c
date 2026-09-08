@@ -1315,11 +1315,13 @@ bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *met
 		return false;
 	}
 
+	ZVAL_UNDEF(&holder);
 	configured = zend_read_property(luaext_ce_lua_method_attribute, Z_OBJ(marker),
 									ZEND_STRL("name"), true, &holder);
 
 	if (configured != NULL && Z_TYPE_P(configured) == IS_STRING) {
 		if (Z_STRLEN_P(configured) == 0) {
+			zval_ptr_dtor(&holder);
 			zval_ptr_dtor(&marker);
 			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
 									"%s::%s() carries a #[LuaMethod] with an empty name",
@@ -1334,6 +1336,7 @@ bool luaext_phpcall_attribute_name(zend_attribute *attribute, zend_function *met
 		*out = zend_string_copy(method->common.function_name);
 	}
 
+	zval_ptr_dtor(&holder);
 	zval_ptr_dtor(&marker);
 
 	return true;

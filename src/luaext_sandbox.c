@@ -562,8 +562,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 */
 	if (config != NULL) {
 		zval holder;
-		zval *classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(config),
-										   ZEND_STRL("classes"), true, &holder);
+		zval *classes;
+
+		ZVAL_UNDEF(&holder);
+		classes = zend_read_property(luaext_ce_sandbox_config, Z_OBJ_P(config),
+									 ZEND_STRL("classes"), true, &holder);
 
 		if (classes != NULL && Z_TYPE_P(classes) == IS_ARRAY) {
 			zval *class_name;
@@ -579,15 +582,19 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 					zend_throw_exception(
 						luaext_ce_configuration_error,
 						"SandboxConfig::$classes must hold non-empty class-name strings", 0);
+					zval_ptr_dtor(&holder);
 					RETURN_THROWS();
 				}
 
 				if (!luaext_proxy_register(sandbox, Z_STR_P(class_name), NULL, NULL, NULL)) {
+					zval_ptr_dtor(&holder);
 					RETURN_THROWS();
 				}
 			}
 			ZEND_HASH_FOREACH_END();
 		}
+
+		zval_ptr_dtor(&holder);
 	}
 
 	luaext_sandbox_link(sandbox);
@@ -1029,6 +1036,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
 	GC_ADDREF(error);
 	zend_clear_exception();
 
+	ZVAL_UNDEF(&message_rv);
 	message =
 		zend_read_property_ex(error->ce, error, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, &message_rv);
 	luaext_error_lua_position(error, &reported_name, &line);
@@ -1038,6 +1046,9 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, validate)
 		(message != NULL && Z_TYPE_P(message) == IS_STRING) ? Z_STR_P(message) : NULL, line,
 		reported_name);
 
+	/* After the create: a hooked $message materialised into the scratch, and
+	 * the create's copy is the last read of it. */
+	zval_ptr_dtor(&message_rv);
 	OBJ_RELEASE(error);
 }
 

@@ -1374,6 +1374,7 @@ static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_clas
 			break;
 		}
 
+		ZVAL_UNDEF(&holder);
 		configured = zend_read_property(luaext_ce_lua_operator_attribute, Z_OBJ(marker_object),
 										ZEND_STRL("operator"), true, &holder);
 
@@ -1381,6 +1382,7 @@ static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_clas
 			slot = luaext_proxy_op_slot(Z_OBJ_P(configured));
 		}
 
+		zval_ptr_dtor(&holder);
 		zval_ptr_dtor(&marker_object);
 
 		mapped = luaext_proxy_map_operator(record, ce, method->common.function_name, slot);
@@ -1595,6 +1597,7 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 {
 	zend_class_entry *ce;
 	zval carrier;
+	zval holder;
 	bool registered;
 
 	ce = zend_lookup_class(class_name);
@@ -1641,6 +1644,14 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 	 */
 	ZVAL_UNDEF(&carrier);
 
+	/* One scratch for all three attribute reads, released with the carrier
+	 * below -- after register_with, because the values read out of it are
+	 * borrowed until then. The attribute class is final with plain
+	 * properties, so nothing ever materialises into it; the discipline is
+	 * kept anyway so no future property shape can turn these reads into a
+	 * leak. */
+	ZVAL_UNDEF(&holder);
+
 	{
 		zend_string *marker = zend_string_tolower(luaext_ce_lua_class_attribute->name);
 		zend_attribute *attribute = zend_get_attribute(ce->attributes, marker);
@@ -1649,7 +1660,6 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 
 		if (attribute != NULL) {
 			zend_string *filename = ce->type == ZEND_USER_CLASS ? ce->info.user.filename : NULL;
-			zval holder;
 			zval *field;
 
 			if (zend_get_attribute_object(&carrier, luaext_ce_lua_class_attribute, attribute, ce,
@@ -1687,6 +1697,8 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 	}
 
 	registered = luaext_proxy_register_with(sandbox, ce, allowlist, lua_name, operators);
+
+	zval_ptr_dtor(&holder);
 
 	if (!Z_ISUNDEF(carrier)) {
 		zval_ptr_dtor(&carrier);

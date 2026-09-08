@@ -399,21 +399,31 @@ ZEND_COLD ZEND_NORETURN void luaext_error_raise(lua_State *L, luaext_err_kind ki
  * Read a throwable's message without caring which of the two engine roots
  * declares it. `message` is protected, so the scope has to be a class that can
  * see it, and Error and Exception declare their own.
+ *
+ * Returns an OWNED copy the caller releases, or NULL. Owned because a
+ * subclass can redeclare $message with a hook, and a hooked read materialises
+ * into the scratch zval -- a borrowed pointer would alias storage this frame
+ * is about to release, and never releasing the scratch leaked the hooked
+ * message on every raise.
  */
 static zend_string *luaext_error_exception_message(zend_object *exception)
 {
 	zend_class_entry *scope =
 		instanceof_function(exception->ce, zend_ce_error) ? zend_ce_error : zend_ce_exception;
 	zval holder;
-	zval *message =
-		zend_read_property_ex(scope, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, &holder);
+	zval *message;
+	zend_string *copy = NULL;
 
-	if (message == NULL || Z_TYPE_P(message) != IS_STRING) {
-		return NULL;
+	ZVAL_UNDEF(&holder);
+	message = zend_read_property_ex(scope, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, &holder);
+
+	if (message != NULL && Z_TYPE_P(message) == IS_STRING) {
+		copy = zend_string_copy(Z_STR_P(message));
 	}
 
-	/* Borrowed: the exception owns it and outlives this call. */
-	return Z_STR_P(message);
+	zval_ptr_dtor(&holder);
+
+	return copy;
 }
 
 ZEND_COLD ZEND_NORETURN void luaext_error_raise_from_exception(lua_State *L)
@@ -467,6 +477,12 @@ ZEND_COLD ZEND_NORETURN void luaext_error_raise_from_exception(lua_State *L)
 	error = luaext_error_push(L, fatal ? LUAEXT_ERR_ABORT : LUAEXT_ERR_RUNTIME, fatal,
 							  message != NULL ? ZSTR_VAL(message) : "",
 							  message != NULL ? ZSTR_LEN(message) : 0);
+
+	/* push copied the bytes (or raised, leaking one small string on the
+	 * error path's own OOM); either way this frame's copy is done. */
+	if (message != NULL) {
+		zend_string_release(message);
+	}
 
 	if (error != NULL) {
 		/*
@@ -1087,16 +1103,26 @@ void luaext_error_attach_compile_context(const char *chunk_name)
 		return;
 	}
 
-	message =
-		zend_read_property_ex(exception->ce, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE), true, NULL);
+	/* A real scratch, not NULL: the class here is whatever the host threw,
+	 * and a hooked $message materialises through the last argument. */
+	{
+		zval message_holder;
 
-	array_init_size(&frame, 6);
-	add_assoc_string(&frame, "source", display_name);
-	add_assoc_string(&frame, "what", "main");
-	add_assoc_long(&frame, "currentLine",
-				   (message != NULL && Z_TYPE_P(message) == IS_STRING)
-					   ? luaext_error_line_from_message(Z_STRVAL_P(message), display_name)
-					   : 0);
+		ZVAL_UNDEF(&message_holder);
+		message = zend_read_property_ex(exception->ce, exception, ZSTR_KNOWN(ZEND_STR_MESSAGE),
+										true, &message_holder);
+
+		array_init_size(&frame, 6);
+		add_assoc_string(&frame, "source", display_name);
+		add_assoc_string(&frame, "what", "main");
+		add_assoc_long(&frame, "currentLine",
+					   (message != NULL && Z_TYPE_P(message) == IS_STRING)
+						   ? luaext_error_line_from_message(Z_STRVAL_P(message), display_name)
+						   : 0);
+
+		zval_ptr_dtor(&message_holder);
+	}
+
 	add_assoc_null(&frame, "name");
 	add_assoc_string(&frame, "nameWhat", "");
 	add_assoc_long(&frame, "lineDefined", 0);
