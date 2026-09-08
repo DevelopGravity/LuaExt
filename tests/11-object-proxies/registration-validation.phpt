@@ -48,6 +48,16 @@ final class TrickyMarked
 	#[LuaMethod]
 	public function __get(string $name): int { return 0; }
 }
+final class NulName
+{
+	#[LuaMethod("evil\0hidden")]
+	public function x(): int { return 0; }
+}
+final class NulCtor
+{
+	#[LuaMethod("bad\0name")]
+	public function __construct() {}
+}
 
 $sandbox = new Sandbox();
 
@@ -78,6 +88,12 @@ $attempts = [
 	},
 	'magic-attributed' => static function () use ($sandbox): void {
 		$sandbox->registerClass(TrickyMarked::class);
+	},
+	'nul-method-name' => static function () use ($sandbox): void {
+		$sandbox->registerClass(NulName::class);
+	},
+	'nul-ctor-name' => static function () use ($sandbox): void {
+		$sandbox->registerClass(NulCtor::class);
 	},
 ];
 
@@ -138,6 +154,8 @@ table-clash: Two exposures of TableClash both want the Lua name "new"
 private-ctor: Sealed::__construct() cannot be exposed to Lua: it is not public
 magic-allowlisted: Tricky::__call() cannot be exposed to Lua: it is a magic method, and magic methods are never exposed
 magic-attributed: TrickyMarked::__get() carries #[LuaMethod] but cannot be exposed to Lua: it is a magic method, and magic methods are never exposed
+nul-method-name: A Lua method name on NulName must be a non-empty string without NUL bytes
+nul-ctor-name: A Lua method name on NulCtor must be a non-empty string without NUL bytes
 registered
 duplicate: Exposed is already registered on this sandbox
 name-clash: The Lua name "Exposed" is already taken by an earlier registration on this sandbox

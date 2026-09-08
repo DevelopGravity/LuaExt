@@ -111,6 +111,24 @@ static const char *luaext_proxy_method_refusal(const zend_function *method)
 }
 
 /*
+ * The one shape rule for every name published on a class table or metatable:
+ * the interpreter half writes C strings, so a name that smuggles a NUL would
+ * be published truncated while every uniqueness check saw the full bytes.
+ */
+static bool luaext_proxy_name_publishable(const zend_class_entry *ce, const zend_string *lua_name)
+{
+	if (ZSTR_LEN(lua_name) == 0 || memchr(ZSTR_VAL(lua_name), '\0', ZSTR_LEN(lua_name)) != NULL) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"A Lua method name on %s must be a non-empty string without NUL bytes",
+			ZSTR_VAL(ce->name));
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * Add one selected method under its Lua name, refusing a duplicate key. The
  * instance and static tables are separate namespaces (metatable __index vs
  * the class table), so only same-table duplicates are collisions.
@@ -118,7 +136,13 @@ static const char *luaext_proxy_method_refusal(const zend_function *method)
 static bool luaext_proxy_table_add(HashTable *table, const zend_class_entry *ce,
 								   zend_string *lua_name, zend_function *method)
 {
-	zend_string *key = luaext_proxy_pstr(lua_name);
+	zend_string *key;
+
+	if (!luaext_proxy_name_publishable(ce, lua_name)) {
+		return false;
+	}
+
+	key = luaext_proxy_pstr(lua_name);
 
 	if (zend_hash_add_ptr(table, key, method) == NULL) {
 		zend_string_release(key);
@@ -146,6 +170,10 @@ static bool luaext_proxy_table_add(HashTable *table, const zend_class_entry *ce,
 static bool luaext_proxy_set_constructor(luaext_proxy_class *record, const zend_class_entry *ce,
 										 zend_function *constructor, zend_string *name)
 {
+	if (!luaext_proxy_name_publishable(ce, name)) {
+		return false;
+	}
+
 	record->constructor = constructor;
 	record->constructor_lua_name = luaext_proxy_pstr(name);
 
