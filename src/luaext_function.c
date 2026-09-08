@@ -31,9 +31,10 @@ static zend_object *luaext_function_create_object(zend_class_entry *ce)
 {
 	luaext_function_obj *function = zend_object_alloc(sizeof(luaext_function_obj), ce);
 
+	/* zend_object_std_init() reads ce->default_object_handlers, installed by
+	 * startup below — nothing per-instance to stamp. */
 	zend_object_std_init(&function->std, ce);
 	object_properties_init(&function->std, ce);
-	function->std.handlers = &luaext_function_handlers;
 
 	ZVAL_UNDEF(&function->sandbox_zv);
 
@@ -103,6 +104,7 @@ void luaext_function_startup(void)
 	luaext_function_handlers.clone_obj = NULL;
 
 	luaext_ce_lua_function->create_object = luaext_function_create_object;
+	luaext_ce_lua_function->default_object_handlers = &luaext_function_handlers;
 }
 
 /* -------------------------------------------------------------------------

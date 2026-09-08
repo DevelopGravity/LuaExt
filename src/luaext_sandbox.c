@@ -326,9 +326,10 @@ static zend_object *luaext_sandbox_create_object(zend_class_entry *ce)
 {
 	luaext_sandbox *sandbox = zend_object_alloc(sizeof(luaext_sandbox), ce);
 
+	/* zend_object_std_init() reads ce->default_object_handlers, installed by
+	 * startup below — nothing per-instance to stamp. */
 	zend_object_std_init(&sandbox->std, ce);
 	object_properties_init(&sandbox->std, ce);
-	sandbox->std.handlers = &luaext_sandbox_handlers;
 
 	return &sandbox->std;
 }
@@ -420,6 +421,7 @@ void luaext_sandbox_startup(void)
 	luaext_sandbox_handlers.clone_obj = NULL;
 
 	luaext_ce_sandbox->create_object = luaext_sandbox_create_object;
+	luaext_ce_sandbox->default_object_handlers = &luaext_sandbox_handlers;
 }
 
 /* -------------------------------------------------------------------------
