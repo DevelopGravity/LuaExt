@@ -273,12 +273,20 @@ static int luaext_corolib_resume(lua_State *L)
 	int nres;
 	int status;
 
-	luaL_argexpected(L, co != NULL, 1, "coroutine");
+	luaL_argexpected(L, co != NULL, 1, "thread");
 
 	nargs = lua_gettop(L) - 1;
 
+	/*
+	 * `false, message` rather than a raise, both here and for the results
+	 * below: upstream's auxresume answers resume's caller with the pair on a
+	 * stack that cannot grow, and resume is documented never to raise for it.
+	 * (wrap raises, and ours does too -- that is upstream's split.)
+	 */
 	if (!lua_checkstack(co, nargs + 1)) {
-		luaL_error(L, "too many arguments to resume");
+		lua_pushboolean(L, 0);
+		lua_pushliteral(L, "too many arguments to resume");
+		return 2;
 	}
 
 	status = luaext_corolib_do_resume(L, co, nargs, &nres);
@@ -286,7 +294,9 @@ static int luaext_corolib_resume(lua_State *L)
 	if (status == LUA_OK || status == LUA_YIELD) {
 		if (!lua_checkstack(L, nres + 1)) {
 			lua_pop(co, nres);
-			luaL_error(L, "too many results to resume");
+			lua_pushboolean(L, 0);
+			lua_pushliteral(L, "too many results to resume");
+			return 2;
 		}
 
 		lua_pushboolean(L, 1);
@@ -466,7 +476,7 @@ static int luaext_corolib_status(lua_State *L)
 {
 	lua_State *co = lua_tothread(L, 1);
 
-	luaL_argexpected(L, co != NULL, 1, "coroutine");
+	luaL_argexpected(L, co != NULL, 1, "thread");
 	lua_pushstring(L, luaext_corolib_status_name(L, co));
 
 	return 1;
@@ -483,9 +493,11 @@ static int luaext_corolib_running(lua_State *L)
 
 static int luaext_corolib_isyieldable(lua_State *L)
 {
-	lua_State *co = lua_isnoneornil(L, 1) ? L : lua_tothread(L, 1);
+	/* lua_isnone, not isnoneornil: upstream treats an explicit nil as an
+	 * argument, and an argument that is not a thread is an error. */
+	lua_State *co = lua_isnone(L, 1) ? L : lua_tothread(L, 1);
 
-	luaL_argexpected(L, co != NULL, 1, "coroutine");
+	luaL_argexpected(L, co != NULL, 1, "thread");
 	lua_pushboolean(L, lua_isyieldable(co));
 
 	return 1;
@@ -493,11 +505,13 @@ static int luaext_corolib_isyieldable(lua_State *L)
 
 static int luaext_corolib_close(lua_State *L)
 {
-	lua_State *co = lua_tothread(L, 1);
+	/* 5.5 made the argument optional, defaulting to the running coroutine --
+	 * which the self-close branch below already knows how to end. */
+	lua_State *co = lua_isnone(L, 1) ? L : lua_tothread(L, 1);
 	const char *state;
 	int status;
 
-	luaL_argexpected(L, co != NULL, 1, "coroutine");
+	luaL_argexpected(L, co != NULL, 1, "thread");
 
 	/*
 	 * A NORMAL coroutine -- one that resumed somebody else and is waiting for
@@ -537,6 +551,16 @@ static int luaext_corolib_close(lua_State *L)
 	if (status == LUA_OK) {
 		lua_pushboolean(L, 1);
 		return 1;
+	}
+
+	/* The same conversion resume and wrap perform, for the same reason: a
+	 * plain LUA_ERRMEM string re-raised travels as LUA_ERRRUN, and a nested
+	 * pcall would catch what this frame refused. */
+	if (status == LUA_ERRMEM) {
+		lua_pop(co, 1);
+		luaext_error_raise(L, LUAEXT_ERR_MEMORY, true,
+						   "The sandbox is out of memory; a script may not catch its own memory "
+						   "limit being reached");
 	}
 
 	/*
