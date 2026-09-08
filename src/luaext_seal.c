@@ -33,11 +33,13 @@ static const php_hash_ops *luaext_seal_lookup(const char *name)
 
 	/*
 	 * ext/hash is always built and registers both of these, so this is a
-	 * "cannot happen". Said out loud anyway: silently leaving a NULL here would
-	 * turn every seal into a null dereference far from the cause.
+	 * "cannot happen". Said out loud anyway, and then reported UPWARD: the
+	 * NULL flows back so MINIT can answer FAILURE — the engine's own "Unable
+	 * to start" path — rather than a helper with a void signature deciding to
+	 * end the process itself with E_CORE_ERROR.
 	 */
 	if (ops == NULL) {
-		zend_error(E_CORE_ERROR,
+		zend_error(E_CORE_WARNING,
 				   "luaext: ext/hash does not provide %s, so bytecode cannot be "
 				   "sealed or verified",
 				   name);
@@ -46,10 +48,12 @@ static const php_hash_ops *luaext_seal_lookup(const char *name)
 	return ops;
 }
 
-void luaext_seal_startup(void)
+bool luaext_seal_startup(void)
 {
 	luaext_seal_sha256 = luaext_seal_lookup("sha256");
 	luaext_seal_xxh128 = luaext_seal_lookup("xxh128");
+
+	return luaext_seal_sha256 != NULL && luaext_seal_xxh128 != NULL;
 }
 
 /* Digest length for an algorithm, or 0 if it is not one we know. */

@@ -70,9 +70,10 @@ typedef enum {
 
 /*
  * Resolve the hash implementations. Call once from MINIT, before anything seals
- * or verifies.
+ * or verifies. False when ext/hash cannot supply them, which MINIT answers
+ * with FAILURE — an extension that cannot verify a seal must not start.
  */
-void luaext_seal_startup(void);
+bool luaext_seal_startup(void);
 
 /* Whether `blob` claims to be sealed. Says nothing about whether it verifies. */
 bool luaext_seal_is_sealed(const char *blob, size_t length);

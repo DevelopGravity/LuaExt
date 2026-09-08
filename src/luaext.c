@@ -348,7 +348,11 @@ static PHP_MINIT_FUNCTION(luaext)
 	luaext_register_exceptions();
 	luaext_sandbox_startup();
 	luaext_function_startup();
-	luaext_seal_startup();
+
+	if (!luaext_seal_startup()) {
+		return FAILURE;
+	}
+
 	luaext_config_startup();
 
 	/* Probes the platform clocks and prepares the slot pool. Deliberately does
