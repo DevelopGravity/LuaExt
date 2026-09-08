@@ -27,6 +27,8 @@ $sandbox->registerLibrary('t', [
 	'byref' => static function (int &$out): void { $out = 1; },
 	'byrefSpread' => static function (int &...$outs): int { return count($outs); },
 	'virtual' => [new Dynamic(), 'anything'],
+	'bare' => static fn () => 1,
+	'bareFn' => static function () { return count(func_get_args()); },
 ]);
 
 $probe = static function (string $label, string $expression) use ($sandbox): void {
@@ -60,6 +62,14 @@ $probe('byref-variadic', 't.byrefSpread(1, 2)');
 // A __call trampoline has no declared signature: only the floor applies.
 $probe('trampoline', 't.virtual(1, "two", {})');
 
+// A callee declaring nothing — no parameters, no return type — leaves the
+// engine's signature array as empty as a trampoline's, but it is not one:
+// exact arity still applies, and surplus is never parked in func_get_args().
+$probe('bare', 't.bare()');
+$probe('bare-extra', 't.bare(1)');
+$probe('bare-fn', 't.bareFn()');
+$probe('bare-fn-extra', 't.bareFn(1, 2)');
+
 // The refusal is the script's to catch; uncaught, it reaches the host as a
 // RuntimeError like every other request-validation refusal.
 try {
@@ -83,4 +93,8 @@ variadic-wrong   err: spread: argument #2 ($values) must be of type int, string 
 byref            err: byref: argument #1 ($out) is passed by reference, which cannot cross from Lua
 byref-variadic   err: byrefSpread: argument #1 ($outs) is passed by reference, which cannot cross from Lua
 trampoline       ok: anything/3
+bare             ok: 1
+bare-extra       err: bare expects at most 0 argument(s), 1 given
+bare-fn          ok: 0
+bare-fn-extra    err: bareFn expects at most 0 argument(s), 2 given
 host sees: pair expects at least 2 argument(s), 1 given

@@ -72,6 +72,7 @@ Nothing has been tagged, so none of these ever shipped — but each is recorded 
 - **`coroutine.close` accepted a running or normal coroutine**, resetting the stack it was executing on and returning `true`. Upstream refuses both; now so does this.
 - **`io.lines` and `file:lines` ignored their format argument.** `f:lines("L")` silently dropped the newline it was specifically asked to keep — no error, just the wrong bytes. Both now route through the same code `:read()` uses, and accept multiple formats and byte counts as Lua does.
 - **The PHP 8.5 floor was unenforced at build time.** Declared in `composer.json` and honoured by PIE, but a plain `phpize && make` against 8.4 failed somewhere deep in a translation unit rather than saying so.
+- **A callee declaring nothing slipped the arity gate.** The gate excused any function whose engine-side signature array was empty, meaning to except only the `__call` trampoline — but a callee with no parameters and no return type gets an empty one too, so `fn () => …` accepted any number of surplus arguments and parked them in `func_get_args()`, on every dispatch route. The exemption now keys on the engine's trampoline flag, and a signature-less callee owes exact arity like everything else.
 
 ### Known gaps
 

@@ -457,9 +457,12 @@ static luaext_phpcall_args_verdict luaext_phpcall_check_args(const luaext_phpcal
 		return LUAEXT_PHPCALL_ARGS_MISMATCH;
 	}
 
-	/* No declared signature (a __call trampoline): the floor above is all
-	 * there is to hold the call to. */
-	if (fn->common.arg_info == NULL) {
+	/* Only a __call trampoline is excused from everything below: the engine
+	 * builds it without a signature, so the floor above is all there is to
+	 * hold the call to. An empty arg_info alone cannot identify it -- a
+	 * callee declaring no parameters and no return type leaves arg_info
+	 * empty too, and that one still owes exact arity. */
+	if ((fn->common.fn_flags & ZEND_ACC_CALL_VIA_TRAMPOLINE) != 0) {
 		return LUAEXT_PHPCALL_ARGS_OK;
 	}
 
@@ -467,6 +470,12 @@ static luaext_phpcall_args_verdict luaext_phpcall_check_args(const luaext_phpcal
 		snprintf(message, message_size, "%s expects at most %u argument(s), %u given", label,
 				 (unsigned int)declared, (unsigned int)argc);
 		return LUAEXT_PHPCALL_ARGS_MISMATCH;
+	}
+
+	/* Nothing declared, nothing to type-check: arity above was the whole
+	 * contract, and the loop below has no slots to read. */
+	if (fn->common.arg_info == NULL) {
+		return LUAEXT_PHPCALL_ARGS_OK;
 	}
 
 	for (index = 0; index < argc; index++) {
