@@ -715,6 +715,9 @@ final readonly class SandboxStats implements \JsonSerializable
  * this makes no claim beyond its own fields and a host wrapping its own checks
  * has a fair reason to build one.
  *
+ * Not cloneable, like every result object here: it is immutable and carries no
+ * identity, so construct a new one instead.
+ *
  * @strict-properties
  */
 final readonly class ValidationResult implements \JsonSerializable
@@ -1101,6 +1104,9 @@ final class LuaFunction
 /**
  * Metadata about a file in the virtual filesystem.
  *
+ * Not cloneable: it is immutable and carries no identity, so construct a new
+ * one instead.
+ *
  * @strict-properties
  */
 final readonly class FileStat
@@ -1165,6 +1171,9 @@ interface RangedFileSystem extends FileSystem
 
 /**
  * Lua source returned by a module resolver.
+ *
+ * Not cloneable: it is immutable and carries no identity, so construct a new
+ * one instead.
  *
  * @strict-properties
  */

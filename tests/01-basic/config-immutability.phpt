@@ -14,6 +14,7 @@ use DevelopGravity\LuaExt\Limits;
 use DevelopGravity\LuaExt\ModuleSource;
 use DevelopGravity\LuaExt\SandboxConfig;
 use DevelopGravity\LuaExt\SandboxStats;
+use DevelopGravity\LuaExt\ValidationResult;
 use DevelopGravity\LuaExt\VfsQuota;
 
 function show(callable $attempt): void
@@ -68,6 +69,7 @@ foreach ([
 	new SandboxConfig(),
 	new FileStat(0, 0),
 	new ModuleSource('', '=(test)'),
+	new ValidationResult(),
 ] as $object) {
 	show(static function () use ($object): void {
 		$copy = clone $object;
@@ -96,4 +98,5 @@ Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\VfsQ
 Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\SandboxConfig
 Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\FileStat
 Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\ModuleSource
+Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\ValidationResult
 Error: Trying to clone an uncloneable object of class DevelopGravity\LuaExt\SandboxStats
