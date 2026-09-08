@@ -161,4 +161,8 @@ void luaext_openlibs_check_drift(lua_State *L, int scratch_index, const luaext_m
 bool luaext_debuglib_install(lua_State *L, luaext_sandbox *sandbox);
 bool luaext_oslib_install(lua_State *L, luaext_sandbox *sandbox);
 
+/* The one shape rule for an environment-variable name: no NUL, no '='. The
+ * Capabilities constructor and os.getenv() both refuse by it. */
+bool luaext_oslib_env_name_is_sane(const char *name, size_t length);
+
 #endif /* LUAEXT_OPENLIBS_H */

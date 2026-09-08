@@ -179,8 +179,9 @@ static int luaext_oslib_clock(lua_State *L)
 /* Names that cannot denote an environment variable, and must never be looked
  * up: a NUL truncates the C string handed to getenv(), so an allow-list entry
  * and the name actually resolved could differ. Checked before the allow-list
- * lookup, so the refusal reveals nothing about the allow list's contents. */
-static bool luaext_oslib_env_name_is_sane(const char *name, size_t length)
+ * lookup, so the refusal reveals nothing about the allow list's contents.
+ * Exported: Capabilities construction refuses list entries by this same rule. */
+bool luaext_oslib_env_name_is_sane(const char *name, size_t length)
 {
 	return memchr(name, '\0', length) == NULL && memchr(name, '=', length) == NULL;
 }

@@ -16,6 +16,7 @@
 #include "luaext_config.h"
 
 #include "luaext_corolib.h"
+#include "luaext_openlibs.h"
 
 #include "luaext_seal.h"
 
@@ -921,9 +922,9 @@ failed:
 }
 
 /*
- * The three value objects whose with() is nothing but the engine. SandboxConfig
- * is written out separately: it re-runs the refusals over the derived object,
- * because with() can reach an unsatisfiable combination the source did not have.
+ * The value objects whose with() is nothing but the engine. SandboxConfig and
+ * Capabilities are written out separately: each re-runs its refusals over the
+ * derived object, because with() can reach a shape the constructor refused.
  */
 #define LUAEXT_CONFIG_WITH_METHOD(method_class, class_entry)                                       \
 	ZEND_METHOD(method_class, with)                                                                \
@@ -947,6 +948,34 @@ failed:
 /* -------------------------------------------------------------------------
  * Capabilities
  * ---------------------------------------------------------------------- */
+
+/*
+ * The shape rule for $osEnvAllowList, shared by __construct and with():
+ * entries must be non-empty strings a getenv() lookup can honour byte for
+ * byte. Refusing here is what makes the install-time skip in luaext_oslib.c
+ * unreachable defence rather than silent repair.
+ */
+static bool luaext_config_env_allow_list_ok(const HashTable *allow_list)
+{
+	zval *entry;
+
+	ZEND_HASH_FOREACH_VAL(allow_list, entry)
+	{
+		ZVAL_DEREF(entry);
+
+		if (Z_TYPE_P(entry) != IS_STRING || Z_STRLEN_P(entry) == 0 ||
+			!luaext_oslib_env_name_is_sane(Z_STRVAL_P(entry), Z_STRLEN_P(entry))) {
+			zend_throw_exception(luaext_ce_configuration_error,
+								 "Capabilities::$osEnvAllowList must hold non-empty environment "
+								 "variable names without NUL or '=' bytes",
+								 0);
+			return false;
+		}
+	}
+	ZEND_HASH_FOREACH_END();
+
+	return true;
+}
 
 ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, __construct)
 {
@@ -1000,6 +1029,11 @@ ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, __construct)
 	object = Z_OBJ_P(ZEND_THIS);
 
 	if (!luaext_config_reject_reconstruction(object)) {
+		RETURN_THROWS();
+	}
+
+	if (os_env_allow_list != NULL &&
+		!luaext_config_env_allow_list_ok(Z_ARRVAL_P(os_env_allow_list))) {
 		RETURN_THROWS();
 	}
 
@@ -1060,7 +1094,40 @@ ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, trusted)
 	luaext_config_capabilities_create(LUAEXT_CAPS_TRUSTED, return_value);
 }
 
-LUAEXT_CONFIG_WITH_METHOD(DevelopGravity_LuaExt_Capabilities, luaext_ce_capabilities)
+/*
+ * Written out rather than taken from the macro, for the same reason
+ * SandboxConfig's is: the derived allow list is re-checked, or with() would
+ * be a path around the constructor's shape refusal.
+ */
+ZEND_METHOD(DevelopGravity_LuaExt_Capabilities, with)
+{
+	zval *positional = NULL;
+	uint32_t positional_count = 0;
+	HashTable *named = NULL;
+	zval holder;
+	const zval *allow_list;
+
+	ZEND_PARSE_PARAMETERS_START(0, -1)
+	Z_PARAM_VARIADIC_WITH_NAMED(positional, positional_count, named)
+	ZEND_PARSE_PARAMETERS_END();
+
+	(void)positional;
+
+	if (!luaext_config_reject_positional(luaext_ce_capabilities, positional_count) ||
+		!luaext_config_with(luaext_ce_capabilities, Z_OBJ_P(ZEND_THIS), named, return_value)) {
+		RETURN_THROWS();
+	}
+
+	allow_list = zend_read_property(luaext_ce_capabilities, Z_OBJ_P(return_value),
+									ZEND_STRL("osEnvAllowList"), true, &holder);
+
+	if (allow_list != NULL && Z_TYPE_P(allow_list) == IS_ARRAY &&
+		!luaext_config_env_allow_list_ok(Z_ARRVAL_P(allow_list))) {
+		zval_ptr_dtor(return_value);
+		RETVAL_NULL();
+		RETURN_THROWS();
+	}
+}
 
 /* -------------------------------------------------------------------------
  * Limits
