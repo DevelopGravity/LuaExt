@@ -1925,7 +1925,7 @@ Loopback-only development tool. The <strong>Host classes</strong> panel evaluate
 </div>
 <div id="validation-panel" class="hidden"><p id="validation-message"></p></div>
 <div id="values-panel" class="hidden"><h3>Return values</h3><div id="values-list"></div></div>
-<div id="output-panel" class="hidden"><h3>Output</h3><pre id="output-content"></pre><p id="output-truncated-note" class="muted hidden">Output was truncated (outputBytes limit, Truncate mode).</p></div>
+<div id="output-panel" class="hidden"><h3>Output</h3><pre id="output-content"></pre><p id="output-truncated-note" class="muted hidden">Some emitted output was lost: an output or memory budget refused part of it.</p></div>
 <div id="chunks-panel" class="hidden"><h3>Callback chunks</h3><div id="chunks-list"></div></div>
 <div id="warnings-panel" class="hidden"><h3>Warnings</h3><ul id="warnings-list"></ul></div>
 </section>

@@ -633,6 +633,13 @@ final readonly class SandboxStats implements \JsonSerializable
      */
     public int $outputBytes;
 
+    /**
+     * Whether any emitted output was lost. True once a write was refused for
+     * ANY budget reason — Limits::$outputBytes or Limits::$memoryBytes, in
+     * either OverflowBehavior — and deliberately never reset by takeOutput():
+     * a host that drained a truncated buffer still needs to know it was
+     * incomplete.
+     */
     public bool $outputTruncated;
 
     public int $liveCoroutines;
