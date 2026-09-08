@@ -39,6 +39,10 @@ try {
 printf("output emitted was far under outputBytes: %s\n",
 	$sandbox->stats()->outputBytes < 1048576 / 2 ? 'yes' : 'no');
 
+// The flag means "emitted output was lost", for EITHER budget: a memory-bound
+// refusal sets it exactly as an output-bound one does.
+var_dump($sandbox->stats()->outputTruncated);
+
 $sandbox->close();
 
 // The other budget still answers with its own error: plenty of memory, a tiny
@@ -60,4 +64,5 @@ $small->close();
 --EXPECT--
 memory-bound refusal: DevelopGravity\LuaExt\Exception\MemoryLimitError
 output emitted was far under outputBytes: yes
+bool(true)
 output-bound refusal: DevelopGravity\LuaExt\Exception\OutputLimitError
