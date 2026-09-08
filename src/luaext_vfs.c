@@ -382,7 +382,10 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
  * is anonymous, and Lua discards the frame's leftovers when the function
  * returns.
  */
+#define LUAEXT_VFS_STRING_MAGIC 0x4C585362u /* "LXSb" */
+
 typedef struct {
+	uint32_t magic;
 	zend_string *held;
 } luaext_vfs_string_ud;
 
@@ -390,7 +393,18 @@ static int luaext_vfs_string_release(lua_State *L)
 {
 	luaext_vfs_string_ud *box = (luaext_vfs_string_ud *)lua_touserdata(L, 1);
 
-	if (box != NULL && box->held != NULL) {
+	/*
+	 * Nothing is read out of the payload until it is provably a box. A __gc
+	 * runs through whatever metatable the value wears at collection time, and
+	 * under debugMutate a script can lift this metatable out of the registry
+	 * and stamp it onto a userdata whose first bytes are anything at all --
+	 * which zend_string_release() would then dereference.
+	 */
+	if (box == NULL || lua_rawlen(L, 1) != sizeof(*box) || box->magic != LUAEXT_VFS_STRING_MAGIC) {
+		return 0;
+	}
+
+	if (box->held != NULL) {
 		zend_string_release(box->held);
 		box->held = NULL;
 	}
@@ -457,6 +471,7 @@ static luaext_vfs_string_ud *luaext_vfs_push_box(lua_State *L, luaext_sandbox *s
 	luaL_checkstack(L, 3, "luaext: no stack to hold a string for the filesystem");
 
 	box = (luaext_vfs_string_ud *)lua_newuserdatauv(L, sizeof(*box), 0);
+	box->magic = LUAEXT_VFS_STRING_MAGIC;
 	box->held = NULL;
 
 	luaext_vfs_string_metatable(L);
@@ -632,6 +647,23 @@ static void luaext_vfs_refund_buffer(luaext_sandbox *sandbox, size_t bytes)
 
 	sandbox->vfs_buffered_bytes -= held;
 	luaext_alloc_discharge(sandbox, held);
+}
+
+luaext_vfs_handle *luaext_vfs_handle_test(lua_State *L, int index)
+{
+	luaext_vfs_handle *handle;
+
+	if (lua_type(L, index) != LUA_TUSERDATA || lua_rawlen(L, index) != sizeof(luaext_vfs_handle)) {
+		return NULL;
+	}
+
+	handle = (luaext_vfs_handle *)lua_touserdata(L, index);
+
+	if (handle == NULL || handle->magic != LUAEXT_VFS_HANDLE_MAGIC) {
+		return NULL;
+	}
+
+	return handle;
 }
 
 /* Release what a handle owns and stop counting it. Never calls the backend. */
@@ -973,6 +1005,7 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 	handle = (luaext_vfs_handle *)lua_newuserdatauv(L, sizeof(*handle), 0);
 	memset(handle, 0, sizeof(*handle));
 
+	handle->magic = LUAEXT_VFS_HANDLE_MAGIC;
 	handle->readable = readable;
 	handle->writable = writable;
 	handle->append = append;
@@ -1179,7 +1212,12 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 	lua_pushnil(L);
 
 	while (lua_next(L, -2) != 0) {
-		luaext_vfs_handle *handle = (luaext_vfs_handle *)lua_touserdata(L, -2);
+		/*
+		 * Identity-gated, not just cast: debug.getregistry() hands a
+		 * debugMutate script this very table, so a key here can be any value
+		 * the script chose to plant, not only what luaext_vfs_open() stored.
+		 */
+		luaext_vfs_handle *handle = luaext_vfs_handle_test(L, -2);
 
 		lua_pop(L, 1); /* value; the key stays for lua_next */
 

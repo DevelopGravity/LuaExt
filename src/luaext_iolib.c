@@ -212,10 +212,28 @@ static int luaext_iolib_refused(lua_State *L, zend_string *refusal)
 	return 2;
 }
 
-static luaext_vfs_handle *luaext_iolib_check_handle(lua_State *L, int index)
+/*
+ * luaL_checkudata alone proves only that the value WEARS the file metatable,
+ * and under debugMutate a script can stamp that onto any userdata it holds --
+ * so the payload is trusted only once luaext_vfs_handle_test() agrees the
+ * bytes are a handle. Closed handles pass; callers that cannot use one ask
+ * luaext_iolib_check_handle() instead.
+ */
+static luaext_vfs_handle *luaext_iolib_check_handle_any(lua_State *L, int index)
 {
 	luaext_vfs_handle *handle =
 		(luaext_vfs_handle *)luaL_checkudata(L, index, LUAEXT_IOLIB_FILE_MT);
+
+	if (luaext_vfs_handle_test(L, index) != handle) {
+		luaL_typeerror(L, index, LUAEXT_IOLIB_FILE_MT);
+	}
+
+	return handle;
+}
+
+static luaext_vfs_handle *luaext_iolib_check_handle(lua_State *L, int index)
+{
+	luaext_vfs_handle *handle = luaext_iolib_check_handle_any(L, index);
 
 	if (handle->closed) {
 		luaL_error(L, "attempt to use a closed file");
@@ -744,7 +762,7 @@ static int luaext_iolib_file_seek(lua_State *L)
 static int luaext_iolib_file_close(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
-	luaext_vfs_handle *handle = (luaext_vfs_handle *)luaL_checkudata(L, 1, LUAEXT_IOLIB_FILE_MT);
+	luaext_vfs_handle *handle = luaext_iolib_check_handle_any(L, 1);
 	zend_string *refusal = NULL;
 
 	if (handle->closed) {
@@ -818,7 +836,9 @@ static int luaext_iolib_file_flush(lua_State *L)
  */
 static int luaext_iolib_file_gc(lua_State *L)
 {
-	luaext_vfs_handle *handle = (luaext_vfs_handle *)lua_touserdata(L, 1);
+	/* Identity-gated: __gc fires through whatever metatable the value wears at
+	 * collection time, so what arrives here need not be a handle at all. */
+	luaext_vfs_handle *handle = luaext_vfs_handle_test(L, 1);
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 
 	if (handle != NULL && sandbox != NULL) {
@@ -830,7 +850,7 @@ static int luaext_iolib_file_gc(lua_State *L)
 
 static int luaext_iolib_file_tostring(lua_State *L)
 {
-	luaext_vfs_handle *handle = (luaext_vfs_handle *)luaL_checkudata(L, 1, LUAEXT_IOLIB_FILE_MT);
+	luaext_vfs_handle *handle = luaext_iolib_check_handle_any(L, 1);
 
 	/* The virtual path, never a host path and never an address. */
 	if (handle->closed) {
@@ -897,7 +917,9 @@ static int luaext_iolib_open(lua_State *L)
 static int luaext_iolib_lines_iter(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
-	luaext_vfs_handle *handle = (luaext_vfs_handle *)lua_touserdata(L, lua_upvalueindex(1));
+	/* Identity-gated: debug.setupvalue can swap a C closure's upvalue, so the
+	 * slot may hold any value a debugMutate script chose, not our handle. */
+	luaext_vfs_handle *handle = luaext_vfs_handle_test(L, lua_upvalueindex(1));
 	bool close_at_end = lua_toboolean(L, lua_upvalueindex(2)) != 0;
 	int formats = (int)lua_tointeger(L, lua_upvalueindex(3));
 	zend_string *refusal = NULL;

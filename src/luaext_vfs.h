@@ -142,7 +142,17 @@ bool luaext_vfs_check_range(lua_State *L, const luaext_sandbox *sandbox, lua_Int
  *                the sandbox's memory, and they are billed as such.
  * ---------------------------------------------------------------------- */
 
+#define LUAEXT_VFS_HANDLE_MAGIC 0x4C584668u /* "LXFh" */
+
 typedef struct {
+	/*
+	 * Checked together with lua_rawlen() before any other field is trusted.
+	 * A __gc or method resolves through whatever metatable the value wears at
+	 * that moment, and under debugMutate a script can stamp the file metatable
+	 * onto a foreign userdata -- so metatable identity proves nothing there.
+	 */
+	uint32_t magic;
+
 	zend_string *path; /* canonical, owned */
 
 	/*
@@ -167,6 +177,15 @@ typedef struct {
 	bool dirty;	 /* buffer differs from what the backend holds */
 	bool closed;
 } luaext_vfs_handle;
+
+/*
+ * The identity gates, mirroring luaext_proxy_test(): NULL unless the value at
+ * `index` is a userdata of exactly this size carrying the magic word. Every
+ * reader of a handle that a script could have swapped -- __gc, the method
+ * table, the lines iterator's upvalue, the sweep's walk of the handles table --
+ * must come through here before trusting a single field.
+ */
+luaext_vfs_handle *luaext_vfs_handle_test(lua_State *L, int index);
 
 /*
  * Push a new handle userdata for `path`, already canonicalised.
