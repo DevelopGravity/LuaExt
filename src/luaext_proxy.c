@@ -1353,6 +1353,15 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 	zend_string *resolved_name;
 	bool collected;
 
+	/*
+	 * Re-checked here, not only at the method boundary: resolving the class
+	 * ran the autoloader and evaluating #[LuaClass] instantiated its carrier —
+	 * both arbitrary PHP that may have closed this very sandbox.
+	 */
+	if (!luaext_sandbox_check_usable(sandbox)) {
+		return false;
+	}
+
 	for (walk = sandbox->proxy_classes; walk != NULL; walk = walk->next) {
 		if (walk->ce == ce) {
 			zend_throw_exception_ex(luaext_ce_configuration_error, 0,
