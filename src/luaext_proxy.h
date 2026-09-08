@@ -147,6 +147,16 @@ luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_
  */
 void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_name);
 
+/*
+ * Release every PHP reference the live proxies still hold, for the one close
+ * path whose finalisers never run: a bailout-abandoned state (in_lua above
+ * zero), where lua_close() is refused and the heap is deliberately lost.
+ * The leaked heap is exactly what keeps the listed payloads valid to read.
+ * Destructors run here as ordinary host code; the sandbox is already marked
+ * closed, so one that re-enters meets a ClosedSandboxError.
+ */
+void luaext_proxy_release_abandoned(luaext_sandbox *sandbox);
+
 /* Free the registry — live and retired — and everything the records own. */
 void luaext_proxy_shutdown(luaext_sandbox *sandbox);
 

@@ -281,6 +281,15 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 */
 	if (L != NULL && sandbox->in_lua == 0) {
 		lua_close(L);
+	} else if (L != NULL) {
+		/*
+		 * The abandoned state's finalisers will never run, so the PHP
+		 * references its proxies hold would leak with the heap. The heap's
+		 * loss is the price documented above; the objects need not be —
+		 * the live-proxy list knows each one, and the leaked heap is
+		 * precisely what keeps those payloads valid to read.
+		 */
+		luaext_proxy_release_abandoned(sandbox);
 	}
 
 	/*

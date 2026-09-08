@@ -1487,6 +1487,27 @@ void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_na
 	}
 }
 
+void luaext_proxy_release_abandoned(luaext_sandbox *sandbox)
+{
+	while (sandbox->proxy_gc_count > 0) {
+		luaext_proxy_ud *slot = sandbox->proxy_gc_items[--sandbox->proxy_gc_count];
+		zval carrier;
+
+		if (slot->magic != LUAEXT_PROXY_MAGIC || slot->object == NULL) {
+			continue;
+		}
+
+		slot->magic = 0;
+		ZVAL_OBJ(&carrier, slot->object);
+		slot->object = NULL;
+
+		/* Direct, not deferred: the defer queue exists to move releases out
+		 * of a running collector, and no collector can run in a state that
+		 * will never execute again. */
+		zval_ptr_dtor(&carrier);
+	}
+}
+
 static void luaext_proxy_free_chain(luaext_proxy_class *record)
 {
 	while (record != NULL) {
