@@ -198,7 +198,7 @@ intersection-no    err: both: argument #1 ($bag) must be of type Countable&Array
 iterable-table     ok: 3
 nullable-class     ok: null
 trait-self-ok      ok: true
-trait-self-wrong   err: sameAs: argument #1 ($other) must be of type self, Ticket given
+trait-self-wrong   err: sameAs: argument #1 ($other) must be of type Card, Ticket given
 parent-ok          ok: 7
 parent-wrong       err: swap: argument #1 ($other) must be of type Ticket, Card given
 callable-fn        ok: callable

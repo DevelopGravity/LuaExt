@@ -39,6 +39,7 @@
 
 #include <Zend/zend_attributes.h>
 #include <Zend/zend_exceptions.h>
+#include <Zend/zend_smart_str.h>
 
 /*
  * Identifies the closure storage. Read before anything else in the userdata is
@@ -239,6 +240,61 @@ static zend_class_entry *luaext_phpcall_resolve_type_name(const zend_function *f
 	return zend_lookup_class_ex(name, NULL, ZEND_FETCH_CLASS_NO_AUTOLOAD);
 }
 
+/*
+ * Render a declared type for a refusal message, with `self`/`parent` resolved
+ * against the callee's scope the way the engine's own TypeError names them.
+ *
+ * The engine's resolved renderer (zend_type_to_string_resolved) carries no
+ * ZEND_API marker, so an extension cannot rely on the symbol -- macOS loads it
+ * as NULL under -undefined suppress, and a Windows DLL will not link at all.
+ * Resolved here instead, on the rendered form: the two words are reserved, so
+ * a whole segment spelling one can only be the type token, never a class name.
+ */
+static zend_string *luaext_phpcall_type_string(const zend_function *fn, zend_type type)
+{
+	zend_string *rendered = zend_type_to_string(type);
+	const zend_class_entry *scope = fn->common.scope;
+	const char *cursor = ZSTR_VAL(rendered);
+	const char *end = cursor + ZSTR_LEN(rendered);
+	smart_str out = {0};
+
+	if (scope == NULL || (strstr(ZSTR_VAL(rendered), "self") == NULL &&
+						  strstr(ZSTR_VAL(rendered), "parent") == NULL)) {
+		return rendered;
+	}
+
+	while (cursor < end) {
+		const char *start = cursor;
+		size_t token_len;
+
+		while (cursor < end && *cursor != '|' && *cursor != '&' && *cursor != '?' &&
+			   *cursor != '(' && *cursor != ')') {
+			cursor++;
+		}
+
+		token_len = (size_t)(cursor - start);
+
+		if (token_len == 4 && zend_binary_strcasecmp(start, 4, "self", 4) == 0) {
+			smart_str_append(&out, scope->name);
+		} else if (token_len == 6 && zend_binary_strcasecmp(start, 6, "parent", 6) == 0 &&
+				   scope->parent != NULL) {
+			smart_str_append(&out, scope->parent->name);
+		} else {
+			smart_str_appendl(&out, start, token_len);
+		}
+
+		if (cursor < end) {
+			smart_str_appendc(&out, *cursor);
+			cursor++;
+		}
+	}
+
+	zend_string_release(rendered);
+	smart_str_0(&out);
+
+	return out.s != NULL ? out.s : ZSTR_EMPTY_ALLOC();
+}
+
 /* One union member (a class name, or an intersection list of them) against
  * the argument's class. DNF shapes nest exactly one level. */
 static bool luaext_phpcall_type_member_matches(const zend_function *fn, const zend_type *member,
@@ -339,9 +395,12 @@ static bool luaext_phpcall_arg_matches(const zend_function *fn, const zend_type 
 			return true;
 		}
 
+		/* IS_CALLABLE_SUPPRESS_DEPRECATIONS because this is a CHECK, not a
+		 * call: the engine's own arg verification suppresses them too, and the
+		 * dispatch that follows will surface any deprecation exactly once. */
 		if ((mask & MAY_BE_CALLABLE) != 0) {
 			*ran_php = true;
-			return zend_is_callable(arg, 0, NULL);
+			return zend_is_callable(arg, IS_CALLABLE_SUPPRESS_DEPRECATIONS, NULL);
 		}
 
 		return false;
@@ -351,7 +410,7 @@ static bool luaext_phpcall_arg_matches(const zend_function *fn, const zend_type 
 		(Z_TYPE_P(arg) == IS_STRING || Z_TYPE_P(arg) == IS_ARRAY)) {
 		*ran_php = true;
 
-		if (zend_is_callable(arg, 0, NULL)) {
+		if (zend_is_callable(arg, IS_CALLABLE_SUPPRESS_DEPRECATIONS, NULL)) {
 			return true;
 		}
 	}
@@ -415,7 +474,11 @@ static luaext_phpcall_args_verdict luaext_phpcall_check_args(const luaext_phpcal
 		const zend_arg_info *info = &fn->common.arg_info[index < declared ? index : declared];
 		bool ran_php = false;
 
-		if (ZEND_ARG_SEND_MODE(info) != ZEND_SEND_BY_VAL) {
+		/* Only a hard by-ref parameter cannot cross. Prefer-ref (array_multisort's
+		 * arrays, sort's array) accepts a plain value, which is exactly what
+		 * zend_call_function passes for a non-reference -- refusing those would
+		 * turn callables the engine happily runs into boundary errors. */
+		if (ZEND_ARG_SEND_MODE(info) == ZEND_SEND_BY_REF) {
 			snprintf(message, message_size,
 					 "%s: argument #%u ($%s) is passed by reference, which cannot cross from "
 					 "Lua",
@@ -437,7 +500,9 @@ static luaext_phpcall_args_verdict luaext_phpcall_check_args(const luaext_phpcal
 		}
 
 		{
-			zend_string *expected = zend_type_to_string(info->type);
+			/* Resolved against the callee's scope, so a method typed `self`
+			 * names its class the way the engine's own TypeError would. */
+			zend_string *expected = luaext_phpcall_type_string(fn, info->type);
 
 			snprintf(message, message_size, "%s: argument #%u ($%s) must be of type %s, %s given",
 					 label, (unsigned int)(index + 1), luaext_phpcall_arg_name(fn, info),
@@ -575,8 +640,46 @@ int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *targ
 	 * call is skipped entirely — never billed as a crossing, never counted.
 	 */
 	if (converted) {
+		bool gate_paused = false;
+
+		/*
+		 * The gate's callable check is the one branch that can run host PHP —
+		 * an autoloader, an error handler — and that work is the host's, not
+		 * the script's: the same in_php frame and billHostTime pause the
+		 * dispatch below applies. Without this, a slow autoloader fired by the
+		 * check was charged to the script's clocks, on a call that might then
+		 * never even be made.
+		 */
+		sandbox->in_php++;
+
+		if (!sandbox->policy.limits.bill_host_time) {
+			gate_paused = luaext_timers_pause(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL);
+		}
+
 		verdict = luaext_phpcall_check_args(target, params, (uint32_t)argc, label, gate_message,
 											sizeof(gate_message));
+
+		sandbox->in_php--;
+
+		/*
+		 * The check's own PHP can throw and still answer "callable" — a user
+		 * error handler, most easily. The engine refuses to run anything with
+		 * an exception pending, so that crossing will never happen and must
+		 * not be billed as one.
+		 */
+		if (verdict == LUAEXT_PHPCALL_ARGS_OK && EG(exception) != NULL) {
+			verdict = LUAEXT_PHPCALL_ARGS_EXCEPTION;
+		}
+
+		/*
+		 * An OK verdict hands its pause straight to the dispatch below — the
+		 * pause there is an idempotent flag, and luaext_timers_php_returned
+		 * reopens it as always. Any other verdict skips dispatch, so the
+		 * clocks reopen here.
+		 */
+		if (gate_paused && verdict != LUAEXT_PHPCALL_ARGS_OK) {
+			luaext_timers_resume(sandbox, LUAEXT_TIMER_CPU | LUAEXT_TIMER_WALL);
+		}
 	}
 
 	if (converted && verdict == LUAEXT_PHPCALL_ARGS_OK) {
