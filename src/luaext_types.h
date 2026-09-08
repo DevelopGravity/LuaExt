@@ -500,6 +500,10 @@ struct luaext_sandbox {
 	 * is refused for the duration. See luaext_corolib_sweep(). */
 	bool co_sweeping;
 
+	/* The call-scope sweep is closing this call's file handles; opening new
+	 * ones is refused for the duration. See luaext_vfs_sweep(). */
+	bool vfs_sweeping;
+
 	/* PHP references waiting to be released somewhere the collector is not
 	 * running. See luaext_defer.h. */
 	luaext_deferred deferred;

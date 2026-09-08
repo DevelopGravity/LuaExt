@@ -1060,6 +1060,15 @@ bool luaext_vfs_open(lua_State *L, luaext_sandbox *sandbox, zend_string *path, c
 		return false;
 	}
 
+	/* Same refusal the coroutine layer makes while ITS sweep runs: a flush can
+	 * re-enter the sandbox through the backend, and a handle opened mid-sweep
+	 * would join a table the sweep has already detached and will never walk. */
+	if (sandbox->vfs_sweeping) {
+		luaext_error_raise(L, LUAEXT_ERR_VFS, false, "%s",
+						   "files cannot be opened while the call that owns them is closing");
+		return false;
+	}
+
 	if (cap != 0 && sandbox->vfs_open_handles >= cap) {
 		luaext_error_raise(L, LUAEXT_ERR_VFS, true,
 						   "The sandbox already has %u file(s) open, which is its "
@@ -1303,7 +1312,30 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 		return;
 	}
 
-	luaext_vfs_push_handles(L);
+	/* Read raw, never lazily created: this frame runs after lua_pcall
+	 * returned, where a raise has no handler, so it may not allocate — and
+	 * with handles counted open the table exists unless teardown already
+	 * took it. */
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_handles) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		sandbox->vfs_open_handles = 0;
+		return;
+	}
+
+	/*
+	 * Detached before the walk, like the coroutine sweep and for both of its
+	 * reasons: a flush below can re-enter the sandbox through its backend,
+	 * and a handle opened mid-sweep (refused anyway, see the open path) must
+	 * not insert into the table lua_next is walking. Clearing the registry
+	 * slot is a write; the empty table the old rebuild allocated here was
+	 * this frame's one raising call, and a full ledger turned it into an
+	 * unprotected panic that killed the whole request. The next open rebuilds
+	 * the slot lazily, from protected context.
+	 */
+	sandbox->vfs_sweeping = true;
+
+	lua_pushnil(L);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_handles);
 
 	lua_pushnil(L);
 
@@ -1354,13 +1386,8 @@ void luaext_vfs_sweep(luaext_sandbox *sandbox)
 		}
 	}
 
-	lua_pop(L, 1);
+	lua_pop(L, 1); /* the detached table; it dies with every handle in it */
 
-	/* The table is rebuilt empty rather than drained key by key: every handle in
-	 * it is closed now, and clearing during the walk above would be a mutation
-	 * lua_next does not allow. */
-	lua_createtable(L, 0, 8);
-	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_handles);
-
+	sandbox->vfs_sweeping = false;
 	sandbox->vfs_open_handles = 0;
 }
