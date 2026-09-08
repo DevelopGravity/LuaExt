@@ -93,7 +93,25 @@ static void luaext_profiler_hook(lua_State *L, lua_Debug *ar)
 	size_t identity_len;
 	zval *slot;
 
-	if (sandbox == NULL || sandbox->profiler == NULL || !sandbox->profiler->enabled) {
+	if (sandbox == NULL) {
+		return;
+	}
+
+	/*
+	 * The same two checks the fallback count hook runs, because this hook may
+	 * be STANDING IN for it: the watchdog thread starts lazily, so a limit can
+	 * arrive -- and the thread's start can fail -- while profiling already
+	 * owns the hook slot. Mirroring the enforcement here is what lets
+	 * luaext_timers_install_fallback_hook() defer to a running profile without
+	 * suspending the limit.
+	 */
+	LUAEXT_CHECK(L);
+
+	if (luaext_watchdog_thread_failed() && luaext_watchdog_self_check(sandbox->slot)) {
+		luaext_raise_interrupt(L);
+	}
+
+	if (sandbox->profiler == NULL || !sandbox->profiler->enabled) {
 		return;
 	}
 
@@ -218,14 +236,16 @@ void luaext_profiler_disable(luaext_sandbox *sandbox)
 		luaext_timers_cpu_seconds(sandbox) - sandbox->profiler->cpu_at_enable;
 
 	/*
-	 * Cleared outright rather than restored to whatever was there. Nothing else
-	 * arms a hook while profiling is possible: the timers hook only exists when
-	 * the watchdog failed, and enable() refuses in exactly that case. Cleared
-	 * on every live thread for the same reason enable arms every one: a
-	 * coroutine created while profiling was on would otherwise keep the trap
-	 * armed for the rest of its life.
+	 * Cleared on every live thread for the same reason enable arms every one:
+	 * a coroutine created while profiling was on would otherwise keep the trap
+	 * armed for the rest of its life. Then the fallback enforcer is offered
+	 * the slot back -- the watchdog thread starts lazily, so a CPU limit can
+	 * have arrived (and the thread's start failed) while this profile owned
+	 * the hook, and clearing outright would leave that limit with no enforcer
+	 * while features() still reported it enforced.
 	 */
 	luaext_corolib_set_hook_all(sandbox, NULL, 0, 0);
+	luaext_timers_install_fallback_hook(sandbox);
 }
 
 /*

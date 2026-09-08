@@ -115,6 +115,15 @@ void luaext_timers_detach(luaext_sandbox *sandbox);
 bool luaext_timers_set_cpu_limit(luaext_sandbox *sandbox, uint64_t ns);
 bool luaext_timers_set_wall_limit(luaext_sandbox *sandbox, uint64_t ns);
 
+/*
+ * (Re-)arm the fallback count hook on every live thread, when it is needed at
+ * all: the hook exists only when luaext.hook_count is non-zero AND the
+ * watchdog thread could not be started. A no-op while the profiler owns the
+ * hook slot -- the profiler's hook mirrors the enforcement checks for exactly
+ * that window, and its disable path calls back in here to hand the slot back.
+ */
+void luaext_timers_install_fallback_hook(luaext_sandbox *sandbox);
+
 /* -------------------------------------------------------------------------
  * The bracket around every entry into the interpreter
  * ---------------------------------------------------------------------- */

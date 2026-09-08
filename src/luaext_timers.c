@@ -11,6 +11,8 @@
 
 #include "luaext_timers.h"
 
+#include "luaext_corolib.h"
+#include "luaext_profiler.h"
 #include "luaext_watchdog.h"
 
 #include <Zend/zend_exceptions.h>
@@ -154,19 +156,42 @@ double luaext_timers_cpu_resolution_seconds(void)
  * ---------------------------------------------------------------------- */
 
 /*
- * The fallback decision, shared by attach and the two limit setters: the
- * count hook is armed only when the watchdog thread could not be started,
- * where its strided clock self-check becomes the only thing that can notice
- * an overrun. Re-decided at every arming point because the thread starts
- * lazily -- a sandbox whose first limit arrives through setLimits() would
- * otherwise be left with neither enforcer. Re-installing the same hook is a
- * no-op, so calling this again costs nothing on the healthy path.
+ * The fallback decision, shared by attach, the two limit setters and the
+ * profiler's disable path: the count hook is armed only when the watchdog
+ * thread could not be started, where its strided clock self-check becomes the
+ * only thing that can notice an overrun. Re-decided at every arming point
+ * because the thread starts lazily -- a sandbox whose first limit arrives
+ * through setLimits() would otherwise be left with neither enforcer.
+ * Re-installing the same hook is a no-op, so calling this again costs nothing
+ * on the healthy path.
  */
-static void luaext_timers_install_fallback_hook(luaext_sandbox *sandbox)
+void luaext_timers_install_fallback_hook(luaext_sandbox *sandbox)
 {
-	if (luaext_timers_hook_armed() && luaext_watchdog_thread_failed()) {
-		lua_sethook(sandbox->L, luaext_timers_hook, LUA_MASKCOUNT, (int)LUAEXT_G(hook_count));
+	if (!luaext_timers_hook_armed() || !luaext_watchdog_thread_failed()) {
+		return;
 	}
+
+	/*
+	 * The profiler owns the hook slot while it is enabled. Overwriting its
+	 * hook here would end the profile mid-window, and clearing ours on
+	 * disableProfiler() would end the limit -- so the slot is left alone, the
+	 * profiler's own hook mirrors these enforcement checks so the deferral
+	 * loses nothing, and luaext_profiler_disable() calls back in here the
+	 * moment the slot is free again.
+	 */
+	if (luaext_profiler_active(sandbox)) {
+		return;
+	}
+
+	/*
+	 * Every live thread, not just the main one: lua_sethook() is per-state,
+	 * and a coroutine copies its creator's hook exactly once, at
+	 * lua_newthread() time. Armed on sandbox->L alone, a coroutine that
+	 * already existed when the watchdog failed would run the rest of its life
+	 * with no enforcer at all.
+	 */
+	luaext_corolib_set_hook_all(sandbox, luaext_timers_hook, LUA_MASKCOUNT,
+								(int)LUAEXT_G(hook_count));
 }
 
 bool luaext_timers_attach(luaext_sandbox *sandbox)
