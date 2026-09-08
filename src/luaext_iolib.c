@@ -259,6 +259,17 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 {
 	*refusal = NULL;
 
+	/* Re-checked here, not only at :read's door: every multi-step read comes
+	 * back through this function, and a backend that re-enters the sandbox
+	 * can close this very handle between two of its crossings — after which
+	 * the buffer slice below, or the path pushed for a ranged call, would
+	 * dereference the NULLs release left behind. The lines iterator makes
+	 * the same per-step check for the same reason. */
+	if (handle->closed) {
+		luaL_error(L, "attempt to use a closed file");
+		return -1;
+	}
+
 	if (!handle->ranged) {
 		size_t available = ZSTR_LEN(handle->buffer);
 		size_t start = handle->offset > available ? available : (size_t)handle->offset;
@@ -615,6 +626,14 @@ static int luaext_iolib_file_write(lua_State *L)
 		const char *data;
 		size_t length;
 		uint64_t end;
+
+		/* Re-checked each pass: writeRange crosses into the host once per
+		 * argument, and a backend that re-enters the sandbox can close this
+		 * very handle between two of them — the next pass would then push
+		 * the NULL path release left behind. */
+		if (handle->closed) {
+			return luaL_error(L, "attempt to use a closed file");
+		}
 
 		if (lua_type(L, index) != LUA_TNUMBER && lua_type(L, index) != LUA_TSTRING) {
 			return luaL_argerror(
