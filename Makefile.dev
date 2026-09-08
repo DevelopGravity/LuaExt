@@ -111,8 +111,11 @@ check:
 	echo "== gates =="; \
 	run clang-format          "$(CLANG_FORMAT)" "pip install clang-format==18.1.8 into .venv" \
 	    $(MAKE) -s -f Makefile.dev format-check; \
-	run editorconfig          ec "brew install editorconfig-checker" \
-	    ec -exclude 'third_party|luaext_arginfo\.h|ide-stubs' -disable-indentation; \
+	: "Homebrew's formula stopped shipping the short ec symlink, so accept"; \
+	: "either name rather than skipping on machines that have the real tool."; \
+	ec_bin=ec; command -v ec >/dev/null 2>&1 || ec_bin=editorconfig-checker; \
+	run editorconfig          "$$ec_bin" "brew install editorconfig-checker" \
+	    "$$ec_bin" -exclude 'third_party|luaext_arginfo\.h|ide-stubs' -disable-indentation; \
 	run shellcheck            shellcheck "brew install shellcheck" \
 	    bash -c 'shellcheck tools/*.sh'; \
 	run actionlint            actionlint "brew install actionlint" \
