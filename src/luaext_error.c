@@ -98,15 +98,9 @@ static int luaext_error_capture(lua_State *L);
  * sweep, which is why the message is allocated persistently: a request-arena
  * string could already have been reclaimed by the time this runs.
  */
-static int luaext_error_gc(lua_State *L)
+static void luaext_error_release_payload(luaext_sandbox *sandbox, luaext_error_ud *error)
 {
-	luaext_error_ud *error = (luaext_error_ud *)lua_touserdata(L, 1);
-
-	if (error == NULL || error->magic != LUAEXT_ERROR_MAGIC) {
-		return 0;
-	}
-
-	/* A finalised error is no longer one of ours, even if it is resurrected. */
+	/* A settled error is no longer one of ours, even if it is resurrected. */
 	error->magic = 0;
 
 	if (error->message != NULL) {
@@ -125,8 +119,6 @@ static int luaext_error_gc(lua_State *L)
 		 * The message above needs no such care -- a zend_string has no
 		 * destructor and releasing one cannot run user code.
 		 */
-		luaext_sandbox *sandbox = LUAEXT_SB(L);
-
 		if (sandbox != NULL) {
 			luaext_defer_zval(sandbox, &error->php_exception);
 		} else {
@@ -135,8 +127,32 @@ static int luaext_error_gc(lua_State *L)
 	}
 
 	ZVAL_UNDEF(&error->php_exception);
+}
+
+static int luaext_error_gc(lua_State *L)
+{
+	luaext_error_ud *error = (luaext_error_ud *)lua_touserdata(L, 1);
+
+	/* Size before magic, as in luaext_error_is_ours(): a __gc fires through
+	 * whatever metatable the value wears at collection time, and a smaller
+	 * foreign userdata must never be read past its end. */
+	if (error == NULL || lua_rawlen(L, 1) != sizeof(luaext_error_ud) ||
+		error->magic != LUAEXT_ERROR_MAGIC) {
+		return 0;
+	}
+
+	luaext_error_release_payload(LUAEXT_SB(L), error);
 
 	return 0;
+}
+
+void luaext_error_strip(luaext_sandbox *sandbox, lua_State *L, int index)
+{
+	if (!luaext_error_is_ours(L, index)) {
+		return;
+	}
+
+	luaext_error_release_payload(sandbox, (luaext_error_ud *)lua_touserdata(L, index));
 }
 
 /*

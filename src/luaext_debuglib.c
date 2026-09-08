@@ -37,6 +37,7 @@
 
 #include "luaext_openlibs.h"
 
+#include "luaext_error.h"
 #include "luaext_proxy.h"
 
 #include <lauxlib.h>
@@ -206,26 +207,40 @@ static void luaext_debuglib_guard_upvalue_members(lua_State *L, int selected)
  * userdata is finalised through whatever metatable it wears at COLLECTION
  * time, so swapping the real one away means no finaliser ever hands the
  * reference back: lua_close() cannot see it and the object leaks for the
- * request. Stripping is allowed — debugMutate is documented as escaping most
- * guarantees — but the payload is settled HERE, at the moment the proxy
- * stops being one of ours. Re-stamping the same metatable changes nothing
- * and settles nothing.
+ * request. The error userdata has the same shape of payload — a persistent
+ * message string and a retained host exception that only its finaliser
+ * releases — so it is settled here too. Stripping is allowed — debugMutate is
+ * documented as escaping most guarantees — but the payload is settled HERE,
+ * at the moment the value stops being one of ours. Re-stamping the same
+ * metatable changes nothing and settles nothing.
  */
 static int luaext_debuglib_setmetatable(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	int argc = lua_gettop(L);
 
-	if (sandbox != NULL && luaext_proxy_test(sandbox, L, 1) != NULL) {
+	/*
+	 * Settle only what the delegated call will really detach. Upstream refuses
+	 * any replacement that is not nil-or-table BEFORE it changes anything, so
+	 * a call that is about to raise must find the payload exactly as it was —
+	 * settling first would strip a value on a call that then changed nothing.
+	 */
+	int replacement = lua_type(L, 2);
+
+	if (sandbox != NULL && (replacement == LUA_TNIL || replacement == LUA_TTABLE)) {
 		bool unchanged = false;
 
 		if (lua_getmetatable(L, 1)) {
-			unchanged = argc >= 2 && lua_rawequal(L, -1, 2);
+			unchanged = lua_rawequal(L, -1, 2) != 0;
 			lua_pop(L, 1);
 		}
 
 		if (!unchanged) {
-			luaext_proxy_strip(sandbox, L, 1);
+			if (luaext_proxy_test(sandbox, L, 1) != NULL) {
+				luaext_proxy_strip(sandbox, L, 1);
+			} else {
+				luaext_error_strip(sandbox, L, 1);
+			}
 		}
 	}
 

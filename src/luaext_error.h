@@ -114,6 +114,17 @@ bool luaext_error_is_ours(lua_State *L, int index);
 bool luaext_error_is_fatal(lua_State *L, int index);
 
 /*
+ * Release what the error userdata at `index` owns, ahead of its finaliser.
+ *
+ * For the moment its metatable stops being ours: a userdata is finalised
+ * through whatever metatable it wears at COLLECTION time, so a debugMutate
+ * script detaching the error metatable would otherwise strand the persistent
+ * message and the retained host exception with no finaliser left to hand them
+ * back. A no-op unless the value passes luaext_error_is_ours().
+ */
+void luaext_error_strip(luaext_sandbox *sandbox, lua_State *L, int index);
+
+/*
  * Turn the Lua error value at the top of the stack into a thrown PHP
  * exception, then pop it.
  *
