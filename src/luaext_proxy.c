@@ -1328,6 +1328,13 @@ static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_clas
 	ZEND_HASH_MAP_FOREACH_PTR(&ce->function_table, method)
 	{
 		zend_attribute *attribute = zend_get_attribute(method->common.attributes, marker);
+		/* The DECLARING class, not the registering one, mirroring
+		 * luaext_phpcall_attribute_name(): the attribute's arguments are
+		 * constant expressions whose self::/private-constant lookups must
+		 * resolve where the attribute was written — function_table carries
+		 * inherited methods, and a parent's attribute evaluated in the
+		 * child's scope would resolve them wrongly or not at all. */
+		zend_class_entry *scope = method->common.scope != NULL ? method->common.scope : ce;
 		zend_string *filename = NULL;
 		zval marker_object;
 		zval holder;
@@ -1338,12 +1345,12 @@ static bool luaext_proxy_collect_operators(luaext_proxy_class *record, zend_clas
 			continue;
 		}
 
-		if (ce->type == ZEND_USER_CLASS) {
-			filename = ce->info.user.filename;
+		if (scope->type == ZEND_USER_CLASS) {
+			filename = scope->info.user.filename;
 		}
 
 		if (zend_get_attribute_object(&marker_object, luaext_ce_lua_operator_attribute, attribute,
-									  ce, filename) != SUCCESS) {
+									  scope, filename) != SUCCESS) {
 			mapped = false;
 			break;
 		}
