@@ -101,7 +101,9 @@ bool luaext_vfs_charge_operation(lua_State *L, luaext_sandbox *sandbox)
 {
 	uint32_t cap = sandbox->policy.vfs_quota.max_operations;
 
-	sandbox->vfs_operations++;
+	/* The quota counts the attempt; the published stat does not. The refused
+	 * operation never reaches the backend, and vfsOperations is documented as
+	 * what crossed into it -- so it is incremented only past this gate. */
 	sandbox->vfs_ops_this_call++;
 
 	if (cap != 0 && sandbox->vfs_ops_this_call > cap) {
@@ -116,6 +118,8 @@ bool luaext_vfs_charge_operation(lua_State *L, luaext_sandbox *sandbox)
 						   (unsigned int)cap);
 		return false;
 	}
+
+	sandbox->vfs_operations++;
 
 	return true;
 }
