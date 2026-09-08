@@ -60,6 +60,12 @@ static const struct {
  * Small helpers
  * ---------------------------------------------------------------------- */
 
+/* The two halves of pushing a proxy; defined beside luaext_proxy_try_push. */
+static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_State *L,
+												luaext_proxy_class *cls);
+static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
+							  luaext_proxy_class *cls, zend_object *object);
+
 /* A persistent copy of a (possibly request-allocated) string. */
 static zend_string *luaext_proxy_pstr(const zend_string *source)
 {
@@ -367,6 +373,31 @@ static int luaext_proxy_release(lua_State *L)
 }
 
 /*
+ * The zend_function to actually call on `object`: the registered method, or
+ * the object's own override of it. The record's pointer is the REGISTERED
+ * class's implementation, and a subclass instance wrapping as its nearest
+ * registered ancestor must still run its own overrides — exactly as a bound
+ * callable from registerObject() would. PHP forbids narrowing visibility, so
+ * an override of a vetted public method is itself public.
+ */
+static zend_function *luaext_proxy_resolve_method(zend_object *object,
+												  const luaext_proxy_class *cls,
+												  zend_function *method)
+{
+	zend_function *override;
+
+	if (object->ce == cls->ce) {
+		return method;
+	}
+
+	override = (zend_function *)zend_hash_str_find_ptr_lc(&object->ce->function_table,
+														  ZSTR_VAL(method->common.function_name),
+														  ZSTR_LEN(method->common.function_name));
+
+	return override != NULL ? override : method;
+}
+
+/*
  * Instance dispatch. Upvalues: (1) the class record, (2) the vetted
  * zend_function, (3) the Lua-visible name. Colon convention: the first
  * argument must be a proxy of this exact class — subclass instances already
@@ -389,7 +420,7 @@ static int luaext_proxy_method_call(lua_State *L)
 	}
 
 	target.fcc = NULL;
-	target.fn = method;
+	target.fn = luaext_proxy_resolve_method(self->object, cls, method);
 	target.bound = self->object;
 	target.scope = self->object->ce;
 	target.label = name;
@@ -443,6 +474,7 @@ static int luaext_proxy_new_call(lua_State *L)
 	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	luaext_phpcall_target target;
+	luaext_proxy_ud *slot;
 	zend_object *object;
 	zval instance;
 
@@ -451,29 +483,29 @@ static int luaext_proxy_new_call(lua_State *L)
 						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
 	}
 
-	/*
-	 * BEFORE the object exists: a pre-existing pending exception raised after
-	 * object_init_ex() would longjmp while this frame owns the new instance.
-	 * Ordered this way, every raise below the init owns nothing (init failure
-	 * leaves the zval undef) or has already handed the object to Lua.
-	 */
 	if (EG(exception) != NULL) {
 		luaext_error_raise_from_exception(L);
 	}
 
+	/*
+	 * Lua-side allocation FIRST, while this frame owns nothing: the shell's
+	 * userdata, metatable and GC-list growth are every step of a push that
+	 * can raise (a billed allocator hitting memoryBytes longjmps), and a
+	 * raise past a freshly-created object's sole reference would leak it.
+	 * Only once the shell exists is the PHP object created — object_init_ex()
+	 * cannot longjmp, a FAILURE leaves the zval undef — and the two are
+	 * married by the binding half, which cannot raise at all.
+	 */
+	slot = luaext_proxy_push_shell(sandbox, L, cls);
+
 	if (object_init_ex(&instance, cls->ce) == FAILURE || EG(exception) != NULL) {
+		/* The blank shell is collected as any garbage; zero magic no-ops its
+		 * finaliser. Nothing is owned. */
 		luaext_error_raise_from_exception(L);
 	}
 
 	object = Z_OBJ(instance);
-
-	if (!luaext_proxy_try_push(sandbox, L, object)) {
-		/* Unreachable while registration implies findability; refuse loudly
-		 * rather than hand the script a raw refusal about its own class. */
-		zval_ptr_dtor(&instance);
-		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s.%s could not wrap its own instance",
-						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
-	}
+	luaext_proxy_bind(sandbox, slot, cls, object);
 
 	/* Lua owns it now; the local reference goes before anything can raise. */
 	zval_ptr_dtor(&instance);
@@ -542,7 +574,7 @@ static int luaext_proxy_binop(lua_State *L)
 	}
 
 	target.fcc = NULL;
-	target.fn = cls->op_methods[slot];
+	target.fn = luaext_proxy_resolve_method(left->object, cls, cls->op_methods[slot]);
 	target.bound = left->object;
 	target.scope = left->object->ce;
 	target.label = luaext_proxy_ops[slot].symbol;
@@ -578,7 +610,8 @@ static int luaext_proxy_unop(lua_State *L)
 	lua_settop(L, 1);
 
 	target.fcc = NULL;
-	target.fn = cls->op_methods[LUAEXT_PROXY_OP_UNM];
+	target.fn =
+		luaext_proxy_resolve_method(self->object, cls, cls->op_methods[LUAEXT_PROXY_OP_UNM]);
 	target.bound = self->object;
 	target.scope = self->object->ce;
 	target.label = "-";
@@ -625,7 +658,8 @@ static int luaext_proxy_eq(lua_State *L)
 	}
 
 	target.fcc = NULL;
-	target.fn = left->cls->op_methods[LUAEXT_PROXY_OP_EQ];
+	target.fn = luaext_proxy_resolve_method(left->object, left->cls,
+											left->cls->op_methods[LUAEXT_PROXY_OP_EQ]);
 	target.bound = left->object;
 	target.scope = left->object->ce;
 	target.label = "==";
@@ -657,7 +691,9 @@ static int luaext_proxy_tostring(lua_State *L)
 	lua_settop(L, 1);
 
 	target.fcc = NULL;
-	target.fn = cls->to_string;
+	/* The actual class's __toString, when it overrode the registered one. */
+	target.fn =
+		self->object->ce->__tostring != NULL ? self->object->ce->__tostring : cls->to_string;
 	target.bound = self->object;
 	target.scope = self->object->ce;
 	target.label = "__toString";
@@ -798,32 +834,41 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 	lua_pop(L, 1);
 }
 
-bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *object)
+/*
+ * The allocating half of pushing a proxy: a blank, magic-less shell wearing
+ * `cls`'s metatable, with the GC list already grown to hold it. EVERY step
+ * that can raise lives here, and the shell owns nothing — a raise leaves a
+ * userdata whose zeroed magic makes the finaliser a no-op. The split exists
+ * for .new, which must run all raising allocation BEFORE it creates the PHP
+ * object whose sole reference would otherwise be stranded by the longjmp.
+ */
+static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_State *L,
+												luaext_proxy_class *cls)
 {
-	luaext_proxy_class *cls = luaext_proxy_find(sandbox, object->ce);
-	luaext_proxy_ud *slot;
+	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_newuserdatauv(L, sizeof(*slot), 0);
 
-	if (cls == NULL) {
-		return false;
-	}
-
-	/* May raise on memory pressure; nothing is owned before this returns. */
-	slot = (luaext_proxy_ud *)lua_newuserdatauv(L, sizeof(*slot), 0);
 	memset(slot, 0, sizeof(*slot));
 
-	/* Armed while magic is still zero, so a raise below leaves a userdata
-	 * whose finaliser no-ops rather than one holding an unreleased ref. */
 	luaext_proxy_push_metatable(L, cls);
 	lua_setmetatable(L, -2);
 
 	if (sandbox->proxy_gc_count == sandbox->proxy_gc_cap) {
 		size_t cap = sandbox->proxy_gc_cap == 0 ? 8 : sandbox->proxy_gc_cap * 2;
 
+		/* pemalloc never raises: on true OOM it ends the process rather than
+		 * longjmping, so growing here keeps the binding half raise-free. */
 		sandbox->proxy_gc_items = (luaext_proxy_ud **)perealloc(
 			sandbox->proxy_gc_items, cap * sizeof(*sandbox->proxy_gc_items), 1);
 		sandbox->proxy_gc_cap = cap;
 	}
 
+	return slot;
+}
+
+/* The binding half: no step in here can raise. */
+static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
+							  luaext_proxy_class *cls, zend_object *object)
+{
 	slot->object = object;
 	GC_ADDREF(object);
 	slot->cls = cls;
@@ -832,6 +877,17 @@ bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *o
 
 	/* Last: only a fully-listed, reference-holding payload is a live proxy. */
 	slot->magic = LUAEXT_PROXY_MAGIC;
+}
+
+bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *object)
+{
+	luaext_proxy_class *cls = luaext_proxy_find(sandbox, object->ce);
+
+	if (cls == NULL) {
+		return false;
+	}
+
+	luaext_proxy_bind(sandbox, luaext_proxy_push_shell(sandbox, L, cls), cls, object);
 
 	return true;
 }
