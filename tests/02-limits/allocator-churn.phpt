@@ -18,6 +18,13 @@ use DevelopGravity\LuaExt\Sandbox;
 $first = null;
 $stable = true;
 
+// The self-reported figure only proves the LUA heap balances; the host-side
+// bracket below is what catches request-arena bookkeeping the extension keeps
+// AROUND each sandbox and forgets to release -- invisible to the Lua ledger.
+$warmup = new Sandbox();
+$warmup->close();
+$hostBefore = memory_get_usage();
+
 for ($round = 0; $round < 64; $round++) {
 	$sandbox = new Sandbox();
 	$usage = $sandbox->stats()->memoryBytes;
@@ -31,8 +38,14 @@ for ($round = 0; $round < 64; $round++) {
 	$sandbox->close();
 }
 
+$hostGrowth = memory_get_usage() - $hostBefore;
+
 var_dump($first > 0);
 var_dump($stable);
+
+// Generous: 64 lifecycles at even 1 KB of forgotten host bookkeeping each
+// would blow through this.
+printf("host arena held flat: %s\n", $hostGrowth < 32768 ? 'yes' : "no ({$hostGrowth} bytes)");
 
 // Interleaving them proves the counters are per-sandbox rather than a shared
 // running total that only looks right when one exists at a time.
@@ -62,5 +75,6 @@ var_dump(true);
 --EXPECT--
 bool(true)
 bool(true)
+host arena held flat: yes
 bool(true)
 bool(true)
