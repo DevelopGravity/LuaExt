@@ -1539,14 +1539,22 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister)
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
-	if (!luaext_sandbox_check_usable(sandbox) ||
-		!luaext_sandbox_global_release(sandbox, ZSTR_VAL(name), ZSTR_LEN(name))) {
+	if (!luaext_sandbox_check_usable(sandbox)) {
 		RETURN_THROWS();
 	}
 
-	/* A class registered under this name stops wrapping new instances;
-	 * proxies a script already holds keep working. No-op otherwise. */
-	luaext_proxy_retire_name(sandbox, name);
+	/*
+	 * Look, don't commit: releasing the claim (or retiring a class) before
+	 * the global is actually cleared would, on a failed clear, leave the
+	 * name re-registerable while the stale global still resolves. Nothing
+	 * changes until the interpreter half has succeeded.
+	 */
+	if (sandbox->claimed_globals == NULL ||
+		!zend_hash_str_exists(sandbox->claimed_globals, ZSTR_VAL(name), ZSTR_LEN(name))) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"Nothing is registered under the Lua name \"%s\"", ZSTR_VAL(name));
+		RETURN_THROWS();
+	}
 
 	L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
 	lua_pushcfunction(L, luaext_sandbox_clear_global);
@@ -1557,6 +1565,13 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister)
 		luaext_error_throw_from_lua(sandbox, L, status);
 		RETURN_THROWS();
 	}
+
+	/* Committed only now, and release cannot fail: existence held above. */
+	(void)luaext_sandbox_global_release(sandbox, ZSTR_VAL(name), ZSTR_LEN(name));
+
+	/* A class registered under this name stops wrapping new instances;
+	 * proxies a script already holds keep working. No-op otherwise. */
+	luaext_proxy_retire_name(sandbox, L, name);
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule)

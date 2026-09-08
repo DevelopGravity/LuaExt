@@ -28,9 +28,15 @@ $sandbox = new Sandbox();
 $sandbox->registerLibrary('clock', ['now' => static fn (): int => 99]);
 
 $claims = [
-	'library-library' => static fn () => $sandbox->registerLibrary('clock', ['now' => static fn (): int => 1]),
-	'class-library' => static fn () => $sandbox->registerClass(Clock::class, luaName: 'clock'),
-	'object-library' => static fn () => $sandbox->registerObject('clock', new Pinger()),
+	'library-library' => static function () use ($sandbox): void {
+		$sandbox->registerLibrary('clock', ['now' => static fn (): int => 1]);
+	},
+	'class-library' => static function () use ($sandbox): void {
+		$sandbox->registerClass(Clock::class, luaName: 'clock');
+	},
+	'object-library' => static function () use ($sandbox): void {
+		$sandbox->registerObject('clock', new Pinger());
+	},
 ];
 
 foreach ($claims as $label => $attempt) {

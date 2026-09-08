@@ -39,12 +39,24 @@ final class TableClash
 $sandbox = new Sandbox();
 
 $attempts = [
-	'missing' => static fn () => $sandbox->registerClass('No\\Such\\ClassAtAll'),
-	'interface' => static fn () => $sandbox->registerClass(Shape::class),
-	'enum' => static fn () => $sandbox->registerClass(Suit::class),
-	'abstract-ctor' => static fn () => $sandbox->registerClass(AbstractBase::class),
-	'nothing' => static fn () => $sandbox->registerClass(Bare::class),
-	'table-clash' => static fn () => $sandbox->registerClass(TableClash::class),
+	'missing' => static function () use ($sandbox): void {
+		$sandbox->registerClass('No\\Such\\ClassAtAll');
+	},
+	'interface' => static function () use ($sandbox): void {
+		$sandbox->registerClass(Shape::class);
+	},
+	'enum' => static function () use ($sandbox): void {
+		$sandbox->registerClass(Suit::class);
+	},
+	'abstract-ctor' => static function () use ($sandbox): void {
+		$sandbox->registerClass(AbstractBase::class);
+	},
+	'nothing' => static function () use ($sandbox): void {
+		$sandbox->registerClass(Bare::class);
+	},
+	'table-clash' => static function () use ($sandbox): void {
+		$sandbox->registerClass(TableClash::class);
+	},
 ];
 
 foreach ($attempts as $label => $attempt) {

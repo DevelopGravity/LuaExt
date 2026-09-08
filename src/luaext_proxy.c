@@ -66,6 +66,10 @@ static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_Sta
 static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
 							  luaext_proxy_class *cls, zend_object *object);
 
+/* Retired-record reclamation and record teardown; defined further down. */
+static void luaext_proxy_discard(luaext_sandbox *sandbox, lua_State *L, luaext_proxy_class *record);
+static void luaext_proxy_class_free(luaext_proxy_class *record);
+
 /* A persistent copy of a (possibly request-allocated) string. */
 static zend_string *luaext_proxy_pstr(const zend_string *source)
 {
@@ -366,6 +370,22 @@ static int luaext_proxy_release(lua_State *L)
 			 * would be worse, and a failed queue growth means the process is
 			 * already out of memory. */
 			zval_ptr_dtor(&carrier);
+		}
+	}
+
+	/* The last proxy of a retired class takes the record with it; both the
+	 * scrub and the free are pure C work, safe inside a finaliser. */
+	if (slot->cls != NULL) {
+		luaext_proxy_class *cls = slot->cls;
+
+		slot->cls = NULL;
+
+		if (cls->live_proxies > 0) {
+			cls->live_proxies--;
+		}
+
+		if (cls->retired && cls->live_proxies == 0 && sandbox != NULL) {
+			luaext_proxy_discard(sandbox, L, cls);
 		}
 	}
 
@@ -872,11 +892,60 @@ static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
 	slot->object = object;
 	GC_ADDREF(object);
 	slot->cls = cls;
+	cls->live_proxies++;
 	slot->gc_index = sandbox->proxy_gc_count;
 	sandbox->proxy_gc_items[sandbox->proxy_gc_count++] = slot;
 
 	/* Last: only a fully-listed, reference-holding payload is a live proxy. */
 	slot->magic = LUAEXT_PROXY_MAGIC;
+}
+
+/*
+ * Remove a record's metatable from the registry: the class -> metatable
+ * interning and the metatable's entry in the proxymts identity map. Called
+ * only when no live proxy wears the metatable, so the one thing that can
+ * still hold it afterwards is a debugMutate-forged value — which the map
+ * removal demotes to the refuse-everywhere shape a stripped proxy already
+ * has. No step here allocates, so it is safe from a finaliser.
+ */
+static void luaext_proxy_scrub_metatable(lua_State *L, luaext_proxy_class *record)
+{
+	if (lua_rawgetp(L, LUA_REGISTRYINDEX, record) == LUA_TTABLE) {
+		if (lua_rawgetp(L, LUA_REGISTRYINDEX, &luaext_key_proxymts) == LUA_TTABLE) {
+			lua_pushvalue(L, -2);
+			lua_pushnil(L);
+			lua_rawset(L, -3);
+		}
+
+		lua_pop(L, 1);
+	}
+
+	lua_pop(L, 1);
+	lua_pushnil(L);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, record);
+}
+
+/*
+ * Free a retired record whose last proxy has died: unlink it from the
+ * retired chain (retire-with-none-alive never linked it), scrub its
+ * metatable, release its storage. Frees only C memory, so it is safe from a
+ * finaliser too.
+ */
+static void luaext_proxy_discard(luaext_sandbox *sandbox, lua_State *L, luaext_proxy_class *record)
+{
+	luaext_proxy_class **link = &sandbox->proxy_retired;
+
+	while (*link != NULL) {
+		if (*link == record) {
+			*link = record->next;
+			break;
+		}
+
+		link = &(*link)->next;
+	}
+
+	luaext_proxy_scrub_metatable(L, record);
+	luaext_proxy_class_free(record);
 }
 
 bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *object)
@@ -1464,7 +1533,7 @@ luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_
 	return NULL;
 }
 
-void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_name)
+void luaext_proxy_retire_name(luaext_sandbox *sandbox, lua_State *L, const zend_string *lua_name)
 {
 	luaext_proxy_class **link = &sandbox->proxy_classes;
 
@@ -1473,11 +1542,21 @@ void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_na
 
 		if (zend_string_equals(record->lua_name, lua_name)) {
 			*link = record->next;
+			record->retired = true;
+
+			if (record->live_proxies == 0) {
+				/* Nothing dispatches through it: gone now, metatable and
+				 * all, so swap loops cannot accumulate dead records. */
+				record->next = NULL;
+				luaext_proxy_scrub_metatable(L, record);
+				luaext_proxy_class_free(record);
+				return;
+			}
 
 			/* Retired, not freed: the metatable and dispatch closures still
 			 * reference this record through light userdata, and proxies a
-			 * script already holds keep dispatching through them. Only the
-			 * find chain forgets it. */
+			 * script already holds keep dispatching through them. The last
+			 * such proxy's finaliser reclaims it. */
 			record->next = sandbox->proxy_retired;
 			sandbox->proxy_retired = record;
 			return;

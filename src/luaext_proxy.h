@@ -68,6 +68,16 @@ struct luaext_proxy_class {
 	/* NULL = slot unmapped. Filled by operator validation. */
 	zend_function *op_methods[LUAEXT_PROXY_OP__COUNT];
 
+	/*
+	 * Reclamation bookkeeping. A record unregister() retires is freed the
+	 * moment its LAST proxy dies (its metatable scrubbed from the registry
+	 * alongside it), so swap loops cannot grow the retired chain without
+	 * bound — a retired record lives exactly as long as something still
+	 * dispatches through it.
+	 */
+	bool retired;
+	size_t live_proxies;
+
 	struct luaext_proxy_class *next;
 };
 
@@ -140,12 +150,13 @@ luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_
 
 /*
  * Retire the class registered under `lua_name`, if any: unlink it from the
- * find chain so NEW instances stop wrapping, while the record itself stays
- * allocated — its metatable and dispatch closures still reference it, and
- * proxies a script already holds keep working, because an object a script
- * was given cannot be taken back. A no-op for non-class names.
+ * find chain so NEW instances stop wrapping, while proxies a script already
+ * holds keep working — an object a script was given cannot be taken back.
+ * The record is freed (and its metatable scrubbed from the registry) once no
+ * live proxy references it: immediately when none do, else when the last one
+ * dies. A no-op for non-class names.
  */
-void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_name);
+void luaext_proxy_retire_name(luaext_sandbox *sandbox, lua_State *L, const zend_string *lua_name);
 
 /*
  * Release every PHP reference the live proxies still hold, for the one close
