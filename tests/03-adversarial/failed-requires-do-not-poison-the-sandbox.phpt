@@ -86,7 +86,7 @@ printf("retry       => %s\n",
 	str_contains($retry, 'requires itself') ? 'REQUIRES ITSELF (leaked mark)' : 'compile error again');
 
 // A module that loads normally still does, in the same sandbox.
-$sandbox->preloadModule('fine', static fn (): int => 42);
+$sandbox->preloadModule('fine', static fn (string $module): int => 42);
 [$fine] = $sandbox->eval('return require("fine")', '=fine');
 printf("healthy     => %d\n", $fine);
 

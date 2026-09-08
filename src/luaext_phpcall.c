@@ -198,6 +198,259 @@ static int luaext_phpcall_push_result(lua_State *L)
 	return 1;
 }
 
+/* -------------------------------------------------------------------------
+ * The strict argument gate
+ *
+ * Arguments a script hands a typed PHP callable are held to the callee's
+ * declared signature under strict_types=1 semantics BEFORE the call — the
+ * engine's own coercion never runs for internal-origin calls under the
+ * caller's strictness, so without this gate the boundary silently juggles
+ * ("42" becomes int, 1 becomes "1") depending on nothing the script or the
+ * callee wrote. Two deliberate tightenings beyond the engine: surplus
+ * arguments to a non-variadic callee are refused rather than parked in
+ * func_get_args(), and every contract mismatch is a CATCHABLE Lua error —
+ * the script's mistake, named where the script can adapt to it.
+ * ---------------------------------------------------------------------- */
+
+typedef enum {
+	LUAEXT_PHPCALL_ARGS_OK,
+	LUAEXT_PHPCALL_ARGS_MISMATCH,  /* message formatted; raise after cleanup */
+	LUAEXT_PHPCALL_ARGS_EXCEPTION, /* a check ran PHP that threw; EG(exception) rules */
+} luaext_phpcall_args_verdict;
+
+/*
+ * self/parent in a parameter type resolve against the DECLARING function's
+ * scope: a plain class's `self` is already compile-time resolved to its name,
+ * but one declared in a trait stays literal. Everything else is a no-autoload
+ * lookup — an instance of a class that is not loaded cannot exist, so a
+ * failed lookup IS a mismatch, and no user PHP runs deciding it.
+ */
+static zend_class_entry *luaext_phpcall_resolve_type_name(const zend_function *fn,
+														  zend_string *name)
+{
+	if (zend_string_equals_literal_ci(name, "self")) {
+		return fn->common.scope;
+	}
+
+	if (zend_string_equals_literal_ci(name, "parent")) {
+		return fn->common.scope != NULL ? fn->common.scope->parent : NULL;
+	}
+
+	return zend_lookup_class_ex(name, NULL, ZEND_FETCH_CLASS_NO_AUTOLOAD);
+}
+
+/* One union member (a class name, or an intersection list of them) against
+ * the argument's class. DNF shapes nest exactly one level. */
+static bool luaext_phpcall_type_member_matches(const zend_function *fn, const zend_type *member,
+											   zend_class_entry *object_ce)
+{
+	if (ZEND_TYPE_HAS_LIST(*member)) {
+		const zend_type *sub;
+
+		ZEND_TYPE_LIST_FOREACH(ZEND_TYPE_LIST(*member), sub)
+		{
+			if (!luaext_phpcall_type_member_matches(fn, sub, object_ce)) {
+				return false;
+			}
+		}
+		ZEND_TYPE_LIST_FOREACH_END();
+
+		return true;
+	}
+
+	if (ZEND_TYPE_HAS_NAME(*member)) {
+		zend_class_entry *ce = luaext_phpcall_resolve_type_name(fn, ZEND_TYPE_NAME(*member));
+
+		return ce != NULL && instanceof_function(object_ce, ce);
+	}
+
+	if (ZEND_TYPE_HAS_LITERAL_NAME(*member)) {
+		/* Internal/frameless shapes carry the name as a C string. */
+		const char *raw = ZEND_TYPE_LITERAL_NAME(*member);
+		zend_string *name = zend_string_init(raw, strlen(raw), 0);
+		zend_class_entry *ce = luaext_phpcall_resolve_type_name(fn, name);
+
+		zend_string_release(name);
+
+		return ce != NULL && instanceof_function(object_ce, ce);
+	}
+
+	return false;
+}
+
+/* An object argument against the declared class portion of a type. */
+static bool luaext_phpcall_object_matches(const zend_function *fn, const zend_type *type,
+										  zend_class_entry *object_ce)
+{
+	if (!ZEND_TYPE_IS_COMPLEX(*type)) {
+		return false;
+	}
+
+	if (ZEND_TYPE_HAS_LIST(*type)) {
+		const zend_type *member;
+
+		if (ZEND_TYPE_IS_INTERSECTION(*type)) {
+			ZEND_TYPE_LIST_FOREACH(ZEND_TYPE_LIST(*type), member)
+			{
+				if (!luaext_phpcall_type_member_matches(fn, member, object_ce)) {
+					return false;
+				}
+			}
+			ZEND_TYPE_LIST_FOREACH_END();
+
+			return true;
+		}
+
+		ZEND_TYPE_LIST_FOREACH(ZEND_TYPE_LIST(*type), member)
+		{
+			if (luaext_phpcall_type_member_matches(fn, member, object_ce)) {
+				return true;
+			}
+		}
+		ZEND_TYPE_LIST_FOREACH_END();
+
+		return false;
+	}
+
+	return luaext_phpcall_type_member_matches(fn, type, object_ce);
+}
+
+/*
+ * One argument against one declared type, strictly.
+ *
+ * The scalar tail is OURS on purpose: zend_check_user_type_slow()'s fallback
+ * reads the AMBIENT frame's strict_types — whichever host file happened to
+ * call eval() — and this boundary's strictness must not depend on that.
+ * zend_verify_scalar_type_hint(strict=true) is the engine's exact
+ * strict_types=1 rule, including its one sanctioned widening (int -> float,
+ * converted in place; the result is a non-refcounted double, so a LATER
+ * argument refusing strands nothing).
+ *
+ * `ran_php` reports that zend_is_callable ran — the one branch that can
+ * autoload and reach user error handlers; the caller re-checks EG(exception).
+ */
+static bool luaext_phpcall_arg_matches(const zend_function *fn, const zend_type *type, zval *arg,
+									   bool *ran_php)
+{
+	uint32_t mask = ZEND_TYPE_FULL_MASK(*type);
+
+	if (Z_TYPE_P(arg) == IS_OBJECT) {
+		if (luaext_phpcall_object_matches(fn, type, Z_OBJCE_P(arg))) {
+			return true;
+		}
+
+		if ((mask & MAY_BE_CALLABLE) != 0) {
+			*ran_php = true;
+			return zend_is_callable(arg, 0, NULL);
+		}
+
+		return false;
+	}
+
+	if ((mask & MAY_BE_CALLABLE) != 0 &&
+		(Z_TYPE_P(arg) == IS_STRING || Z_TYPE_P(arg) == IS_ARRAY)) {
+		*ran_php = true;
+
+		if (zend_is_callable(arg, 0, NULL)) {
+			return true;
+		}
+	}
+
+	return zend_verify_scalar_type_hint(mask, arg, true, false);
+}
+
+/* The parameter's Lua-facing name, mindful of the arg_info union: user
+ * functions carry zend_string names, internal ones C strings. */
+static const char *luaext_phpcall_arg_name(const zend_function *fn, const zend_arg_info *info)
+{
+	if (fn->type == ZEND_USER_FUNCTION) {
+		return info->name != NULL ? ZSTR_VAL(info->name) : "?";
+	}
+
+	{
+		const char *name = ((const zend_internal_arg_info *)info)->name;
+
+		return name != NULL ? name : "?";
+	}
+}
+
+/*
+ * Arity and per-argument types for the call about to be made. On MISMATCH the
+ * refusal is formatted into `message` and raised by the caller once the frame
+ * owns nothing; nothing here raises. Runs no user PHP except the callable
+ * check, whose thrown exception becomes the EXCEPTION verdict and routes
+ * through the boundary's ordinary exception path.
+ */
+static luaext_phpcall_args_verdict luaext_phpcall_check_args(const luaext_phpcall_target *target,
+															 zval *params, uint32_t argc,
+															 const char *label, char *message,
+															 size_t message_size)
+{
+	const zend_function *fn = target->fcc != NULL ? target->fcc->function_handler : target->fn;
+	uint32_t required = fn->common.required_num_args;
+	uint32_t declared = fn->common.num_args;
+	bool variadic = (fn->common.fn_flags & ZEND_ACC_VARIADIC) != 0;
+	uint32_t index;
+
+	if (argc < required) {
+		snprintf(message, message_size, "%s expects at least %u argument(s), %u given", label,
+				 (unsigned int)required, (unsigned int)argc);
+		return LUAEXT_PHPCALL_ARGS_MISMATCH;
+	}
+
+	/* No declared signature (a __call trampoline): the floor above is all
+	 * there is to hold the call to. */
+	if (fn->common.arg_info == NULL) {
+		return LUAEXT_PHPCALL_ARGS_OK;
+	}
+
+	if (!variadic && argc > declared) {
+		snprintf(message, message_size, "%s expects at most %u argument(s), %u given", label,
+				 (unsigned int)declared, (unsigned int)argc);
+		return LUAEXT_PHPCALL_ARGS_MISMATCH;
+	}
+
+	for (index = 0; index < argc; index++) {
+		/* Surplus args of a variadic callee validate against its slot. */
+		const zend_arg_info *info = &fn->common.arg_info[index < declared ? index : declared];
+		bool ran_php = false;
+
+		if (ZEND_ARG_SEND_MODE(info) != ZEND_SEND_BY_VAL) {
+			snprintf(message, message_size,
+					 "%s: argument #%u ($%s) is passed by reference, which cannot cross from "
+					 "Lua",
+					 label, (unsigned int)(index + 1), luaext_phpcall_arg_name(fn, info));
+			return LUAEXT_PHPCALL_ARGS_MISMATCH;
+		}
+
+		if (!ZEND_TYPE_IS_SET(info->type) ||
+			ZEND_TYPE_CONTAINS_CODE(info->type, Z_TYPE(params[index]))) {
+			continue;
+		}
+
+		if (luaext_phpcall_arg_matches(fn, &info->type, &params[index], &ran_php)) {
+			continue;
+		}
+
+		if (ran_php && EG(exception) != NULL) {
+			return LUAEXT_PHPCALL_ARGS_EXCEPTION;
+		}
+
+		{
+			zend_string *expected = zend_type_to_string(info->type);
+
+			snprintf(message, message_size, "%s: argument #%u ($%s) must be of type %s, %s given",
+					 label, (unsigned int)(index + 1), luaext_phpcall_arg_name(fn, info),
+					 ZSTR_VAL(expected), zend_zval_value_name(&params[index]));
+			zend_string_release(expected);
+		}
+
+		return LUAEXT_PHPCALL_ARGS_MISMATCH;
+	}
+
+	return LUAEXT_PHPCALL_ARGS_OK;
+}
+
 /*
  * The boundary core every host call goes through — registered callables via
  * the closure below it, proxy dispatch (methods, statics, operators)
@@ -222,6 +475,8 @@ int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *targ
 	int index;
 	int status = LUA_OK;
 	bool converted = true;
+	luaext_phpcall_args_verdict verdict = LUAEXT_PHPCALL_ARGS_OK;
+	char gate_message[384];
 	uint64_t call_started_ns = 0;
 	luaext_host_span host_span;
 
@@ -314,7 +569,17 @@ int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *targ
 		content_bytes += billed;
 	}
 
+	/*
+	 * The strict gate, between conversion and dispatch: arity and each
+	 * argument's declared type, under strict_types=1 semantics. A refused
+	 * call is skipped entirely — never billed as a crossing, never counted.
+	 */
 	if (converted) {
+		verdict = luaext_phpcall_check_args(target, params, (uint32_t)argc, label, gate_message,
+											sizeof(gate_message));
+	}
+
+	if (converted && verdict == LUAEXT_PHPCALL_ARGS_OK) {
 		/*
 		 * The boundary counters. in_php is what lets a later wave stop charging
 		 * CPU to the script while the host works, and what makes a nested
@@ -403,7 +668,7 @@ int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *targ
 	 * explicitly rather than inferred from the return value: an exception must
 	 * never reach the interpreter as anything but a deliberate conversion.
 	 */
-	if (EG(exception) == NULL && converted) {
+	if (EG(exception) == NULL && converted && verdict == LUAEXT_PHPCALL_ARGS_OK) {
 		lua_pushcfunction(L, luaext_phpcall_push_result);
 		lua_pushlightuserdata(L, sandbox);
 		lua_pushlightuserdata(L, &result);
@@ -488,6 +753,12 @@ int luaext_phpcall_invoke_target(lua_State *L, const luaext_phpcall_target *targ
 		 * Does not return.
 		 */
 		luaext_error_raise_from_exception(L);
+	}
+
+	/* After the exception routing on purpose: a real exception (including one
+	 * the callable check's autoload threw) outranks the gate's message. */
+	if (verdict == LUAEXT_PHPCALL_ARGS_MISMATCH) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "%s", gate_message);
 	}
 
 	if (status != LUA_OK) {

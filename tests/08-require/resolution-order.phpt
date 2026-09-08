@@ -51,7 +51,7 @@ $sandbox = new Sandbox(new SandboxConfig(
 ));
 
 // Also present in the VFS and at the resolver; preload must win.
-$sandbox->preloadModule('preloaded', static fn (): array => ['who' => 'preload']);
+$sandbox->preloadModule('preloaded', static fn (string $module): array => ['who' => 'preload']);
 
 foreach (['preloaded', 'vendored', 'pkg', 'only-at-resolver'] as $module) {
 	printf("%-16s %s\n", $module, $sandbox->eval(

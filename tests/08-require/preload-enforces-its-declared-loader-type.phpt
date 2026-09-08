@@ -36,7 +36,7 @@ foreach ([
 }
 
 // Both halves of the union still work.
-$sandbox->preloadModule('from_callable', static fn (): string => 'callable ok');
+$sandbox->preloadModule('from_callable', static fn (string $module): string => 'callable ok');
 $sandbox->preloadModule('from_handle', $sandbox->compile('return function() return "handle ok" end', '@h')->call()[0]);
 printf("%s / %s\n", ...$sandbox->eval('return require("from_callable"), require("from_handle")', '=r'));
 
