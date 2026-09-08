@@ -129,3 +129,15 @@ A few conversion rules matter to anyone writing Lua that's meant to interoperate
 - Integer table keys use the full 64-bit range when converting from PHP; a Lua table with both a numeric key and its string form (e.g. `t[1]` and `t["1"]`) is a `ConversionError`, not a silent collision, in either direction.
 - Circular references (a table that contains itself, directly or transitively) are a `ConversionError` that reports the cycle's path, not a hang or a truncated copy. Conversion recursion is capped at depth 64.
 - Lua functions convert to/from `LuaFunction` objects on the PHP side. Lua threads (coroutines) do not convert at all — see above.
+
+### Arguments are strictly typed, and arity is exact
+
+Every Lua → PHP call (a registered callable, a bound object method, a proxy method, a static, `.new`, a mapped operator) holds its arguments to the callee's declared signature under `strict_types=1` semantics **regardless of any host file's own pragma** — there is no automatic type juggling at the boundary:
+
+- The map is one-to-one: Lua `nil`→`null`, `boolean`→`bool`, integer→`int`, float→`float`, string→`string`, table→`array`, function→`LuaFunction`, registered proxy→its original object. A declared parameter accepts exactly its type; the one sanctioned widening is PHP's own strict rule, integer → `float`. `"42"` never becomes an `int`, `2.5` (or even `3.0`) never becomes one either, and `1` is not `true`.
+- Explicit `nil` is `null` and must satisfy the type (nullable or a `null` union member). *Omitting* a trailing argument is how a script gets the parameter's PHP default.
+- Arity is exact: fewer arguments than required, or more than declared on a non-variadic callee, is refused — surplus arguments are never silently parked in `func_get_args()`. (Both are deliberately tighter than PHP's own engine behavior.) Variadic callees accept any surplus, and every surplus argument is type-checked against the variadic parameter.
+- By-reference parameters cannot cross from Lua and are refused outright. Enum-typed parameters are unsatisfiable from Lua (enums cross in neither direction) — accept the backing scalar and `::from()` it host-side.
+- A mismatch raises a **catchable** Lua error naming the argument, the declared type, and what was given (`take: argument #1 ($value) must be of type int, string given`) — the script's mistake, named where the script can adapt. This is deliberately distinct from a `ConversionError` (a value that cannot cross at all), which stays fatal.
+- `callable`-typed parameters follow PHP's callable rules verbatim, so a function-*name* string a script passes can satisfy them; type a parameter `LuaFunction` (or `Closure`, which only host-made closures satisfy) when only a real function value should.
+- Module loaders given to `preloadModule()` receive the module name as their first argument, per Lua's own loader convention — declare it (`fn (string $module) => ...`).

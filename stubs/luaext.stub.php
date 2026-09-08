@@ -874,6 +874,10 @@ final class Sandbox
      * The callable receives converted arguments and its return value is
      * converted back. Throw a RuntimeError to raise an error the script may
      * catch; any other exception aborts the script and reaches the host intact.
+     *
+     * Arguments are held to the callable's declared signature under
+     * strict_types=1 semantics, with exact arity — a wrong type, a missing
+     * argument or a surplus one is a catchable Lua error, never a coercion.
      */
     public function wrapCallable(callable $callback, ?string $name = null): LuaFunction {}
 
@@ -887,6 +891,12 @@ final class Sandbox
      * unregister() releases a claim; setGlobal() stays the deliberate
      * free-form write and never consults the claims.
      *
+     * Each callable's declared signature IS its contract: arguments cross
+     * under strict_types=1 semantics with exact arity (no coercion, no
+     * silently dropped surplus), and a mismatch is a catchable Lua error.
+     * Enum-typed parameters are unsatisfiable from Lua — take the backing
+     * scalar and ::from() it. See docs/lua-api.md for the full map.
+     *
      * @param array<string, callable> $functions Lua name => PHP callable
      * @throws Exception\ConfigurationError if the name is already claimed.
      */
@@ -899,7 +909,7 @@ final class Sandbox
      * exposed; properties are never reachable and the object itself never
      * crosses into Lua unless its class is registered with registerClass().
      * The name is claimed for the sandbox's lifetime under the same rule as
-     * registerLibrary().
+     * registerLibrary(), and arguments cross under the same strict contract.
      *
      * @param null|list<string> $methods Explicit allowlist, overriding attributes.
      * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method, or the name is already claimed.
@@ -915,7 +925,9 @@ final class Sandbox
      * instance itself crosses as an unforgeable userdata wherever it appears.
      * The Lua name is claimed under the same rule as registerLibrary(), even
      * when only instance methods are exposed and no table is planted; the one
-     * way back is unregister().
+     * way back is unregister(). Every dispatch — methods, statics, .new,
+     * operators — holds its arguments to the declared signature under the
+     * same strict contract as registerLibrary().
      *
      * @param null|list<string> $methods Explicit allowlist, overriding attributes.
      * @param null|array<string, Operator> $operators Method name => operator slot.
@@ -947,6 +959,10 @@ final class Sandbox
     /**
      * Register a module so require() resolves it without consulting the
      * filesystem or the module resolver.
+     *
+     * Per Lua's loader convention the loader receives the module name as its
+     * first argument — declare it (fn (string $module) => ...): the boundary's
+     * strict arity contract refuses surplus arguments a signature ignores.
      *
      * @throws Exception\CapabilityError if the require capability was not granted.
      * @throws Exception\ConfigurationError if $name is not a usable module name,

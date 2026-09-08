@@ -12,6 +12,8 @@ A sandboxed script can never `dlopen` a binary LuaRocks module — that's an arc
 
 `registerObject(string $name, object $instance, ?array $methods = null)` publishes an existing object to Lua as a table of bound method callables. Selection is explicit only — either pass an allowlist of method names, or mark methods with `#[LuaMethod]` (optionally renaming what Lua sees: `#[LuaMethod('query')]`). An object with neither throws `ConfigurationError` at registration time; there's no implicit "expose everything public" mode.
 
+**Type your parameters — the boundary enforces them strictly.** Every argument a script passes is held to your declared signature under `strict_types=1` semantics, whatever the calling file's own pragma: a Lua string never coerces into an `int` parameter, arity is exact (missing *and* surplus arguments refuse), and the script gets a catchable error naming the argument. That makes a typed signature your input validation: declare `int $id` and the method body never sees anything else. See [docs/lua-api.md](lua-api.md#arguments-are-strictly-typed-and-arity-is-exact) for the full contract.
+
 ### Example: a read-only SQLite query service
 
 This is how you get "SQL in Lua" without a binary rock: the sandbox never touches SQLite directly, it calls back into PHP, and PHP does the actual querying against a connection the host fully controls.
