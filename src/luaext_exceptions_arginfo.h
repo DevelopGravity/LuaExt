@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 8b6127df34869dbc09111a351336ac1865ad5082 */
+ * Stub hash: 556e65d9d898d8b5b96f022ee010981623f04565 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Exception_LuaThrowable_getLuaTrace, 0, 0, IS_ARRAY, 1)
 ZEND_END_ARG_INFO()
@@ -115,13 +115,14 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Exception_LuaExcep
 	zval property_luaTrace_default_value;
 	ZVAL_NULL(&property_luaTrace_default_value);
 	zend_string *property_luaTrace_name = zend_string_init("luaTrace", sizeof("luaTrace") - 1, 1);
-	zend_declare_typed_property(class_entry, property_luaTrace_name, &property_luaTrace_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_NONE(0));
+	zend_declare_typed_property(class_entry, property_luaTrace_name, &property_luaTrace_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY|MAY_BE_NULL));
 	zend_string_release(property_luaTrace_name);
 
 	zval property_luaSandbox_default_value;
 	ZVAL_NULL(&property_luaSandbox_default_value);
 	zend_string *property_luaSandbox_name = zend_string_init("luaSandbox", sizeof("luaSandbox") - 1, 1);
-	zend_declare_typed_property(class_entry, property_luaSandbox_name, &property_luaSandbox_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_NONE(0));
+	zend_string *property_luaSandbox_class_DevelopGravity_LuaExt_Sandbox = zend_string_init("DevelopGravity\\LuaExt\\Sandbox", sizeof("DevelopGravity\\LuaExt\\Sandbox")-1, 1);
+	zend_declare_typed_property(class_entry, property_luaSandbox_name, &property_luaSandbox_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_CLASS(property_luaSandbox_class_DevelopGravity_LuaExt_Sandbox, 0, MAY_BE_NULL));
 	zend_string_release(property_luaSandbox_name);
 
 	return class_entry;
@@ -138,13 +139,14 @@ static zend_class_entry *register_class_DevelopGravity_LuaExt_Exception_LuaLogic
 	zval property_luaTrace_default_value;
 	ZVAL_NULL(&property_luaTrace_default_value);
 	zend_string *property_luaTrace_name = zend_string_init("luaTrace", sizeof("luaTrace") - 1, 1);
-	zend_declare_typed_property(class_entry, property_luaTrace_name, &property_luaTrace_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_NONE(0));
+	zend_declare_typed_property(class_entry, property_luaTrace_name, &property_luaTrace_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY|MAY_BE_NULL));
 	zend_string_release(property_luaTrace_name);
 
 	zval property_luaSandbox_default_value;
 	ZVAL_NULL(&property_luaSandbox_default_value);
 	zend_string *property_luaSandbox_name = zend_string_init("luaSandbox", sizeof("luaSandbox") - 1, 1);
-	zend_declare_typed_property(class_entry, property_luaSandbox_name, &property_luaSandbox_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_NONE(0));
+	zend_string *property_luaSandbox_class_DevelopGravity_LuaExt_Sandbox = zend_string_init("DevelopGravity\\LuaExt\\Sandbox", sizeof("DevelopGravity\\LuaExt\\Sandbox")-1, 1);
+	zend_declare_typed_property(class_entry, property_luaSandbox_name, &property_luaSandbox_default_value, ZEND_ACC_PRIVATE, NULL, (zend_type) ZEND_TYPE_INIT_CLASS(property_luaSandbox_class_DevelopGravity_LuaExt_Sandbox, 0, MAY_BE_NULL));
 	zend_string_release(property_luaSandbox_name);
 
 	return class_entry;
