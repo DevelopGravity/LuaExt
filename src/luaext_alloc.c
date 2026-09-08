@@ -187,7 +187,7 @@ static zend_always_inline bool luaext_alloc_fits(size_t live, size_t limit, size
 }
 
 /*
- * Whether ZendMM can take `growth` more bytes without tripping PHP's own
+ * Whether ZendMM can take `demand` more bytes without tripping PHP's own
  * memory_limit.
  *
  * The contract this protects is lua_Alloc's: an allocator MUST NOT longjmp,
@@ -197,8 +197,14 @@ static zend_always_inline bool luaext_alloc_fits(size_t live, size_t limit, size
  * The margin of one ZendMM chunk covers the allocator's own granularity --
  * real usage grows chunk-wise, so an exact comparison would still let the
  * fatal through on a chunk boundary.
+ *
+ * `demand` is the realloc TRANSIENT, not the net growth: zend_mm_realloc that
+ * cannot resize in place takes the naive path -- allocate the new block,
+ * copy, only then free the old -- so for one moment both blocks are live and
+ * the new one is charged in full on top of a usage figure that still counts
+ * the old.
  */
-static bool luaext_alloc_zend_mm_headroom(size_t growth)
+static bool luaext_alloc_zend_mm_headroom(size_t demand)
 {
 	const size_t chunk_margin = (size_t)2 * 1024 * 1024;
 	zend_long limit = PG(memory_limit);
@@ -210,8 +216,8 @@ static bool luaext_alloc_zend_mm_headroom(size_t growth)
 
 	used = zend_memory_usage(true);
 
-	return used < (size_t)limit && (size_t)limit - used > growth &&
-		   (size_t)limit - used - growth >= chunk_margin;
+	return used < (size_t)limit && (size_t)limit - used > demand &&
+		   (size_t)limit - used - demand >= chunk_margin;
 }
 
 void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
@@ -256,7 +262,7 @@ void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 			return NULL;
 		}
 
-		if (alloc->use_zend_mm && !luaext_alloc_zend_mm_headroom(growth)) {
+		if (alloc->use_zend_mm && !luaext_alloc_zend_mm_headroom(nsize)) {
 			return NULL;
 		}
 
@@ -288,13 +294,24 @@ void *luaext_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	 * non-NULL: a NULL pointer makes `old` zero, and nsize is not zero here, so
 	 * the growth branch above would have taken it.
 	 *
-	 * A shrink is never refused. Lua asserts that a reallocation to a non-zero
-	 * size succeeds (lmem.c:186) and luaM_saferealloc_ turns a NULL into a
-	 * memory error, so refusing to shrink would strand a sandbox that has no
-	 * way left to give memory back — precisely when it most needs one. (A
-	 * ZendMM shrink cannot trip memory_limit, so no headroom check either.)
+	 * A shrink is never refused outright. Lua asserts that a reallocation to a
+	 * non-zero size succeeds (lmem.c:186) and luaM_saferealloc_ turns a NULL
+	 * into a memory error, so refusing to shrink would strand a sandbox that
+	 * has no way left to give memory back — precisely when it most needs one.
+	 *
+	 * A ZendMM shrink still gets the headroom check, because "shrink" does not
+	 * mean "no allocation": a request that crosses a size class falls through
+	 * zend_mm_realloc's in-place paths to the naive one — allocate the smaller
+	 * block, copy, free the old — and with the heap at its ceiling that fresh
+	 * allocation is the one that breaches, exiting through zend_bailout from
+	 * inside lua_Alloc. Keeping the original, larger block is this branch's
+	 * documented fallback anyway, so a refused shrink routes there.
 	 */
-	block = alloc->use_zend_mm ? erealloc(ptr, nsize) : realloc(ptr, nsize);
+	if (alloc->use_zend_mm && !luaext_alloc_zend_mm_headroom(nsize)) {
+		block = ptr;
+	} else {
+		block = alloc->use_zend_mm ? erealloc(ptr, nsize) : realloc(ptr, nsize);
+	}
 
 	if (block == NULL) {
 		/*
