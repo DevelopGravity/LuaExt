@@ -43,6 +43,16 @@ struct luaext_profiler {
 	uint64_t total;
 	bool enabled;
 	bool overflowed; /* a function was dropped at the cap */
+
+	/*
+	 * The CPU actually spent while sampling was on. Closed windows accumulate
+	 * into cpu_sampled_seconds at disable; the still-open window's delta is
+	 * added at read time. Scaling by the sandbox's whole-lifetime CPU would
+	 * attribute time burned before enable, after disable, or in host
+	 * callbacks between cycles to whatever happened to be sampled.
+	 */
+	double cpu_sampled_seconds;
+	double cpu_at_enable;
 };
 
 bool luaext_profiler_active(const luaext_sandbox *sandbox)
@@ -169,6 +179,21 @@ bool luaext_profiler_enable(luaext_sandbox *sandbox, double period_seconds)
 		count = (int)ticks;
 	}
 
+	/*
+	 * Latch the CPU clock at the window's edge. Re-enabling while already on
+	 * closes the running window first, so no CPU is counted twice and none is
+	 * lost between two back-to-back windows.
+	 */
+	{
+		double now = luaext_timers_cpu_seconds(sandbox);
+
+		if (sandbox->profiler->enabled) {
+			sandbox->profiler->cpu_sampled_seconds += now - sandbox->profiler->cpu_at_enable;
+		}
+
+		sandbox->profiler->cpu_at_enable = now;
+	}
+
 	sandbox->profiler->enabled = true;
 
 	/*
@@ -189,6 +214,8 @@ void luaext_profiler_disable(luaext_sandbox *sandbox)
 	}
 
 	sandbox->profiler->enabled = false;
+	sandbox->profiler->cpu_sampled_seconds +=
+		luaext_timers_cpu_seconds(sandbox) - sandbox->profiler->cpu_at_enable;
 
 	/*
 	 * Cleared outright rather than restored to whatever was there. Nothing else
@@ -240,9 +267,18 @@ void luaext_profiler_result(luaext_sandbox *sandbox, uint8_t unit, zval *out)
 	 * function accounts for.
 	 */
 	switch (unit) {
-	case 1: /* Seconds */
-		scale = luaext_timers_cpu_seconds(sandbox) / (double)sandbox->profiler->total;
+	case 1: /* Seconds */ {
+		/* The sampled interval only, with the still-open window added when
+		 * the profiler is enabled at read time. */
+		double sampled = sandbox->profiler->cpu_sampled_seconds;
+
+		if (sandbox->profiler->enabled) {
+			sampled += luaext_timers_cpu_seconds(sandbox) - sandbox->profiler->cpu_at_enable;
+		}
+
+		scale = sampled / (double)sandbox->profiler->total;
 		break;
+	}
 	case 2: /* Percent */
 		scale = 100.0 / (double)sandbox->profiler->total;
 		break;
