@@ -488,11 +488,23 @@ static zend_function *luaext_proxy_resolve_method(zend_object *object,
  */
 static int luaext_proxy_method_call(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
 	zend_function *method = (zend_function *)lua_touserdata(L, lua_upvalueindex(2));
 	const char *name = lua_tostring(L, lua_upvalueindex(3));
+	luaext_proxy_class *cls;
 	luaext_proxy_ud *self = luaext_proxy_test(LUAEXT_SB(L), L, 1);
 	luaext_phpcall_target target;
+
+	/* Before any read of the record: a saved `obj.method` can outlive the
+	 * registration, and once the record is reclaimed a pointer comparison
+	 * would judge against freed — and possibly reused — memory. */
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "'%s' cannot run: its registration was withdrawn", name);
+	}
+
+	cls = anchor->cls;
 
 	if (self == NULL || self->cls != cls) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
@@ -677,7 +689,7 @@ static int luaext_proxy_call_binary(lua_State *L, luaext_proxy_ud *left, zend_fu
 }
 
 /*
- * Binary operator dispatch. Upvalues: (1) the class record, (2) the slot.
+ * Binary operator dispatch. Upvalues: (1) the dispatch anchor, (2) the slot.
  *
  * Both operands must be proxies of the same registered class — one identity
  * check, since subclasses already wrapped as their nearest registered
@@ -687,11 +699,21 @@ static int luaext_proxy_call_binary(lua_State *L, luaext_proxy_ud *left, zend_fu
  */
 static int luaext_proxy_binop(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
 	int slot = (int)lua_tointeger(L, lua_upvalueindex(2));
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_class *cls;
 	luaext_proxy_ud *left = luaext_proxy_test(sandbox, L, 1);
 	luaext_proxy_ud *right = luaext_proxy_test(sandbox, L, 2);
+
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "'%s' cannot run: its registration was withdrawn",
+						   luaext_proxy_ops[slot].symbol);
+	}
+
+	cls = anchor->cls;
 
 	if (left == NULL || right == NULL || left->cls != cls || right->cls != cls) {
 		const char *first = luaext_proxy_operand_name(sandbox, L, 1);
@@ -714,13 +736,22 @@ static int luaext_proxy_binop(lua_State *L)
 	return luaext_proxy_call_binary(L, left, cls->op_methods[slot], luaext_proxy_ops[slot].symbol);
 }
 
-/* Unary minus. Upvalue: the class record. Lua passes the operand twice. */
+/* Unary minus. Upvalue: the dispatch anchor. Lua passes the operand twice. */
 static int luaext_proxy_unop(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_class *cls;
 	luaext_proxy_ud *self = luaext_proxy_test(sandbox, L, 1);
 	luaext_phpcall_target target;
+
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "'-' cannot run: its registration was withdrawn");
+	}
+
+	cls = anchor->cls;
 
 	if (self == NULL || self->cls != cls) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false, "cannot apply unary '-' to %s",
@@ -781,16 +812,27 @@ static int luaext_proxy_eq(lua_State *L)
 
 /*
  * The __tostring metamethod, present only when __toString() was marked.
- * Upvalues: (1) the class record, (2) the class's Lua name — the refusal
- * message reads the STRING, never the record: a forged value can reach this
- * closure after its record was reclaimed, and only a live proxy of this very
- * class proves the record is still there to dereference.
+ * Upvalues: (1) the dispatch anchor, (2) the class's Lua name — the refusal
+ * messages read the STRING and the anchor, never the record: a forged value
+ * (or a saved alias) can reach this closure after its record was reclaimed,
+ * and the anchor's magic is what proves the record is still there to
+ * dereference.
  */
 static int luaext_proxy_tostring(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
+	luaext_proxy_class *cls;
 	luaext_proxy_ud *self = luaext_proxy_test(LUAEXT_SB(L), L, 1);
 	luaext_phpcall_target target;
+
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "'%s' cannot run: its registration was withdrawn",
+						   lua_tostring(L, lua_upvalueindex(2)));
+	}
+
+	cls = anchor->cls;
 
 	if (self == NULL || self->cls != cls) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
@@ -887,6 +929,45 @@ static void luaext_proxy_mts_map(lua_State *L)
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_proxymts);
 }
 
+/*
+ * The instance-dispatch validity token, created the first time the class's
+ * metatable is built. Same shape as the class-table anchor, different
+ * lifetime: retirement leaves it valid — proxies a script already holds keep
+ * dispatching through the retired record — and reclamation revokes it, so a
+ * saved `obj.method` refuses instead of reaching freed memory. Runs only
+ * inside the metatable builder, where a memory raise already unwinds safely.
+ */
+static void luaext_proxy_dispatch_anchor_ensure(lua_State *L, luaext_proxy_class *cls)
+{
+	luaext_proxy_anchor *anchor;
+
+	if (cls->dispatch_anchor != NULL) {
+		return;
+	}
+
+	anchor = (luaext_proxy_anchor *)lua_newuserdatauv(L, sizeof(*anchor), 0);
+	anchor->magic = LUAEXT_PROXY_ANCHOR_MAGIC;
+	anchor->cls = cls;
+	cls->dispatch_anchor_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	cls->dispatch_anchor = anchor;
+}
+
+/* Revoke it: mirrors luaext_proxy_anchor_drop below, and like it neither
+ * step allocates, so it is safe from the finaliser-driven reclamation
+ * paths. A no-op for a record whose metatable was never built. */
+static void luaext_proxy_dispatch_anchor_drop(lua_State *L, luaext_proxy_class *record)
+{
+	if (record->dispatch_anchor != NULL) {
+		record->dispatch_anchor->magic = 0;
+		record->dispatch_anchor = NULL;
+	}
+
+	if (record->dispatch_anchor_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, record->dispatch_anchor_ref);
+		record->dispatch_anchor_ref = LUA_NOREF;
+	}
+}
+
 /* Push `cls`'s metatable, building and interning it on first use. */
 static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 {
@@ -895,6 +976,11 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 	}
 
 	lua_pop(L, 1);
+
+	/* The token every dispatch closure below captures as its first upvalue,
+	 * pushed by registry number so each builder can reach it. */
+	luaext_proxy_dispatch_anchor_ensure(L, cls);
+
 	lua_createtable(L, 0, 4);
 
 	lua_pushcfunction(L, luaext_proxy_release);
@@ -919,7 +1005,7 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 
 		ZEND_HASH_MAP_FOREACH_STR_KEY_PTR(cls->instance_methods, method_name, method)
 		{
-			lua_pushlightuserdata(L, cls);
+			lua_rawgeti(L, LUA_REGISTRYINDEX, cls->dispatch_anchor_ref);
 			lua_pushlightuserdata(L, method);
 			lua_pushlstring(L, ZSTR_VAL(method_name), ZSTR_LEN(method_name));
 			lua_pushcclosure(L, luaext_proxy_method_call, 3);
@@ -931,7 +1017,7 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 	}
 
 	if (cls->to_string != NULL) {
-		lua_pushlightuserdata(L, cls);
+		lua_rawgeti(L, LUA_REGISTRYINDEX, cls->dispatch_anchor_ref);
 		lua_pushlstring(L, ZSTR_VAL(cls->lua_name), ZSTR_LEN(cls->lua_name));
 		lua_pushcclosure(L, luaext_proxy_tostring, 2);
 		lua_setfield(L, -2, "__tostring");
@@ -946,7 +1032,7 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 				continue;
 			}
 
-			lua_pushlightuserdata(L, cls);
+			lua_rawgeti(L, LUA_REGISTRYINDEX, cls->dispatch_anchor_ref);
 
 			if (slot == LUAEXT_PROXY_OP_UNM) {
 				lua_pushcclosure(L, luaext_proxy_unop, 1);
@@ -1086,6 +1172,10 @@ static void luaext_proxy_scrub_metatable(lua_State *L, luaext_proxy_class *recor
 static void luaext_proxy_discard(luaext_sandbox *sandbox, lua_State *L, luaext_proxy_class *record)
 {
 	luaext_proxy_class **link = &sandbox->proxy_retired;
+
+	/* First: from here the record is memory, and a saved dispatch closure
+	 * must refuse rather than read it. */
+	luaext_proxy_dispatch_anchor_drop(L, record);
 
 	while (*link != NULL) {
 		if (*link == record) {
@@ -1493,6 +1583,7 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 	record->ce = ce;
 	record->lua_name = resolved_name;
 	record->anchor_ref = LUA_NOREF;
+	record->dispatch_anchor_ref = LUA_NOREF;
 	record->instance_methods = pemalloc(sizeof(HashTable), 1);
 	zend_hash_init(record->instance_methods, 8, NULL, NULL, 1);
 	record->static_methods = pemalloc(sizeof(HashTable), 1);
@@ -1746,8 +1837,11 @@ void luaext_proxy_retire_name(luaext_sandbox *sandbox, lua_State *L, const zend_
 
 			if (record->live_proxies == 0) {
 				/* Nothing dispatches through it: gone now, metatable and
-				 * all, so swap loops cannot accumulate dead records. */
+				 * all, so swap loops cannot accumulate dead records. The
+				 * dispatch token goes too — a saved `obj.method` outliving
+				 * every proxy must refuse, not read the freed record. */
 				record->next = NULL;
+				luaext_proxy_dispatch_anchor_drop(L, record);
 				luaext_proxy_scrub_metatable(L, record);
 				luaext_proxy_class_free(record);
 				return;

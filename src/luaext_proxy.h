@@ -44,7 +44,10 @@ typedef enum {
  * without ever reaching a reclaimed record. Lua owns the payload: the
  * closures keep it alive for as long as they exist, and the registry pin
  * (anchor_ref) keeps it writable for exactly as long as the record may still
- * need to revoke it.
+ * need to revoke it. The metatable's instance-dispatch closures capture a
+ * second token of the same shape (`dispatch_anchor`), revoked at reclamation
+ * instead of retirement: a held proxy keeps dispatching through a retired
+ * record, and a saved `obj.method` refuses the moment the record is gone.
  */
 #define LUAEXT_PROXY_ANCHOR_MAGIC 0x4C58416Eu /* "LXAn" */
 
@@ -100,6 +103,16 @@ struct luaext_proxy_class {
 	 * revoked it — reclamation never depends on who still aliases the table. */
 	luaext_proxy_anchor *anchor;
 	int anchor_ref;
+
+	/* The instance-dispatch validity token the metatable's closures capture
+	 * instead of the record pointer, and its registry pin. Unlike `anchor`,
+	 * retirement leaves this one valid — proxies a script already holds keep
+	 * dispatching through the retired record — and only reclamation revokes
+	 * it, so a saved `obj.method` refuses instead of judging through freed
+	 * (and possibly reused) memory. NULL/LUA_NOREF until the metatable is
+	 * first built. */
+	luaext_proxy_anchor *dispatch_anchor;
+	int dispatch_anchor_ref;
 
 	struct luaext_proxy_class *next;
 };

@@ -24,8 +24,9 @@ final class Notice
 // debugMutate lets a script stamp a genuine proxy metatable onto its own
 // table. When the class is then unregistered with no live proxies left, its
 // record is reclaimed — and the forged value can still reach the metatable's
-// __tostring closure. The refusal must come from the closure's own name
-// upvalue, never from the reclaimed record.
+// __tostring closure. The refusal must come from the closure's own upvalues
+// (the revoked dispatch token and the name string), never from the reclaimed
+// record.
 $mutate = new Sandbox(new SandboxConfig(
 	capabilities: new Capabilities(debugMutate: true),
 ));
@@ -49,5 +50,5 @@ array(2) {
   [0]=>
   bool(false)
   [1]=>
-  string(54) "tostring() received a value that is not a Notice proxy"
+  string(51) "'Notice' cannot run: its registration was withdrawn"
 }
