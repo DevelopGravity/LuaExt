@@ -129,6 +129,15 @@ static bool luaext_openlibs_decorate_string(lua_State *L, luaext_sandbox *sandbo
 	lua_setfield(L, -2, "__index");
 	lua_pop(L, 2);
 
+	/*
+	 * DELIBERATELY NOT LOCKED, unlike every metatable this extension builds
+	 * itself: getmetatable("") answering the string metatable is stock Lua,
+	 * pinned by tests/10-lua, and a __metatable here would break scripts that
+	 * only ever did something the language documents. Leaving it writable
+	 * grants nothing: the unfiltered library table this function displaced is
+	 * unreachable, so a script that swaps __index can only lose methods in
+	 * its own state, never recover a withheld one -- which is pinned too.
+	 */
 	return true;
 }
 
