@@ -197,6 +197,30 @@ bool luaext_error_is_ready(const luaext_sandbox *sandbox)
 	return ready;
 }
 
+static int luaext_error_init_protected(lua_State *L)
+{
+	lua_createtable(L, 0, 3);
+
+	lua_pushcfunction(L, luaext_error_tostring);
+	lua_setfield(L, -2, "__tostring");
+
+	lua_pushcfunction(L, luaext_error_gc);
+	lua_setfield(L, -2, "__gc");
+
+	/*
+	 * getmetatable(err) yields false instead of the table, and setmetatable()
+	 * on one of these userdata raises. Between them a script can neither read
+	 * __gc/__tostring back out, nor replace them, nor stamp this metatable onto
+	 * a value of its own to make a forgery pass the identity check below.
+	 */
+	lua_pushboolean(L, 0);
+	lua_setfield(L, -2, "__metatable");
+
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_errmt);
+
+	return 0;
+}
+
 void luaext_error_init(luaext_sandbox *sandbox)
 {
 	lua_State *L;
@@ -220,24 +244,19 @@ void luaext_error_init(luaext_sandbox *sandbox)
 	}
 
 	lua_pop(L, 1);
-	lua_createtable(L, 0, 3);
-
-	lua_pushcfunction(L, luaext_error_tostring);
-	lua_setfield(L, -2, "__tostring");
-
-	lua_pushcfunction(L, luaext_error_gc);
-	lua_setfield(L, -2, "__gc");
 
 	/*
-	 * getmetatable(err) yields false instead of the table, and setmetatable()
-	 * on one of these userdata raises. Between them a script can neither read
-	 * __gc/__tostring back out, nor replace them, nor stamp this metatable onto
-	 * a value of its own to make a forgery pass the identity check below.
+	 * Under pcall, because this runs at construction where no handler exists
+	 * yet: the build allocates, a tiny Limits::$memoryBytes can refuse the
+	 * very first table, and an unprotected LUA_ERRMEM here would land in the
+	 * panic handler. A failed build leaves readiness false, and construction
+	 * refuses on that rather than continuing with forgeable errors.
 	 */
-	lua_pushboolean(L, 0);
-	lua_setfield(L, -2, "__metatable");
+	lua_pushcfunction(L, luaext_error_init_protected);
 
-	lua_rawsetp(L, LUA_REGISTRYINDEX, &luaext_key_errmt);
+	if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+		lua_pop(L, 1);
+	}
 }
 
 /* -------------------------------------------------------------------------

@@ -515,7 +515,20 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, __construct)
 	 * not an optional step and its absence must never be silent.
 	 */
 	luaext_error_init(sandbox);
-	LUAEXT_ASSERT(luaext_error_is_ready(sandbox));
+
+	/*
+	 * A refusal, not an assert: without that metatable every error the
+	 * subsystem raises falls back to a catchable string, and a limit a script
+	 * can catch is not a limit. A sandbox that cannot install it — a memory
+	 * limit too small to hold the first table — does not get constructed.
+	 */
+	if (!luaext_error_is_ready(sandbox)) {
+		zend_throw_exception(luaext_ce_memory_limit_error,
+							 "This sandbox's memory limit is too small to hold its own error "
+							 "machinery",
+							 0);
+		RETURN_THROWS();
+	}
 
 	/* Before the libraries: os.clock reports billed CPU, and the count hook the
 	 * limits ride on has to be installed before any script can exist. */
