@@ -594,6 +594,14 @@ static int luaext_proxy_new_call(lua_State *L)
 
 	cls = anchor->cls;
 
+	/* The colon guard statics carry, for the same desugaring: `money:new(x)`
+	 * is `money.new(money, x)`, and without the check the table crossed as a
+	 * shifted first argument into a misleading arity or type refusal. */
+	if (lua_gettop(L) >= 1 && lua_rawequal(L, 1, lua_upvalueindex(3))) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "constructor '%s' is called with a dot (%s(...))", name, name);
+	}
+
 	if (sandbox == NULL || sandbox->closed || sandbox->L == NULL) {
 		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s cannot run: its sandbox is gone", name);
 	}
@@ -900,7 +908,8 @@ static int luaext_proxy_plant_table(lua_State *L)
 	if (cls->constructor != NULL) {
 		lua_pushvalue(L, 2); /* the anchor */
 		lua_pushfstring(L, "%s.%s", ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
-		lua_pushcclosure(L, luaext_proxy_new_call, 2);
+		lua_pushvalue(L, 1); /* the table itself, for the colon guard */
+		lua_pushcclosure(L, luaext_proxy_new_call, 3);
 		lua_setfield(L, 1, ZSTR_VAL(cls->constructor_lua_name));
 	}
 

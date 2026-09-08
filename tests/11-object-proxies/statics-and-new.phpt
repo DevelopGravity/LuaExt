@@ -57,6 +57,10 @@ var_dump($sandbox->eval('return money.new():cents()')[0]);
 // Colon on a static passes the class table: catchable, message names the fix.
 var_dump($sandbox->eval('local ok, err = pcall(function() return money:zero() end) return ok, tostring(err)'));
 
+// Colon on the constructor is the same mistake and gets the same naming,
+// never a misleading arity or type refusal about a shifted argument.
+var_dump($sandbox->eval('local ok, err = pcall(function() return money:new(250) end) return ok, tostring(err)'));
+
 // A class with only instance methods plants no global.
 final class Quiet
 {
@@ -80,5 +84,11 @@ array(2) {
   bool(false)
   [1]=>
   string(%d) "static 'zero' is called with a dot (money.zero(...))"
+}
+array(2) {
+  [0]=>
+  bool(false)
+  [1]=>
+  string(%d) "constructor 'money.new' is called with a dot (money.new(...))"
 }
 bool(true)
