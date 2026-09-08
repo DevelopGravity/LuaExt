@@ -37,6 +37,8 @@
 
 #include "luaext_openlibs.h"
 
+#include "luaext_proxy.h"
+
 #include <lauxlib.h>
 #include <lualib.h>
 
@@ -194,6 +196,65 @@ static void luaext_debuglib_guard_upvalue_members(lua_State *L, int selected)
 }
 
 /* -------------------------------------------------------------------------
+ * Settling a proxy whose metatable is being detached
+ * ---------------------------------------------------------------------- */
+
+/*
+ * upvalue 1: the upstream debug.setmetatable.
+ *
+ * A live proxy's wrapped PHP reference rides on its metatable's __gc — and a
+ * userdata is finalised through whatever metatable it wears at COLLECTION
+ * time, so swapping the real one away means no finaliser ever hands the
+ * reference back: lua_close() cannot see it and the object leaks for the
+ * request. Stripping is allowed — debugMutate is documented as escaping most
+ * guarantees — but the payload is settled HERE, at the moment the proxy
+ * stops being one of ours. Re-stamping the same metatable changes nothing
+ * and settles nothing.
+ */
+static int luaext_debuglib_setmetatable(lua_State *L)
+{
+	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	int argc = lua_gettop(L);
+
+	if (sandbox != NULL && luaext_proxy_test(sandbox, L, 1) != NULL) {
+		bool unchanged = false;
+
+		if (lua_getmetatable(L, 1)) {
+			unchanged = argc >= 2 && lua_rawequal(L, -1, 2);
+			lua_pop(L, 1);
+		}
+
+		if (!unchanged) {
+			luaext_proxy_strip(sandbox, L, 1);
+		}
+	}
+
+	luaL_checkstack(L, 1, "luaext: no stack to call the debug library");
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, argc, LUA_MULTRET);
+
+	return lua_gettop(L);
+}
+
+/* Wrap the selected setmetatable, when debugMutate selected it at all. */
+static void luaext_debuglib_guard_setmetatable(lua_State *L, int selected)
+{
+	lua_pushstring(L, "setmetatable");
+	lua_rawget(L, selected);
+
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	lua_pushcclosure(L, luaext_debuglib_setmetatable, 1);
+	lua_pushstring(L, "setmetatable");
+	lua_insert(L, -2);
+	lua_rawset(L, selected);
+}
+
+/* -------------------------------------------------------------------------
  * Installation
  * ---------------------------------------------------------------------- */
 
@@ -231,6 +292,7 @@ bool luaext_debuglib_install(lua_State *L, luaext_sandbox *sandbox)
 
 	selected = lua_gettop(L);
 	luaext_debuglib_guard_upvalue_members(L, selected);
+	luaext_debuglib_guard_setmetatable(L, selected);
 
 	lua_setglobal(L, LUA_DBLIBNAME); /* pops the selected table */
 	lua_pop(L, 1);					 /* pops scratch */

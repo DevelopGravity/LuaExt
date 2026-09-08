@@ -381,22 +381,17 @@ static bool luaext_proxy_collect_allowlist(luaext_proxy_class *record, zend_clas
  * ---------------------------------------------------------------------- */
 
 /*
- * The __gc finaliser. Runs inside the collector, so the PHP reference is
- * handed to the defer queue rather than released here — releasing could run
- * an arbitrary __destruct against the very state being swept. See
- * luaext_defer.h; the timing of the release is all that is given up.
+ * Hand a live payload back: cut the magic, delist it, defer the PHP
+ * reference, settle the class record's reclamation accounting. The two
+ * moments a proxy stops being one of ours share this — the __gc finaliser,
+ * and debug.setmetatable detaching the metatable that finaliser rides on.
+ * Safe inside a collector: the release is deferred, the rest is pure C work.
  */
-static int luaext_proxy_release(lua_State *L)
+static void luaext_proxy_settle(luaext_sandbox *sandbox, lua_State *L, luaext_proxy_ud *slot)
 {
-	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_touserdata(L, 1);
-	luaext_sandbox *sandbox = LUAEXT_SB(L);
 	zval carrier;
 
-	if (slot == NULL || slot->magic != LUAEXT_PROXY_MAGIC) {
-		return 0;
-	}
-
-	/* A finalised proxy is no longer one of ours, even if it is resurrected. */
+	/* A settled proxy is no longer one of ours, even if it is resurrected. */
 	slot->magic = 0;
 
 	/* Swap-remove from the live list, keeping the moved entry's index true. */
@@ -436,6 +431,23 @@ static int luaext_proxy_release(lua_State *L)
 			luaext_proxy_discard(sandbox, L, cls);
 		}
 	}
+}
+
+/*
+ * The __gc finaliser. Runs inside the collector, so the PHP reference is
+ * handed to the defer queue rather than released here — releasing could run
+ * an arbitrary __destruct against the very state being swept. See
+ * luaext_defer.h; the timing of the release is all that is given up.
+ */
+static int luaext_proxy_release(lua_State *L)
+{
+	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_touserdata(L, 1);
+
+	if (slot == NULL || slot->magic != LUAEXT_PROXY_MAGIC) {
+		return 0;
+	}
+
+	luaext_proxy_settle(LUAEXT_SB(L), L, slot);
 
 	return 0;
 }
@@ -1150,6 +1162,15 @@ luaext_proxy_ud *luaext_proxy_test(luaext_sandbox *sandbox, lua_State *L, int in
 	}
 
 	return slot;
+}
+
+void luaext_proxy_strip(luaext_sandbox *sandbox, lua_State *L, int index)
+{
+	luaext_proxy_ud *slot = luaext_proxy_test(sandbox, L, index);
+
+	if (slot != NULL) {
+		luaext_proxy_settle(sandbox, L, slot);
+	}
 }
 
 void luaext_proxy_add_gc(const luaext_sandbox *sandbox, zend_get_gc_buffer *buffer)

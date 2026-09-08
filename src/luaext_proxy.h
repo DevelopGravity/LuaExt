@@ -142,6 +142,17 @@ bool luaext_proxy_try_push(luaext_sandbox *sandbox, lua_State *L, zend_object *o
 luaext_proxy_ud *luaext_proxy_test(luaext_sandbox *sandbox, lua_State *L, int index);
 
 /*
+ * Release the payload of the live proxy at `index`, if it is one: cut from
+ * the live list, PHP reference deferred, record accounting settled. The Lua
+ * value itself is untouched — it simply stops being one of ours. This is for
+ * debug.setmetatable under debugMutate, which detaches the metatable the
+ * finaliser rides on: the shell would never be finalised as a proxy again,
+ * and its wrapped object would leak for the request. A no-op for anything
+ * that is not a live proxy.
+ */
+void luaext_proxy_strip(luaext_sandbox *sandbox, lua_State *L, int index);
+
+/*
  * Report every live proxy's wrapped object to the cycle collector. Without
  * this, a script-held proxy of an object that (transitively) references its
  * own Sandbox is a cycle no collector can see, and the whole sandbox leaks
