@@ -1428,17 +1428,16 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable)
 	 * a non-callable argument must raise the engine's own TypeError naming
 	 * the argument position -- not a ConfigurationError from the later
 	 * resolution, which a `catch (TypeError)` written against the published
-	 * stub would never see. The cache is released immediately: the push
-	 * below re-resolves from the original zval, whose validity ZPP just
-	 * proved.
+	 * stub would never see. The cache is not touched again: Z_PARAM_FUNC
+	 * frees a trampoline itself (that is what the _NO_TRAMPOLINE_FREE
+	 * variant exists to opt out of), and the push below re-resolves from the
+	 * original zval, whose validity ZPP just proved.
 	 */
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 	Z_PARAM_FUNC(callback_info, callback_cache)
 	Z_PARAM_OPTIONAL
 	Z_PARAM_STR_OR_NULL(name)
 	ZEND_PARSE_PARAMETERS_END();
-
-	zend_release_fcall_info_cache(&callback_cache);
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
