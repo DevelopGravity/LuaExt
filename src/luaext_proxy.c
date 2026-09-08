@@ -560,9 +560,19 @@ static int luaext_proxy_new_call(lua_State *L)
 	 */
 	slot = luaext_proxy_push_shell(sandbox, L, cls);
 
-	if (object_init_ex(&instance, cls->ce) == FAILURE || EG(exception) != NULL) {
+	if (object_init_ex(&instance, cls->ce) == FAILURE) {
 		/* The blank shell is collected as any garbage; zero magic no-ops its
 		 * finaliser. Nothing is owned. */
+		luaext_error_raise_from_exception(L);
+	}
+
+	if (EG(exception) != NULL) {
+		/* Init SUCCEEDED, so the zval holds a fresh object this raise would
+		 * strand; the defer queue carries it to the next boundary drain. */
+		if (!luaext_defer_zval(sandbox, &instance)) {
+			zval_ptr_dtor(&instance);
+		}
+
 		luaext_error_raise_from_exception(L);
 	}
 
