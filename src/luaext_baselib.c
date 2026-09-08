@@ -314,8 +314,12 @@ static int luaext_baselib_print(lua_State *L)
  *
  * Installed unconditionally, so "nothing this extension runs reaches stderr" is
  * a property of the sandbox rather than of which libraries it happened to open.
- * Lua's default warning function writes to stderr, and the interpreter warns by
- * itself -- an error inside a __gc metamethod is reported exactly this way.
+ * A bare lua_newstate() already defaults the warning function to NULL -- the
+ * stderr writer belongs to luaL_newstate(), which this extension never calls --
+ * so this pins the property against gaining lauxlib's writer by any other
+ * door rather than displacing a default that no longer exists. The interpreter
+ * does warn by itself: an error inside a __gc metamethod is reported exactly
+ * this way, into whatever function stands here.
  *
  * It discards rather than forwards, at every capability level, for two reasons
  * that point the same way:

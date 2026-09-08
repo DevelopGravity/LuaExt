@@ -8,11 +8,17 @@
  * spend host memory through the filesystem while staying inside its Lua budget
  * has not been limited at all.
  *
- * Everything here runs on the interpreter's hottest path, so this file calls
- * into neither PHP nor Lua's allocating API, never logs, and never allocates
- * anything of its own. malloc/realloc/free rather than emalloc: a sandbox may
- * legally outlive the request that built it in a worker SAPI, and request-local
- * memory would be freed underneath it.
+ * Everything here runs on the interpreter's hottest path, so this file never
+ * logs and never allocates anything of its own. The backing store is
+ * malloc/realloc/free — a sandbox may legally outlive the request that built
+ * it in a worker SAPI, and request-local memory would be freed underneath it —
+ * UNLESS luaext.use_zend_mm is on, which routes every block through ZendMM
+ * instead. That INI is an explicit trade: the host gains PHP's debug
+ * allocator and memory_limit integration, and gives up request independence —
+ * an abandoned or panicked heap is then reclaimed wholesale at request
+ * shutdown rather than leaking for the life of the process, and the teardown
+ * rationales in luaext_sandbox.c that lean on "PHP's allocator will not
+ * reclaim it" hold only for the malloc side.
  */
 
 #include "luaext_alloc.h"

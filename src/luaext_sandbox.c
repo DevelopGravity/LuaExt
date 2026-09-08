@@ -178,9 +178,11 @@ static void luaext_sandbox_unlink(luaext_sandbox *sandbox)
  * So it ends the request, and the cost is honest rather than hidden:
  * zend_error_noreturn bails out past lua_close, and the Lua heap -- malloc'd
  * rather than emalloc'd, so PHP's allocator will not reclaim it -- is leaked for
- * the life of the process. That is the price of a condition that should never
- * occur; making it cheaper would mean making it survivable, and a state that has
- * panicked is not one to keep running scripts on.
+ * the life of the process (under luaext.use_zend_mm it is request memory
+ * instead, and the request's own shutdown reclaims it wholesale). That is the
+ * price of a condition that should never occur; making it cheaper would mean
+ * making it survivable, and a state that has panicked is not one to keep
+ * running scripts on.
  *
  * The flag is set first so anything that still looks at this sandbox during
  * shutdown sees that its interpreter is not to be touched.
@@ -272,9 +274,12 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 * So the heap is deliberately leaked, for exactly the reason the panic path
 	 * above leaks it: it is malloc'd rather than emalloc'd, so PHP's allocator
 	 * will not reclaim it, and the process pays for the life of the request.
-	 * That is the price of a condition that should not occur, and it is a much
-	 * better price than a use-after-free. A debug build WILL report this as a
-	 * leak in that case; that report is correct and must not be "fixed".
+	 * (Under luaext.use_zend_mm the blocks are request memory and the arena
+	 * reclaims them at shutdown -- the abandonment is the same, only the
+	 * bill's lifetime differs.) That is the price of a condition that should
+	 * not occur, and it is a much better price than a use-after-free. A debug
+	 * build WILL report this as a leak in that case; that report is correct
+	 * and must not be "fixed".
 	 *
 	 * The ordinary paths are unaffected: by the time a destructor or the
 	 * RSHUTDOWN sweep runs normally, no call is in progress and in_lua is zero.

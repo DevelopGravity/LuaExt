@@ -14,24 +14,6 @@
 #include <lua.h>
 
 /*
- * Stop the running script.
- *
- * Two things about this function are load-bearing.
- *
- * The first is that it raises the unforgeable fatal-error userdata rather than a
- * string. luaL_error() would produce a value any pcall could catch, and a limit
- * a script can catch is not a limit. The error subsystem's userdata is marked
- * fatal, so the sandbox's own pcall replacement re-raises it and the host
- * receives the matching typed exception.
- *
- * The second is that the flag is NOT cleared here. It stays set until the
- * outermost call disarms, and it has to: Lua itself swallows errors in places
- * the sandbox cannot patch away -- GCTM turns an error raised inside a __gc
- * finaliser into a warning -- and in those places the still-pending flag is the
- * only thing that stops the script at the next instruction. Clearing it on raise
- * would make "catch it by dying in a finaliser" a working escape.
- */
-/*
  * Whether an interrupt is pending, WITHOUT raising.
  *
  * The companion to luaext_raise_interrupt, and it exists because the Lua -> PHP
@@ -50,6 +32,24 @@ bool luaext_interrupt_pending(lua_State *L)
 	return queue != NULL && atomic_load_explicit(&queue->interrupted, memory_order_relaxed) != 0;
 }
 
+/*
+ * Stop the running script.
+ *
+ * Two things about this function are load-bearing.
+ *
+ * The first is that it raises the unforgeable fatal-error userdata rather than a
+ * string. luaL_error() would produce a value any pcall could catch, and a limit
+ * a script can catch is not a limit. The error subsystem's userdata is marked
+ * fatal, so the sandbox's own pcall replacement re-raises it and the host
+ * receives the matching typed exception.
+ *
+ * The second is that the flag is NOT cleared here. It stays set until the
+ * outermost call disarms, and it has to: Lua itself swallows errors in places
+ * the sandbox cannot patch away -- GCTM turns an error raised inside a __gc
+ * finaliser into a warning -- and in those places the still-pending flag is the
+ * only thing that stops the script at the next instruction. Clearing it on raise
+ * would make "catch it by dying in a finaliser" a working escape.
+ */
 void luaext_raise_interrupt(lua_State *L)
 {
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
