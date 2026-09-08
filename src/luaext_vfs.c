@@ -494,6 +494,20 @@ zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, con
 	return box->held;
 }
 
+void luaext_vfs_anchor_adopt(lua_State *L, luaext_sandbox *sandbox, zend_string *string)
+{
+	luaext_vfs_string_ud *box = luaext_vfs_push_box(L, sandbox);
+
+	if (box == NULL) {
+		/* push_box raises rather than returns on the closing path, so this is
+		 * defensive: whatever the caller handed over must not strand. */
+		zend_string_release(string);
+		return;
+	}
+
+	box->held = string;
+}
+
 /*
  * Canonicalise a script-supplied path into a zend_string the backend may see.
  *

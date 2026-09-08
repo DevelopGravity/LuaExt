@@ -640,9 +640,12 @@ static int luaext_oslib_remove(lua_State *L)
 			return lua_error(L);
 		}
 
+		/* Adopted before the push: lua_pushlstring can raise LUA_ERRMEM, and a
+		 * longjmp with the refusal still owned here would leak it. */
 		lua_pushnil(L);
+		luaext_vfs_anchor_adopt(L, sandbox, refusal);
 		lua_pushlstring(L, ZSTR_VAL(refusal), ZSTR_LEN(refusal));
-		zend_string_release(refusal);
+		lua_remove(L, -2);
 
 		return 2;
 	}
@@ -685,9 +688,11 @@ static int luaext_oslib_rename(lua_State *L)
 			return lua_error(L);
 		}
 
+		/* Same adoption as os.remove's refusal, for the same longjmp. */
 		lua_pushnil(L);
+		luaext_vfs_anchor_adopt(L, sandbox, refusal);
 		lua_pushlstring(L, ZSTR_VAL(refusal), ZSTR_LEN(refusal));
-		zend_string_release(refusal);
+		lua_remove(L, -2);
 
 		return 2;
 	}

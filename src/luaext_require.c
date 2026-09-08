@@ -378,24 +378,25 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 
 		{
 			/*
-			 * The source moves into LUA-owned memory and the backend's reply is
-			 * released, before anything that can raise runs.
+			 * The reply moves into COLLECTOR-owned memory before anything that
+			 * can raise runs.
 			 *
 			 * Ordering alone is not enough here, which is the trap worth
-			 * recording: the vendored string-length gate makes lua_pushlstring
-			 * itself raise past Limits::$maxStringLength, and a raise is a
-			 * longjmp, so a zend_string still held -- even one held only to
+			 * recording: lua_pushlstring itself raises -- past
+			 * Limits::$maxStringLength through the vendored length gate, and
+			 * at Limits::$memoryBytes through the allocator -- and a raise is
+			 * a longjmp, so a zend_string still held -- even one held only to
 			 * feed the very push that raises -- is simply lost. So the length
-			 * is refused first, and the reply is released the moment Lua owns
-			 * the source: the chunk-name push that follows can still raise (a
-			 * long module path under a tiny limit) and must hold nothing.
-			 * Lua strings survive the unwind; the collector takes them.
+			 * is refused first, and the reply is adopted by a box on the Lua
+			 * stack before the pushes: any unwind makes the box garbage and
+			 * the collector releases the reply with it.
 			 *
 			 * '@' is Lua's convention for "this chunk came from a file", and is
 			 * what makes a traceback name the module rather than quote it.
 			 */
 			size_t source_len;
 			size_t string_limit = sandbox->policy.limits.max_string_length;
+			zend_string *reply;
 			const char *source;
 			const char *chunk_name;
 			bool loaded;
@@ -407,8 +408,20 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 				return -1;
 			}
 
-			lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
-			zval_ptr_dtor(&result);
+			/*
+			 * The length gate above is not the only way the pushes can raise:
+			 * lua_pushlstring refuses at Limits::$memoryBytes too, with a
+			 * longjmp that runs no cleanup. So ownership of the reply moves
+			 * into a collector-owned box FIRST, and only then does anything
+			 * push -- an unwind of any depth makes the box garbage and the
+			 * source goes with it instead of leaking at whatever size the
+			 * backend produced.
+			 */
+			reply = Z_STR(result);
+			ZVAL_UNDEF(&result);
+			luaext_vfs_anchor_adopt(L, sandbox, reply);
+
+			lua_pushlstring(L, ZSTR_VAL(reply), ZSTR_LEN(reply));
 			lua_pushfstring(L, "@%s", Z_STRVAL(args[0]));
 
 			source = lua_tolstring(L, -2, &source_len);
@@ -420,7 +433,8 @@ static int luaext_require_search_vfs(lua_State *L, luaext_sandbox *sandbox, cons
 				return -1;
 			}
 
-			/* [box, source, name, chunk] -> [chunk] */
+			/* [box, replybox, source, name, chunk] -> [chunk] */
+			lua_remove(L, -5);
 			lua_remove(L, -4);
 			lua_remove(L, -3);
 			lua_remove(L, -2);
@@ -553,6 +567,8 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 		 */
 		size_t source_len;
 		size_t string_limit = sandbox->policy.limits.max_string_length;
+		zend_string *source_copy;
+		zend_string *name_copy;
 		const char *source;
 		const char *chunk;
 		bool bytecode = is_bytecode != NULL && Z_TYPE_P(is_bytecode) == IS_TRUE;
@@ -573,11 +589,25 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 			return -1;
 		}
 
-		lua_pushlstring(L, Z_STRVAL_P(code), Z_STRLEN_P(code));
-		lua_pushlstring(L, Z_STRVAL_P(chunk_name), Z_STRLEN_P(chunk_name));
+		/*
+		 * The length gate is not the only way a push raises: lua_pushlstring
+		 * also refuses at Limits::$memoryBytes, and that longjmp runs no
+		 * cleanup -- held across it, the ModuleSource leaked with its whole
+		 * source. So the strings leave the PHP side first: refcounted copies
+		 * (which cannot fail), the object released, the bracket closed, and
+		 * each copy adopted by a collector-owned box before anything pushes.
+		 */
+		source_copy = zend_string_copy(Z_STR_P(code));
+		name_copy = zend_string_copy(Z_STR_P(chunk_name));
 
 		zval_ptr_dtor(&result);
 		LUAEXT_NO_RAISE_END(L);
+
+		luaext_vfs_anchor_adopt(L, sandbox, source_copy);
+		luaext_vfs_anchor_adopt(L, sandbox, name_copy);
+
+		lua_pushlstring(L, ZSTR_VAL(source_copy), ZSTR_LEN(source_copy));
+		lua_pushlstring(L, ZSTR_VAL(name_copy), ZSTR_LEN(name_copy));
 
 		source = lua_tolstring(L, -2, &source_len);
 		chunk = lua_tostring(L, -1);
@@ -588,7 +618,9 @@ static int luaext_require_ask_resolver(lua_State *L, luaext_sandbox *sandbox, co
 			return -1;
 		}
 
-		/* [source, name, chunk] -> [chunk] */
+		/* [boxS, boxN, source, name, chunk] -> [chunk] */
+		lua_remove(L, -5);
+		lua_remove(L, -4);
 		lua_remove(L, -3);
 		lua_remove(L, -2);
 	}

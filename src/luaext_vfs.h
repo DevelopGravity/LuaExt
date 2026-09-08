@@ -243,6 +243,19 @@ zend_string *luaext_vfs_anchor_string(lua_State *L, luaext_sandbox *sandbox, con
 									  size_t length);
 
 /*
+ * Anchor `string` ITSELF: the box takes the caller's reference, no bytes are
+ * copied. For a PHP reply the frame already owns and is about to push into
+ * Lua -- adopted first, the reply survives the push raising (the collector
+ * takes the box) instead of leaking at whatever size the script chose. The
+ * exposure left is the box's own ~40-byte allocation, negligible next to the
+ * payloads this protects.
+ *
+ * The box stays on the stack like anchor_string's; a caller whose stack shape
+ * matters removes it once the value it guards is safely in Lua's hands.
+ */
+void luaext_vfs_anchor_adopt(lua_State *L, luaext_sandbox *sandbox, zend_string *string);
+
+/*
  * Charge `bytes` of new buffering against VfsQuota::$maxTotalBytes.
  *
  * Called by the write path when a buffered handle grows. Raises a fatal Lua

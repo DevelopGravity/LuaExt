@@ -197,14 +197,19 @@ static int luaext_iolib_failed(lua_State *L)
 }
 
 /* `nil, message` -- the conventional Lua shape for a refusal a script may
- * handle. Owns and releases the refusal string. */
+ * handle. Owns the refusal string: adopted into a collector-owned box BEFORE
+ * the push, because lua_pushlstring can raise LUA_ERRMEM and a longjmp runs
+ * no cleanup -- held here instead, the message (backend-authored, so of no
+ * bounded size) leaked on exactly the paths that only run when something has
+ * already gone wrong. */
 static int luaext_iolib_refused(lua_State *L, zend_string *refusal)
 {
 	lua_pushnil(L);
 
 	if (refusal != NULL) {
+		luaext_vfs_anchor_adopt(L, LUAEXT_SB(L), refusal);
 		lua_pushlstring(L, ZSTR_VAL(refusal), ZSTR_LEN(refusal));
-		zend_string_release(refusal);
+		lua_remove(L, -2); /* the box; the bytes are Lua's own copy now */
 	} else {
 		lua_pushliteral(L, "the filesystem refused the operation");
 	}
@@ -322,11 +327,24 @@ static int luaext_iolib_read_bytes(lua_State *L, luaext_sandbox *sandbox, luaext
 			return -1;
 		}
 
-		produced = (int)Z_STRLEN(result);
-		luaext_vfs_note_bytes(sandbox, (size_t)produced);
-		lua_pushlstring(L, Z_STRVAL(result), Z_STRLEN(result));
-		handle->offset += (uint64_t)produced;
-		zval_ptr_dtor(&result);
+		/*
+		 * Ownership moves out of the zval and into a collector-owned box
+		 * BEFORE the push: the length gates above cannot stop lua_pushlstring
+		 * raising LUA_ERRMEM at Limits::$memoryBytes, and that longjmp would
+		 * leak a reply as large as the script asked to read.
+		 */
+		{
+			zend_string *reply = Z_STR(result);
+
+			ZVAL_UNDEF(&result);
+			luaext_vfs_anchor_adopt(L, sandbox, reply);
+
+			produced = (int)ZSTR_LEN(reply);
+			luaext_vfs_note_bytes(sandbox, (size_t)produced);
+			lua_pushlstring(L, ZSTR_VAL(reply), ZSTR_LEN(reply));
+			lua_remove(L, -2); /* the box; the bytes are Lua's own copy now */
+			handle->offset += (uint64_t)produced;
+		}
 
 		return produced;
 	}
