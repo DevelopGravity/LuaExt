@@ -36,21 +36,22 @@
 #include "luaext_types.h"
 
 /*
- * Take ownership of `fcc` and release it at the next drain.
+ * Take ownership of `fcc` and release it at the next drain. `sandbox` must not
+ * be NULL -- a finaliser that can run without one releases directly instead.
  *
- * Returns false only if the queue could not grow, in which case the caller must
- * release immediately and accept the re-entrancy risk -- refusing to release at
- * all would leak, and a leak is worse than a narrow window.
+ * Cannot fail: the queue grows with the persistent allocator, which ends the
+ * process on true exhaustion rather than returning. A degraded release-anyway
+ * path here would be the exact re-entrancy this queue exists to prevent.
  */
-bool luaext_defer_fcc(luaext_sandbox *sandbox, zend_fcall_info_cache *fcc);
+void luaext_defer_fcc(luaext_sandbox *sandbox, zend_fcall_info_cache *fcc);
 
 /*
  * Take ownership of `value` and release it at the next drain. `value` is left
  * UNDEF, so the caller cannot double-release it.
  *
- * Same false semantics as above.
+ * Same contract as above.
  */
-bool luaext_defer_zval(luaext_sandbox *sandbox, zval *value);
+void luaext_defer_zval(luaext_sandbox *sandbox, zval *value);
 
 /*
  * Release everything queued so far.

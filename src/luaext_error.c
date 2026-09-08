@@ -119,13 +119,17 @@ static int luaext_error_gc(lua_State *L)
 		 * Deferred rather than released here: this is the last reference to a
 		 * host exception object, and dropping it runs that object's __destruct
 		 * inside the collector of the state the destructor may call back into.
-		 * See luaext_defer.h. Released directly only if the queue cannot grow,
-		 * where leaking would be the worse outcome.
+		 * See luaext_defer.h. With no sandbox left to drain a queue, release
+		 * directly and accept the narrow window -- leaking would be worse.
 		 *
 		 * The message above needs no such care -- a zend_string has no
 		 * destructor and releasing one cannot run user code.
 		 */
-		if (!luaext_defer_zval(LUAEXT_SB(L), &error->php_exception)) {
+		luaext_sandbox *sandbox = LUAEXT_SB(L);
+
+		if (sandbox != NULL) {
+			luaext_defer_zval(sandbox, &error->php_exception);
+		} else {
 			zval_ptr_dtor(&error->php_exception);
 		}
 	}

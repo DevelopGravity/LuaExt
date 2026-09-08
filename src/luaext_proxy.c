@@ -412,10 +412,11 @@ static int luaext_proxy_release(lua_State *L)
 		ZVAL_OBJ(&carrier, slot->object);
 		slot->object = NULL;
 
-		if (sandbox == NULL || !luaext_defer_zval(sandbox, &carrier)) {
-			/* Releasing here risks the narrow re-entrancy window; leaking
-			 * would be worse, and a failed queue growth means the process is
-			 * already out of memory. */
+		if (sandbox != NULL) {
+			luaext_defer_zval(sandbox, &carrier);
+		} else {
+			/* No sandbox means no queue to drain: release directly and
+			 * accept the narrow re-entrancy window; leaking would be worse. */
 			zval_ptr_dtor(&carrier);
 		}
 	}
@@ -597,10 +598,7 @@ static int luaext_proxy_new_call(lua_State *L)
 	if (EG(exception) != NULL) {
 		/* Init SUCCEEDED, so the zval holds a fresh object this raise would
 		 * strand; the defer queue carries it to the next boundary drain. */
-		if (!luaext_defer_zval(sandbox, &instance)) {
-			zval_ptr_dtor(&instance);
-		}
-
+		luaext_defer_zval(sandbox, &instance);
 		luaext_error_raise_from_exception(L);
 	}
 

@@ -108,12 +108,14 @@ static int luaext_phpcall_release(lua_State *L)
 		 * drop the last reference to the bound object and run its __destruct,
 		 * which is arbitrary host code, and this frame is inside the collector
 		 * of the state that code is free to call back into. See luaext_defer.h.
-		 *
-		 * If the queue cannot grow, release anyway: leaking the reference is
-		 * worse than the narrow re-entrancy window, and a failed allocation here
-		 * means the process is already out of memory.
+		 * With no sandbox left to drain a queue, release directly and accept
+		 * the narrow window -- leaking the reference would be worse.
 		 */
-		if (!luaext_defer_fcc(LUAEXT_SB(L), &slot->fcc)) {
+		luaext_sandbox *sandbox = LUAEXT_SB(L);
+
+		if (sandbox != NULL) {
+			luaext_defer_fcc(sandbox, &slot->fcc);
+		} else {
 			zend_fcc_dtor(&slot->fcc);
 		}
 	}

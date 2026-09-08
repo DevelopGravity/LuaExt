@@ -14,38 +14,31 @@
  * of closures at teardown rather than a stream. */
 #define LUAEXT_DEFER_INITIAL 8
 
-static bool luaext_defer_reserve(luaext_deferred *queue)
+static void luaext_defer_reserve(luaext_deferred *queue)
 {
 	size_t capacity;
-	luaext_defer_item *grown;
 
 	if (queue->count < queue->capacity) {
-		return true;
+		return;
 	}
 
 	capacity = queue->capacity == 0 ? LUAEXT_DEFER_INITIAL : queue->capacity * 2;
 
 	/* perealloc rather than erealloc: __gc runs from lua_close() during the
-	 * request-shutdown sweep, when request memory is already gone. */
-	grown = (luaext_defer_item *)perealloc(queue->items, capacity * sizeof(*grown), 1);
-
-	if (grown == NULL) {
-		return false;
-	}
-
-	queue->items = grown;
+	 * request-shutdown sweep, when request memory is already gone. On true
+	 * exhaustion it does not return -- zend_out_of_memory() ends the process,
+	 * which is the persistent allocator's contract -- so there is no failure
+	 * for this function to report. */
+	queue->items =
+		(luaext_defer_item *)perealloc(queue->items, capacity * sizeof(*queue->items), 1);
 	queue->capacity = capacity;
-
-	return true;
 }
 
-bool luaext_defer_fcc(luaext_sandbox *sandbox, zend_fcall_info_cache *fcc)
+void luaext_defer_fcc(luaext_sandbox *sandbox, zend_fcall_info_cache *fcc)
 {
 	luaext_defer_item *item;
 
-	if (sandbox == NULL || !luaext_defer_reserve(&sandbox->deferred)) {
-		return false;
-	}
+	luaext_defer_reserve(&sandbox->deferred);
 
 	item = &sandbox->deferred.items[sandbox->deferred.count++];
 	item->kind = LUAEXT_DEFER_FCC;
@@ -53,25 +46,19 @@ bool luaext_defer_fcc(luaext_sandbox *sandbox, zend_fcall_info_cache *fcc)
 
 	/* The caller no longer owns it, and must not release it too. */
 	memset(fcc, 0, sizeof(*fcc));
-
-	return true;
 }
 
-bool luaext_defer_zval(luaext_sandbox *sandbox, zval *value)
+void luaext_defer_zval(luaext_sandbox *sandbox, zval *value)
 {
 	luaext_defer_item *item;
 
-	if (sandbox == NULL || !luaext_defer_reserve(&sandbox->deferred)) {
-		return false;
-	}
+	luaext_defer_reserve(&sandbox->deferred);
 
 	item = &sandbox->deferred.items[sandbox->deferred.count++];
 	item->kind = LUAEXT_DEFER_ZVAL;
 	ZVAL_COPY_VALUE(&item->as.value, value);
 
 	ZVAL_UNDEF(value);
-
-	return true;
 }
 
 void luaext_defer_drain(luaext_sandbox *sandbox)
