@@ -565,6 +565,14 @@ struct luaext_sandbox {
 	luaext_proxy_class *proxy_classes;
 
 	/*
+	 * Registrations unregister() retired. Kept allocated, not freed: their
+	 * metatables and dispatch closures still reference the records through
+	 * light userdata, and proxies a script already holds keep dispatching.
+	 * Only luaext_proxy_find() forgets a retired class.
+	 */
+	luaext_proxy_class *proxy_retired;
+
+	/*
 	 * Every live proxy's payload, so get_gc can show the collector the PHP
 	 * objects the interpreter holds and stats() can report the count.
 	 * pemalloc'd: entries are removed by __gc, which also runs from
@@ -573,6 +581,13 @@ struct luaext_sandbox {
 	luaext_proxy_ud **proxy_gc_items;
 	size_t proxy_gc_count;
 	size_t proxy_gc_cap;
+
+	/*
+	 * Global names claimed by register* calls, so no registration can ever
+	 * silently overwrite another. Lazily created; pemalloc'd like the proxy
+	 * registry since it is freed on the close path.
+	 */
+	HashTable *claimed_globals;
 
 	/* Keeps the FileSystem, ModuleResolver and output callback alive. */
 	zval config_zv;

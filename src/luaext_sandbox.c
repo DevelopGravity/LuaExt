@@ -297,6 +297,12 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 * proxy GC list they anchor is gone with the state. */
 	luaext_proxy_shutdown(sandbox);
 
+	if (sandbox->claimed_globals != NULL) {
+		zend_hash_destroy(sandbox->claimed_globals);
+		pefree(sandbox->claimed_globals, 1);
+		sandbox->claimed_globals = NULL;
+	}
+
 	luaext_sandbox_unlink(sandbox);
 
 	zval_ptr_dtor(&sandbox->config_zv);
@@ -740,6 +746,55 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, features)
 bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox)
 {
 	return luaext_sandbox_check_thread(sandbox) && luaext_sandbox_check_open(sandbox);
+}
+
+/* -------------------------------------------------------------------------
+ * The registration namespace
+ *
+ * One rule, one table: a global name any register* call claimed belongs to
+ * that registration for the sandbox's lifetime, and a later registration
+ * wanting it is refused rather than silently overwriting it. setGlobal() is
+ * the deliberate free-form write and never consults this.
+ * ---------------------------------------------------------------------- */
+
+bool luaext_sandbox_global_available(luaext_sandbox *sandbox, const char *name, size_t name_len)
+{
+	if (sandbox->claimed_globals != NULL &&
+		zend_hash_str_exists(sandbox->claimed_globals, name, name_len)) {
+		zend_throw_exception_ex(
+			luaext_ce_configuration_error, 0,
+			"The Lua name \"%s\" is already taken by an earlier registration on this sandbox",
+			name);
+		return false;
+	}
+
+	return true;
+}
+
+void luaext_sandbox_global_claim(luaext_sandbox *sandbox, const char *name, size_t name_len)
+{
+	zend_string *key;
+
+	if (sandbox->claimed_globals == NULL) {
+		sandbox->claimed_globals = pemalloc(sizeof(HashTable), 1);
+		zend_hash_init(sandbox->claimed_globals, 8, NULL, NULL, 1);
+	}
+
+	key = zend_string_init(name, name_len, 1);
+	zend_hash_add_empty_element(sandbox->claimed_globals, key);
+	zend_string_release(key);
+}
+
+bool luaext_sandbox_global_release(luaext_sandbox *sandbox, const char *name, size_t name_len)
+{
+	if (sandbox->claimed_globals == NULL ||
+		zend_hash_str_del(sandbox->claimed_globals, name, name_len) == FAILURE) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"Nothing is registered under the Lua name \"%s\"", name);
+		return false;
+	}
+
+	return true;
 }
 
 /* -------------------------------------------------------------------------
@@ -1370,13 +1425,16 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerLibrary)
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
-	if (!luaext_sandbox_check_usable(sandbox)) {
+	if (!luaext_sandbox_check_usable(sandbox) ||
+		!luaext_sandbox_global_available(sandbox, ZSTR_VAL(name), ZSTR_LEN(name))) {
 		RETURN_THROWS();
 	}
 
 	if (!luaext_phpcall_register_table(sandbox, ZSTR_VAL(name), ZSTR_LEN(name), functions)) {
 		RETURN_THROWS();
 	}
+
+	luaext_sandbox_global_claim(sandbox, ZSTR_VAL(name), ZSTR_LEN(name));
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
@@ -1397,7 +1455,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
 
 	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
 
-	if (!luaext_sandbox_check_usable(sandbox)) {
+	if (!luaext_sandbox_check_usable(sandbox) ||
+		!luaext_sandbox_global_available(sandbox, ZSTR_VAL(name), ZSTR_LEN(name))) {
 		RETURN_THROWS();
 	}
 
@@ -1415,6 +1474,8 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject)
 	if (!registered) {
 		RETURN_THROWS();
 	}
+
+	luaext_sandbox_global_claim(sandbox, ZSTR_VAL(name), ZSTR_LEN(name));
 }
 
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerClass)
@@ -1440,6 +1501,51 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerClass)
 	}
 
 	if (!luaext_proxy_register(sandbox, class_name, methods, lua_name, operators)) {
+		RETURN_THROWS();
+	}
+}
+
+/* The allocating half of clearing a global, run under lua_pcall. */
+static int luaext_sandbox_clear_global(lua_State *L)
+{
+	const char *name = (const char *)lua_touserdata(L, 1);
+
+	lua_settop(L, 0);
+	lua_pushnil(L);
+	lua_setglobal(L, name);
+
+	return 0;
+}
+
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister)
+{
+	luaext_sandbox *sandbox;
+	zend_string *name;
+	lua_State *L;
+	int status;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+	Z_PARAM_STR(name)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sandbox = Z_LUAEXT_SANDBOX_P(ZEND_THIS);
+
+	if (!luaext_sandbox_check_usable(sandbox) ||
+		!luaext_sandbox_global_release(sandbox, ZSTR_VAL(name), ZSTR_LEN(name))) {
+		RETURN_THROWS();
+	}
+
+	/* A class registered under this name stops wrapping new instances;
+	 * proxies a script already holds keep working. No-op otherwise. */
+	luaext_proxy_retire_name(sandbox, name);
+
+	L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+	lua_pushcfunction(L, luaext_sandbox_clear_global);
+	lua_pushlightuserdata(L, (void *)ZSTR_VAL(name));
+	status = lua_pcall(L, 1, 0, 0);
+
+	if (status != LUA_OK) {
+		luaext_error_throw_from_lua(sandbox, L, status);
 		RETURN_THROWS();
 	}
 }

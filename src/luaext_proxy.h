@@ -138,7 +138,16 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
  */
 luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_class_entry *ce);
 
-/* Free the registry and everything the records own. Idempotent. */
+/*
+ * Retire the class registered under `lua_name`, if any: unlink it from the
+ * find chain so NEW instances stop wrapping, while the record itself stays
+ * allocated — its metatable and dispatch closures still reference it, and
+ * proxies a script already holds keep working, because an object a script
+ * was given cannot be taken back. A no-op for non-class names.
+ */
+void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_name);
+
+/* Free the registry — live and retired — and everything the records own. */
 void luaext_proxy_shutdown(luaext_sandbox *sandbox);
 
 #endif /* LUAEXT_PROXY_H */

@@ -37,12 +37,20 @@ foreach ($refusals as $label => [$name, $functions]) {
 	$sandbox->close();
 }
 
-// Two calls build one namespace rather than the second replacing the first.
+// A name is registered exactly once: a second call under the same name is a
+// conflict, never a merge or a replacement — batch the entries into one table
+// instead. The refusal leaves the first registration untouched.
 $sandbox = new Sandbox();
 $sandbox->registerLibrary('host', ['first' => static fn (): string => 'one']);
-$sandbox->registerLibrary('host', ['second' => static fn (): string => 'two']);
 
-var_dump($sandbox->eval('return host.first(), host.second()'));
+try {
+	$sandbox->registerLibrary('host', ['second' => static fn (): string => 'two']);
+	echo "NOT REFUSED\n";
+} catch (ConfigurationError $error) {
+	echo $error->getMessage(), "\n";
+}
+
+var_dump($sandbox->eval('return host.first(), host.second == nil'));
 
 $sandbox->close();
 
@@ -54,9 +62,10 @@ an integer key                 refused, host global is 'nil'
 an empty key                   refused, host global is 'nil'
 a value that is not callable   refused, host global is 'nil'
 one bad entry among good ones  refused, host global is 'nil'
+The Lua name "host" is already taken by an earlier registration on this sandbox
 array(2) {
   [0]=>
   string(3) "one"
   [1]=>
-  string(3) "two"
+  bool(true)
 }

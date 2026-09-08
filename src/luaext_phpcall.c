@@ -720,8 +720,11 @@ static int luaext_phpcall_build_table(lua_State *L)
 	lua_pushlstring(L, build->name, build->name_len);
 	lua_rawget(L, -2);
 
-	/* Adding to an existing library rather than replacing it, so two calls can
-	 * build one namespace; anything that is not a table is replaced. */
+	/* Adding to an existing table rather than replacing it. Registrations can
+	 * no longer repeat a name — the claim table upstream refuses that — so
+	 * the only table this can meet is one the host planted with setGlobal(),
+	 * which stays the deliberate free-form write; anything that is not a
+	 * table is replaced. */
 	if (!lua_istable(L, -1)) {
 		lua_pop(L, 1);
 		lua_createtable(L, 0, (int)zend_hash_num_elements(build->functions));

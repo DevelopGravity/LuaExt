@@ -17,6 +17,7 @@
 #include "luaext_defer.h"
 #include "luaext_error.h"
 #include "luaext_phpcall.h"
+#include "luaext_sandbox.h"
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -1178,15 +1179,16 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 			short_name, ZSTR_LEN(ce->name) - (size_t)(short_name - ZSTR_VAL(ce->name)), 1);
 	}
 
-	for (walk = sandbox->proxy_classes; walk != NULL; walk = walk->next) {
-		if (zend_string_equals(walk->lua_name, resolved_name)) {
-			zend_string_release(resolved_name);
-			zend_throw_exception_ex(
-				luaext_ce_configuration_error, 0,
-				"The Lua name \"%s\" is already taken by a previously registered class",
-				lua_name != NULL ? ZSTR_VAL(lua_name) : ZSTR_VAL(ce->name));
-			return false;
-		}
+	/*
+	 * The claim table covers every registrar — registerLibrary(),
+	 * registerObject(), and this — so no registration can ever silently
+	 * overwrite another's global. Checked here, claimed only at the very end:
+	 * a refused registration must burn nothing.
+	 */
+	if (!luaext_sandbox_global_available(sandbox, ZSTR_VAL(resolved_name),
+										 ZSTR_LEN(resolved_name))) {
+		zend_string_release(resolved_name);
+		return false;
 	}
 
 	record = pecalloc(1, sizeof(*record), 1);
@@ -1271,6 +1273,10 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 
 	record->next = sandbox->proxy_classes;
 	sandbox->proxy_classes = record;
+
+	/* The name is reserved whether or not a table was planted: an
+	 * instance-only class still owns its identity. */
+	luaext_sandbox_global_claim(sandbox, ZSTR_VAL(record->lua_name), ZSTR_LEN(record->lua_name));
 
 	return true;
 }
@@ -1402,18 +1408,46 @@ luaext_proxy_class *luaext_proxy_find(const luaext_sandbox *sandbox, const zend_
 	return NULL;
 }
 
-void luaext_proxy_shutdown(luaext_sandbox *sandbox)
+void luaext_proxy_retire_name(luaext_sandbox *sandbox, const zend_string *lua_name)
 {
-	luaext_proxy_class *record = sandbox->proxy_classes;
+	luaext_proxy_class **link = &sandbox->proxy_classes;
 
-	sandbox->proxy_classes = NULL;
+	while (*link != NULL) {
+		luaext_proxy_class *record = *link;
 
+		if (zend_string_equals(record->lua_name, lua_name)) {
+			*link = record->next;
+
+			/* Retired, not freed: the metatable and dispatch closures still
+			 * reference this record through light userdata, and proxies a
+			 * script already holds keep dispatching through them. Only the
+			 * find chain forgets it. */
+			record->next = sandbox->proxy_retired;
+			sandbox->proxy_retired = record;
+			return;
+		}
+
+		link = &record->next;
+	}
+}
+
+static void luaext_proxy_free_chain(luaext_proxy_class *record)
+{
 	while (record != NULL) {
 		luaext_proxy_class *next = record->next;
 
 		luaext_proxy_class_free(record);
 		record = next;
 	}
+}
+
+void luaext_proxy_shutdown(luaext_sandbox *sandbox)
+{
+	luaext_proxy_free_chain(sandbox->proxy_classes);
+	sandbox->proxy_classes = NULL;
+
+	luaext_proxy_free_chain(sandbox->proxy_retired);
+	sandbox->proxy_retired = NULL;
 
 	/* lua_close() finalised every proxy, so the list is empty by now; the
 	 * storage is what remains. */

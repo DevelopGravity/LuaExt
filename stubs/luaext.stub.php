@@ -876,7 +876,15 @@ final class Sandbox
     /**
      * Expose a table of PHP callables as a Lua global.
      *
+     * The name is claimed for the sandbox's lifetime: every registration owns
+     * its global exactly once, and a later registerLibrary(), registerObject()
+     * or registerClass() wanting a claimed name is refused rather than
+     * silently overwriting it — batch a library's entries into one call.
+     * unregister() releases a claim; setGlobal() stays the deliberate
+     * free-form write and never consults the claims.
+     *
      * @param array<string, callable> $functions Lua name => PHP callable
+     * @throws Exception\ConfigurationError if the name is already claimed.
      */
     public function registerLibrary(string $name, array $functions): void {}
 
@@ -886,9 +894,11 @@ final class Sandbox
      * Only methods carrying the LuaMethod attribute, or named in $methods, are
      * exposed; properties are never reachable and the object itself never
      * crosses into Lua unless its class is registered with registerClass().
+     * The name is claimed for the sandbox's lifetime under the same rule as
+     * registerLibrary().
      *
      * @param null|list<string> $methods Explicit allowlist, overriding attributes.
-     * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method.
+     * @throws Exception\ConfigurationError if neither attributes nor an allowlist select any method, or the name is already claimed.
      */
     public function registerObject(string $name, object $instance, ?array $methods = null): void {}
 
@@ -899,7 +909,9 @@ final class Sandbox
      * table (default name: the unqualified class name); marked instance
      * methods become proxy methods reached with the colon convention, and the
      * instance itself crosses as an unforgeable userdata wherever it appears.
-     * Registration is one-way for the sandbox's lifetime.
+     * The Lua name is claimed under the same rule as registerLibrary(), even
+     * when only instance methods are exposed and no table is planted; the one
+     * way back is unregister().
      *
      * @param null|list<string> $methods Explicit allowlist, overriding attributes.
      * @param null|array<string, Operator> $operators Method name => operator slot.
@@ -911,6 +923,22 @@ final class Sandbox
         ?string $luaName = null,
         ?array $operators = null,
     ): void {}
+
+    /**
+     * Release a name an earlier register* call claimed: the global is cleared
+     * and the name may be registered again — unregister-then-register is how
+     * a registration is swapped.
+     *
+     * For a class registration the class also stops wrapping new instances.
+     * Proxies a script already holds keep working, because an object a script
+     * was given cannot be taken back; nothing already out is invalidated.
+     *
+     * Only claimed names can be released — clearing a free-form global is
+     * setGlobal($name, null)'s job.
+     *
+     * @throws Exception\ConfigurationError if nothing is registered under $name.
+     */
+    public function unregister(string $name): void {}
 
     /**
      * Register a module so require() resolves it without consulting the

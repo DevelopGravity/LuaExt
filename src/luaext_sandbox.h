@@ -38,4 +38,21 @@ void luaext_sandbox_close(luaext_sandbox *sandbox);
  */
 bool luaext_sandbox_check_usable(const luaext_sandbox *sandbox);
 
+/*
+ * The registration namespace. Every register* call — registerLibrary(),
+ * registerObject(), registerClass() — claims its global name for the
+ * sandbox's lifetime, and a later registration wanting a claimed name is
+ * refused with a ConfigurationError rather than silently overwriting it.
+ * setGlobal() is the deliberate free-form write and never consults this.
+ *
+ * Two halves so a claim lands only on SUCCESS: check availability early
+ * (throws and returns false on conflict), claim once the registration has
+ * actually taken effect — a refused registration must burn nothing.
+ */
+bool luaext_sandbox_global_available(luaext_sandbox *sandbox, const char *name, size_t name_len);
+void luaext_sandbox_global_claim(luaext_sandbox *sandbox, const char *name, size_t name_len);
+
+/* Release a claim, or throw ("nothing is registered") and return false. */
+bool luaext_sandbox_global_release(luaext_sandbox *sandbox, const char *name, size_t name_len);
+
 #endif /* LUAEXT_SANDBOX_H */

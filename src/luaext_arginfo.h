@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: bc8a439fd8cc2c1f4472b12f591cbeb907b04c91 */
+ * Stub hash: 2d3047b3c7bd9030442a50aab1a0a8549e411b09 */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DevelopGravity_LuaExt_LuaMethod___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
@@ -186,6 +186,10 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sand
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, operators, IS_ARRAY, 1, "null")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_unregister, 0, 1, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_DevelopGravity_LuaExt_Sandbox_preloadModule, 0, 2, IS_VOID, 0)
 	ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
 	ZEND_ARG_OBJ_TYPE_MASK(0, loader, DevelopGravity\\LuaExt\\LuaFunction, MAY_BE_CALLABLE, NULL)
@@ -340,6 +344,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, wrapCallable);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerLibrary);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerObject);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, registerClass);
+ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, preloadModule);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, setLimits);
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, limits);
@@ -432,6 +437,7 @@ static const zend_function_entry class_DevelopGravity_LuaExt_Sandbox_methods[] =
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerLibrary, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerLibrary, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerObject, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerObject, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, registerClass, arginfo_class_DevelopGravity_LuaExt_Sandbox_registerClass, ZEND_ACC_PUBLIC)
+	ZEND_ME(DevelopGravity_LuaExt_Sandbox, unregister, arginfo_class_DevelopGravity_LuaExt_Sandbox_unregister, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, preloadModule, arginfo_class_DevelopGravity_LuaExt_Sandbox_preloadModule, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, setLimits, arginfo_class_DevelopGravity_LuaExt_Sandbox_setLimits, ZEND_ACC_PUBLIC)
 	ZEND_ME(DevelopGravity_LuaExt_Sandbox, limits, arginfo_class_DevelopGravity_LuaExt_Sandbox_limits, ZEND_ACC_PUBLIC)

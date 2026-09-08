@@ -91,4 +91,4 @@ nothing: Nothing of Bare is exposed: no method carries #[LuaMethod], no allowlis
 table-clash: Two exposures of TableClash both want the Lua name "new"
 registered
 duplicate: Exposed is already registered on this sandbox
-name-clash: The Lua name "Exposed" is already taken by a previously registered class
+name-clash: The Lua name "Exposed" is already taken by an earlier registration on this sandbox
