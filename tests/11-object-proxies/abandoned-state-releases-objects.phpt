@@ -2,6 +2,15 @@
 A bailout-abandoned sandbox sweeps its proxies' PHP references without incident
 --EXTENSIONS--
 luaext
+--SKIPIF--
+<?php
+// run-tests.php -m (the valgrind leg) forces USE_ZEND_ALLOC=0, which turns
+// memory_limit into a dead letter: the engine bailout this test exists to
+// provoke can never fire without ZendMM enforcing the ceiling.
+if (getenv('USE_ZEND_ALLOC') === '0') {
+	echo 'skip ZendMM is disabled (USE_ZEND_ALLOC=0), so memory_limit cannot bail out';
+}
+?>
 --INI--
 memory_limit=64M
 --FILE--
