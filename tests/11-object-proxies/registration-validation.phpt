@@ -13,6 +13,11 @@ use DevelopGravity\LuaExt\Sandbox;
 
 interface Shape {}
 enum Suit { case Hearts; }
+trait Grants
+{
+	#[LuaMethod]
+	public static function issue(): int { return 1; }
+}
 abstract class AbstractBase
 {
 	#[LuaMethod]
@@ -70,6 +75,9 @@ $attempts = [
 	},
 	'enum' => static function () use ($sandbox): void {
 		$sandbox->registerClass(Suit::class);
+	},
+	'trait' => static function () use ($sandbox): void {
+		$sandbox->registerClass(Grants::class);
 	},
 	'abstract-ctor' => static function () use ($sandbox): void {
 		$sandbox->registerClass(AbstractBase::class);
@@ -148,6 +156,7 @@ $sandbox->close();
 missing: Cannot register No\Such\ClassAtAll: the class does not exist
 interface: Cannot register interface Shape: only classes have instances to proxy
 enum: Cannot register enum Suit: enum cases are process-lifetime singletons, not instances a proxy can own
+trait: Cannot register trait Grants: only the classes that use it have instances to proxy
 abstract-ctor: Cannot expose the constructor of abstract AbstractBase
 nothing: Nothing of Bare is exposed: no method carries #[LuaMethod], no allowlist was given, and no operator is mapped
 table-clash: Two exposures of TableClash both want the Lua name "new"

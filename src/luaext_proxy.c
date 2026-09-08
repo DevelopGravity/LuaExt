@@ -1712,6 +1712,14 @@ bool luaext_proxy_register(luaext_sandbox *sandbox, zend_string *class_name, Has
 		return false;
 	}
 
+	if (ce->ce_flags & ZEND_ACC_TRAIT) {
+		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
+								"Cannot register trait %s: only the classes that use it have "
+								"instances to proxy",
+								ZSTR_VAL(ce->name));
+		return false;
+	}
+
 	if (ce->ce_flags & ZEND_ACC_ENUM) {
 		zend_throw_exception_ex(luaext_ce_configuration_error, 0,
 								"Cannot register enum %s: enum cases are process-lifetime "
