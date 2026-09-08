@@ -13,7 +13,7 @@ declare(strict_types=1);
 // cast truncate it -- 4294967296 became a base count of 0, a hook that could
 // never fire, on the one build where that hook IS the CPU limit. The custom
 // handler refuses negatives (so the -5 above never landed and the default
-// held) and clamps past INT_MAX; PHP_INI_SYSTEM keeps userland's hands off a
+// held) and refuses past INT_MAX; PHP_INI_SYSTEM keeps userland's hands off a
 // knob that gates an enforcement mechanism.
 var_dump(ini_get('luaext.hook_count'));
 

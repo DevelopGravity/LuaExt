@@ -104,9 +104,10 @@ zend_class_entry *luaext_ce_lua_logic_exception;
  * stock OnUpdateLong accepted 4294967296, stored it as a zend_long, and let
  * the consumer's cast truncate it to zero -- at which point
  * luaext_timers_hook_armed() still reported the fallback enforcer armed while
- * a base count of zero meant its hook could never fire. Negatives are refused
- * outright and anything past INT_MAX is clamped to it, so the stored value is
- * always exactly what lua_sethook() will receive.
+ * a base count of zero meant its hook could never fire. Negatives and
+ * anything past INT_MAX are refused outright -- never silently repaired --
+ * so the value ini_get() and phpinfo() report is always exactly what
+ * lua_sethook() will receive.
  */
 static PHP_INI_MH(luaext_ini_update_hook_count)
 {
@@ -117,12 +118,8 @@ static PHP_INI_MH(luaext_ini_update_hook_count)
 	(void)mh_arg3;
 	(void)stage;
 
-	if (parsed < 0) {
+	if (parsed < 0 || parsed > (zend_long)INT_MAX) {
 		return FAILURE;
-	}
-
-	if (parsed > (zend_long)INT_MAX) {
-		parsed = (zend_long)INT_MAX;
 	}
 
 	LUAEXT_G(hook_count) = parsed;
@@ -135,11 +132,12 @@ static PHP_INI_MH(luaext_ini_update_hook_count)
  * way to the watchdog. The stock OnUpdateLong accepted any zend_long, so a
  * large enough value wrapped that conversion into an unrelated floor -- and
  * even an unwrapped huge value is a floor of hours, parking every deadline far
- * past the limit it exists to deliver. Negatives are refused like hook_count's,
- * and the ceiling is one second: already an enormous overshoot bound for a
- * knob whose default is 500us, and small enough the conversion can never wrap.
- * The watchdog clamps to the same bound on its side (LUAEXT_WATCH_MAX_FLOOR_NS)
- * rather than trusting this one.
+ * past the limit it exists to deliver. Negatives and anything above one
+ * second are refused rather than silently repaired, so the reported value is
+ * always the effective one: one second is already an enormous overshoot
+ * bound for a knob whose default is 500us, and small enough the conversion
+ * can never wrap. The watchdog clamps to the same bound on its side
+ * (LUAEXT_WATCH_MAX_FLOOR_NS) rather than trusting this one.
  */
 static PHP_INI_MH(luaext_ini_update_watchdog_resolution)
 {
@@ -150,12 +148,8 @@ static PHP_INI_MH(luaext_ini_update_watchdog_resolution)
 	(void)mh_arg3;
 	(void)stage;
 
-	if (parsed < 0) {
+	if (parsed < 0 || parsed > (zend_long)1000000) {
 		return FAILURE;
-	}
-
-	if (parsed > (zend_long)1000000) {
-		parsed = (zend_long)1000000;
 	}
 
 	LUAEXT_G(watchdog_resolution_us) = parsed;
