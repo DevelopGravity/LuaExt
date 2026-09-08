@@ -911,14 +911,22 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 		}
 	}
 
-	lua_pushvalue(L, -1);
-	lua_rawsetp(L, LUA_REGISTRYINDEX, cls);
-
+	/*
+	 * Intern map-first: the guard above keys on registry[cls], so that write
+	 * must come LAST. Either interning step can raise on memory pressure, and
+	 * a raise after registry[cls] existed would hand every later push a
+	 * metatable the identity map never learned — permanently refusing the
+	 * class's proxies. Torn the other way round, the next push simply builds
+	 * afresh and the orphaned map entry is inert.
+	 */
 	luaext_proxy_mts_map(L);
 	lua_pushvalue(L, -2);
 	lua_pushlightuserdata(L, cls);
 	lua_rawset(L, -3);
 	lua_pop(L, 1);
+
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, cls);
 }
 
 /*
