@@ -37,6 +37,23 @@ typedef enum {
 } luaext_proxy_op;
 
 /*
+ * The class table's validity token, allocated as a full userdata when the
+ * table is planted. The table's dispatch closures capture THIS — never the
+ * record pointer itself — and refuse once the magic is cleared, so a script
+ * alias of the table (or of a closure inside it) can outlive unregister()
+ * without ever reaching a reclaimed record. Lua owns the payload: the
+ * closures keep it alive for as long as they exist, and the registry pin
+ * (anchor_ref) keeps it writable for exactly as long as the record may still
+ * need to revoke it.
+ */
+#define LUAEXT_PROXY_ANCHOR_MAGIC 0x4C58416Eu /* "LXAn" */
+
+typedef struct {
+	uint32_t magic;
+	luaext_proxy_class *cls;
+} luaext_proxy_anchor;
+
+/*
  * One registered class. Everything in here is persistent (pemalloc'd, or
  * persistent zend_strings, or engine-owned pointers): the registry is torn
  * down by luaext_proxy_shutdown() on the close path, which can run from the
@@ -77,6 +94,12 @@ struct luaext_proxy_class {
 	 */
 	bool retired;
 	size_t live_proxies;
+
+	/* The planted class table's validity token and its registry pin.
+	 * NULL/LUA_NOREF when no table was planted, and again once retirement
+	 * revoked it — reclamation never depends on who still aliases the table. */
+	luaext_proxy_anchor *anchor;
+	int anchor_ref;
 
 	struct luaext_proxy_class *next;
 };

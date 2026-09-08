@@ -565,9 +565,10 @@ struct luaext_sandbox {
 	luaext_proxy_class *proxy_classes;
 
 	/*
-	 * Registrations unregister() retired. Kept allocated, not freed: their
-	 * metatables and dispatch closures still reference the records through
-	 * light userdata, and proxies a script already holds keep dispatching.
+	 * Registrations unregister() retired while proxies still dispatch through
+	 * them: their metatables' closures reference the records through light
+	 * userdata, so a record lives until its last proxy dies. The class table's
+	 * own closures hold only the revoked anchor and refuse by themselves.
 	 * Only luaext_proxy_find() forgets a retired class.
 	 */
 	luaext_proxy_class *proxy_retired;

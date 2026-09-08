@@ -450,17 +450,28 @@ static int luaext_proxy_method_call(lua_State *L)
 }
 
 /*
- * Static dispatch. Upvalues: (1) the class record, (2) the vetted
+ * Static dispatch. Upvalues: (1) the class-table anchor, (2) the vetted
  * zend_function, (3) the Lua-visible name, (4) the class table itself — the
  * colon guard: `money:zero()` desugars to `money.zero(money)`, so a first
  * argument that IS the table is that mistake, named with its fix.
  */
 static int luaext_proxy_static_call(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
 	zend_function *method = (zend_function *)lua_touserdata(L, lua_upvalueindex(2));
 	const char *name = lua_tostring(L, lua_upvalueindex(3));
+	luaext_proxy_class *cls;
 	luaext_phpcall_target target;
+
+	/* Before any read of the record: retirement revoked the anchor, and the
+	 * record a stale alias would name may already be reclaimed. */
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "'%s' cannot run: its registration was withdrawn", name);
+	}
+
+	cls = anchor->cls;
 
 	if (lua_gettop(L) >= 1 && lua_rawequal(L, 1, lua_upvalueindex(4))) {
 		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
@@ -479,7 +490,8 @@ static int luaext_proxy_static_call(lua_State *L)
 }
 
 /*
- * The exposed constructor, published as `.new` (or its override).
+ * The exposed constructor, published as `.new` (or its override). Upvalues:
+ * (1) the class-table anchor, (2) the printable "Class.new" name.
  *
  * The proxy is pushed BEFORE the constructor runs, deliberately: from that
  * moment the new object is Lua-owned, so this frame owns nothing across the
@@ -491,16 +503,27 @@ static int luaext_proxy_static_call(lua_State *L)
  */
 static int luaext_proxy_new_call(lua_State *L)
 {
-	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, lua_upvalueindex(1));
+	const luaext_proxy_anchor *anchor =
+		(const luaext_proxy_anchor *)lua_touserdata(L, lua_upvalueindex(1));
+	const char *name = lua_tostring(L, lua_upvalueindex(2));
 	luaext_sandbox *sandbox = LUAEXT_SB(L);
+	luaext_proxy_class *cls;
 	luaext_phpcall_target target;
 	luaext_proxy_ud *slot;
 	zend_object *object;
 	zval instance;
 
+	/* Before any read of the record: retirement revoked the anchor, and the
+	 * record a stale alias would name may already be reclaimed. */
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "%s cannot run: its registration was withdrawn", name);
+	}
+
+	cls = anchor->cls;
+
 	if (sandbox == NULL || sandbox->closed || sandbox->L == NULL) {
-		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s.%s cannot run: its sandbox is gone",
-						   ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s cannot run: its sandbox is gone", name);
 	}
 
 	if (EG(exception) != NULL) {
@@ -726,6 +749,7 @@ static int luaext_proxy_tostring(lua_State *L)
 static int luaext_proxy_plant_table(lua_State *L)
 {
 	luaext_proxy_class *cls = (luaext_proxy_class *)lua_touserdata(L, 1);
+	luaext_proxy_anchor *anchor;
 	zend_string *name;
 	zend_function *method;
 
@@ -734,9 +758,22 @@ static int luaext_proxy_plant_table(lua_State *L)
 
 	lua_createtable(L, 0, (int)zend_hash_num_elements(cls->static_methods) + 1);
 
+	/*
+	 * The validity token every dispatch closure captures instead of the record
+	 * pointer, so a stale alias refuses instead of reaching reclaimed memory.
+	 * Committed to the record immediately: a raise below leaves the caller to
+	 * revoke it alongside freeing the record it guards.
+	 */
+	anchor = (luaext_proxy_anchor *)lua_newuserdatauv(L, sizeof(*anchor), 0);
+	anchor->magic = LUAEXT_PROXY_ANCHOR_MAGIC;
+	anchor->cls = cls;
+	lua_pushvalue(L, 2);
+	cls->anchor_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	cls->anchor = anchor;
+
 	ZEND_HASH_MAP_FOREACH_STR_KEY_PTR(cls->static_methods, name, method)
 	{
-		lua_pushlightuserdata(L, cls);
+		lua_pushvalue(L, 2); /* the anchor */
 		lua_pushlightuserdata(L, method);
 		lua_pushlstring(L, ZSTR_VAL(name), ZSTR_LEN(name));
 		lua_pushvalue(L, 1); /* the table itself, for the colon guard */
@@ -746,11 +783,13 @@ static int luaext_proxy_plant_table(lua_State *L)
 	ZEND_HASH_FOREACH_END();
 
 	if (cls->constructor != NULL) {
-		lua_pushlightuserdata(L, cls);
-		lua_pushcclosure(L, luaext_proxy_new_call, 1);
+		lua_pushvalue(L, 2); /* the anchor */
+		lua_pushfstring(L, "%s.%s", ZSTR_VAL(cls->lua_name), ZSTR_VAL(cls->constructor_lua_name));
+		lua_pushcclosure(L, luaext_proxy_new_call, 2);
 		lua_setfield(L, 1, ZSTR_VAL(cls->constructor_lua_name));
 	}
 
+	lua_pop(L, 1); /* the anchor; the pin and the closures hold it now */
 	lua_setglobal(L, ZSTR_VAL(cls->lua_name));
 
 	return 0;
@@ -894,6 +933,27 @@ static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
 
 	/* Last: only a fully-listed, reference-holding payload is a live proxy. */
 	slot->magic = LUAEXT_PROXY_MAGIC;
+}
+
+/*
+ * Revoke a record's class-table anchor: clear the magic so every dispatch
+ * closure that captured it refuses from this instant, and drop the registry
+ * pin so the payload dies with the last closure. After this the record's
+ * lifetime no longer depends on who still aliases the table — which is what
+ * makes freeing it sound. Neither step allocates (luaL_unref only writes),
+ * so it is safe wherever reclamation runs. A no-op for a table-less record.
+ */
+static void luaext_proxy_anchor_drop(lua_State *L, luaext_proxy_class *record)
+{
+	if (record->anchor != NULL) {
+		record->anchor->magic = 0;
+		record->anchor = NULL;
+	}
+
+	if (record->anchor_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, record->anchor_ref);
+		record->anchor_ref = LUA_NOREF;
+	}
 }
 
 /*
@@ -1309,6 +1369,7 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 	record = pecalloc(1, sizeof(*record), 1);
 	record->ce = ce;
 	record->lua_name = resolved_name;
+	record->anchor_ref = LUA_NOREF;
 	record->instance_methods = pemalloc(sizeof(HashTable), 1);
 	zend_hash_init(record->instance_methods, 8, NULL, NULL, 1);
 	record->static_methods = pemalloc(sizeof(HashTable), 1);
@@ -1381,6 +1442,9 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 
 		if (status != LUA_OK) {
 			luaext_error_throw_from_lua(sandbox, L, status);
+			/* The half-built table is garbage, but the anchor was committed
+			 * and pinned the moment it existed; revoke it with the record. */
+			luaext_proxy_anchor_drop(L, record);
 			luaext_proxy_class_free(record);
 			return false;
 		}
@@ -1534,6 +1598,10 @@ void luaext_proxy_retire_name(luaext_sandbox *sandbox, lua_State *L, const zend_
 			*link = record->next;
 			record->retired = true;
 
+			/* First, so a stale class-table alias refuses from this instant
+			 * and the record's fate stops depending on who still holds one. */
+			luaext_proxy_anchor_drop(L, record);
+
 			if (record->live_proxies == 0) {
 				/* Nothing dispatches through it: gone now, metatable and
 				 * all, so swap loops cannot accumulate dead records. */
@@ -1543,10 +1611,10 @@ void luaext_proxy_retire_name(luaext_sandbox *sandbox, lua_State *L, const zend_
 				return;
 			}
 
-			/* Retired, not freed: the metatable and dispatch closures still
-			 * reference this record through light userdata, and proxies a
-			 * script already holds keep dispatching through them. The last
-			 * such proxy's finaliser reclaims it. */
+			/* Retired, not freed: the metatable's closures still reference
+			 * this record through light userdata, and proxies a script
+			 * already holds keep dispatching through them. The last such
+			 * proxy's finaliser reclaims it. */
 			record->next = sandbox->proxy_retired;
 			sandbox->proxy_retired = record;
 			return;
