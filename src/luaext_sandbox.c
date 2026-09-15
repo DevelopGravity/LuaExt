@@ -1210,6 +1210,25 @@ static int luaext_sandbox_push_cache_and_key(lua_State *L)
 	return 2;
 }
 
+/*
+ * Store one entry in the chunk cache, under the same protection its siblings
+ * get. rawset allocates -- the cache table is created with room for eight
+ * entries, so the ninth distinct key rehashes -- and an allocation the memory
+ * ceiling refuses returns NULL, which unwinds. With no handler installed that
+ * unwind reaches the panic function and ends the request, turning a budget
+ * refusal into a fatal error for a store that is only ever an optimisation.
+ *
+ * Stack: [cache][key][chunk], and the chunk is left on top for the caller.
+ */
+static int luaext_sandbox_cache_store(lua_State *L)
+{
+	lua_pushvalue(L, 2); /* [cache][key][chunk][key] */
+	lua_pushvalue(L, 3); /* [cache][key][chunk][key][chunk] */
+	lua_rawset(L, 1);	 /* cache[key] = chunk */
+
+	return 0;
+}
+
 ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 {
 	luaext_sandbox *sandbox;
@@ -1285,12 +1304,24 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, eval)
 			 * seen enough other scripts" is not a defensible behaviour.
 			 */
 			if (cap == 0 || sandbox->cached_chunks < (uint64_t)cap) {
-				/* rawset pops VALUE then KEY off the top, so both are copied
-				 * above the chunk rather than stored from where they sit. */
-				lua_pushvalue(L, -2); /* [cache][key][chunk][key] */
-				lua_pushvalue(L, -2); /* [cache][key][chunk][key][chunk] */
-				lua_rawset(L, -5);	  /* cache[key] = chunk -> [cache][key][chunk] */
-				sandbox->cached_chunks++;
+				/*
+				 * Protected, because the store allocates: a refusal here must
+				 * cost the next call a recompile, never this one its life.
+				 * The trampoline works on COPIES so that a failed store still
+				 * leaves [cache][key][chunk] intact below it, and a store
+				 * that did not happen is not counted.
+				 */
+				if (lua_checkstack(L, 5)) {
+					lua_pushcfunction(L, luaext_sandbox_cache_store);
+					lua_pushvalue(L, -4); /* cache */
+					lua_pushvalue(L, -4); /* key   */
+					lua_pushvalue(L, -4); /* chunk */
+
+					if (lua_pcall(L, 3, 0, 0) == LUA_OK) {
+						sandbox->cached_chunks++;
+					}
+				}
+
 				lua_remove(L, -2); /* -> [cache][chunk] */
 				lua_remove(L, -2); /* -> [chunk] */
 			} else {
