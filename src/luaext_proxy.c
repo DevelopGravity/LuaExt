@@ -1678,6 +1678,22 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 		}
 	}
 
+	/*
+	 * The usability check at the top of this function covered resolving the
+	 * class and instantiating the #[LuaClass] carrier, but both collection
+	 * passes above materialise attribute objects of their own, and evaluating
+	 * an attribute argument that names a class constant reaches the
+	 * autoloader. That host PHP may have closed the sandbox out from under a
+	 * registration that is otherwise complete -- and unlike an argument whose
+	 * type is wrong, a class constant SUCCEEDS, so nothing else here would
+	 * notice. Re-check before anything is committed: this gates the plant
+	 * step AND the link-and-claim tail below, because an instance-only class
+	 * plants no table and would otherwise claim a name on a dead sandbox.
+	 */
+	if (collected && !luaext_sandbox_check_usable(sandbox)) {
+		collected = false;
+	}
+
 	if (!collected) {
 		luaext_proxy_class_free(record);
 		return false;
