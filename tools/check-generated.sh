@@ -59,6 +59,15 @@ elif ! php tools/audit-stdlib.php --check; then
 	STATUS=1
 fi
 
+section "Publishable stub package (tools/check-stub-package.php)"
+if [ ! -f tools/check-stub-package.php ]; then
+	echo "tools/check-stub-package.php is missing — this checkout is incomplete, and" >&2
+	echo "the stub package published to Packagist is therefore UNCHECKED." >&2
+	STATUS=1
+elif ! php tools/check-stub-package.php; then
+	STATUS=1
+fi
+
 echo
 if [ "$STATUS" -ne 0 ]; then
 	echo "check-generated: one or more generated artifacts are out of date." >&2
