@@ -96,7 +96,12 @@ static int luaext_phpcall_release(lua_State *L)
 {
 	luaext_phpcall_ud *slot = (luaext_phpcall_ud *)lua_touserdata(L, 1);
 
-	if (slot == NULL || slot->magic != LUAEXT_PHPCALL_MAGIC) {
+	/* Size before magic, as everywhere else a finaliser reads a payload: the
+	 * metatable a value wears at collection time is not proof of its shape,
+	 * and a light userdata (rawlen 0) or a smaller foreign one must never be
+	 * read past its end. */
+	if (slot == NULL || lua_rawlen(L, 1) != sizeof(luaext_phpcall_ud) ||
+		slot->magic != LUAEXT_PHPCALL_MAGIC) {
 		return 0;
 	}
 

@@ -443,7 +443,12 @@ static int luaext_proxy_release(lua_State *L)
 {
 	luaext_proxy_ud *slot = (luaext_proxy_ud *)lua_touserdata(L, 1);
 
-	if (slot == NULL || slot->magic != LUAEXT_PROXY_MAGIC) {
+	/* Size before magic, as in luaext_proxy_test(): a __gc fires through
+	 * whatever metatable the value wears at collection time, so a light
+	 * userdata (rawlen 0) or a smaller foreign userdata must never be read
+	 * past its end to reach the magic word. */
+	if (slot == NULL || lua_rawlen(L, 1) != sizeof(luaext_proxy_ud) ||
+		slot->magic != LUAEXT_PROXY_MAGIC) {
 		return 0;
 	}
 
