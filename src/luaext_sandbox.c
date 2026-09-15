@@ -281,10 +281,20 @@ void luaext_sandbox_close(luaext_sandbox *sandbox)
 	 * build WILL report this as a leak in that case; that report is correct
 	 * and must not be "fixed".
 	 *
+	 * A state that panicked is abandoned for the same reason and on the same
+	 * terms. The panic handler above bails out past this function entirely, so
+	 * the sweep that eventually arrives here is the FIRST look anything takes
+	 * at that interpreter -- and it is one whose error was raised with no
+	 * handler to take it, which is not a state to run finalisers on. Honouring
+	 * the flag is what makes the promise recorded up there true; closing such
+	 * a state instead would be reclaiming a heap the panic path has already
+	 * accounted for as lost.
+	 *
 	 * The ordinary paths are unaffected: by the time a destructor or the
-	 * RSHUTDOWN sweep runs normally, no call is in progress and in_lua is zero.
+	 * RSHUTDOWN sweep runs normally, no call is in progress, in_lua is zero
+	 * and nothing has panicked.
 	 */
-	if (L != NULL && sandbox->in_lua == 0) {
+	if (L != NULL && sandbox->in_lua == 0 && !sandbox->panicked) {
 		lua_close(L);
 	} else if (L != NULL) {
 		/*
