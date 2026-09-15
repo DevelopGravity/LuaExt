@@ -634,6 +634,32 @@ static int luaext_proxy_new_call(lua_State *L)
 		luaext_error_raise_from_exception(L);
 	}
 
+	/*
+	 * object_init_ex() cannot longjmp, but it is not free of HOST code: the
+	 * first instantiation runs zend_update_class_constants(), whose constant
+	 * and default-property ASTs can name a class constant and reach the
+	 * autoloader. That PHP may re-enter this sandbox and unregister() the very
+	 * class being constructed — which retires the record and, with no live
+	 * proxy pinning it (the shell above deliberately pins nothing), frees it
+	 * outright. So nothing read before the call may be trusted after it: the
+	 * anchor is re-tested and `cls` re-read from it, exactly as at entry.
+	 *
+	 * Reading the anchor is always sound — it is this closure's own upvalue,
+	 * so it outlives the record; retirement only clears its magic.
+	 */
+	if (anchor->magic != LUAEXT_PROXY_ANCHOR_MAGIC) {
+		luaext_defer_zval(sandbox, &instance);
+		luaext_error_raise(L, LUAEXT_ERR_RUNTIME, false,
+						   "%s cannot run: its registration was withdrawn", name);
+	}
+
+	if (sandbox->closed || sandbox->L == NULL) {
+		luaext_defer_zval(sandbox, &instance);
+		luaext_error_raise(L, LUAEXT_ERR_ABORT, true, "%s cannot run: its sandbox is gone", name);
+	}
+
+	cls = anchor->cls;
+
 	object = Z_OBJ(instance);
 	luaext_proxy_bind(sandbox, slot, cls, object);
 
