@@ -44,11 +44,24 @@ try {
 
 // The sandbox is intact: raise the ceiling and it works again.
 $sandbox->setLimits($sandbox->limits()->with(memoryBytes: 33554432));
+
+// Everything the refused run minted is unreachable now, so the counter must
+// come all the way back. A proxy the refusal stranded in the live list -- one
+// bound to a count that was incremented but never handed back -- would hold it
+// above zero for the rest of the sandbox's life.
+(void) $sandbox->eval('collectgarbage("collect")');
+var_dump($sandbox->stats()->liveObjectProxies);
+
 var_dump($sandbox->eval('return Pebble.new():id()')[0]);
+
+(void) $sandbox->eval('collectgarbage("collect")');
+var_dump($sandbox->stats()->liveObjectProxies);
 
 $sandbox->close();
 
 ?>
 --EXPECT--
 stopped by the memory ceiling
+int(0)
 int(1)
+int(0)

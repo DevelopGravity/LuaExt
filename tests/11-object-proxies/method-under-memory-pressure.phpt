@@ -51,11 +51,23 @@ try {
 
 // The sandbox is intact: raise the ceiling and dispatch works again.
 $sandbox->setLimits($sandbox->limits()->with(memoryBytes: 33554432));
+
+// A refusal mid-dispatch must not strand the receiver or a half-wrapped
+// return in the live list: once the refused run is unreachable the counter
+// comes all the way back.
+(void) $sandbox->eval('collectgarbage("collect")');
+var_dump($sandbox->stats()->liveObjectProxies);
+
 var_dump($sandbox->eval("return Mint.new(0):next('abc'):value()")[0]);
+
+(void) $sandbox->eval('collectgarbage("collect")');
+var_dump($sandbox->stats()->liveObjectProxies);
 
 $sandbox->close();
 
 ?>
 --EXPECT--
 stopped by the memory ceiling
+int(0)
 int(3)
+int(0)
