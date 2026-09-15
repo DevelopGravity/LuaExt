@@ -1074,11 +1074,18 @@ static void luaext_proxy_push_metatable(lua_State *L, luaext_proxy_class *cls)
 
 /*
  * The allocating half of pushing a proxy: a blank, magic-less shell wearing
- * `cls`'s metatable, with the GC list already grown to hold it. EVERY step
- * that can raise lives here, and the shell owns nothing — a raise leaves a
- * userdata whose zeroed magic makes the finaliser a no-op. The split exists
- * for .new, which must run all raising allocation BEFORE it creates the PHP
- * object whose sole reference would otherwise be stranded by the longjmp.
+ * `cls`'s metatable. EVERY step that can raise lives here, and the shell owns
+ * nothing — a raise leaves a userdata whose zeroed magic makes the finaliser
+ * a no-op. The split exists for .new, which must run all raising allocation
+ * BEFORE it creates the PHP object whose sole reference would otherwise be
+ * stranded by the longjmp.
+ *
+ * The GC list is deliberately NOT grown here. A reservation this half made
+ * would be a promise the caller cannot keep: .new runs object_init_ex()
+ * between the halves, that can autoload, and host PHP is free to re-enter the
+ * sandbox and push a proxy of its own — which would consume the slack and
+ * leave the outer bind writing one past the end. The binding half grows the
+ * list itself, against the count it is about to consume.
  */
 static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_State *L,
 												luaext_proxy_class *cls)
@@ -1098,16 +1105,6 @@ static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_Sta
 	luaext_proxy_push_metatable(L, cls);
 	lua_setmetatable(L, -2);
 
-	if (sandbox->proxy_gc_count == sandbox->proxy_gc_cap) {
-		size_t cap = sandbox->proxy_gc_cap == 0 ? 8 : sandbox->proxy_gc_cap * 2;
-
-		/* pemalloc never raises: on true OOM it ends the process rather than
-		 * longjmping, so growing here keeps the binding half raise-free. */
-		sandbox->proxy_gc_items = (luaext_proxy_ud **)perealloc(
-			sandbox->proxy_gc_items, cap * sizeof(*sandbox->proxy_gc_items), 1);
-		sandbox->proxy_gc_cap = cap;
-	}
-
 	return slot;
 }
 
@@ -1115,6 +1112,18 @@ static luaext_proxy_ud *luaext_proxy_push_shell(luaext_sandbox *sandbox, lua_Sta
 static void luaext_proxy_bind(luaext_sandbox *sandbox, luaext_proxy_ud *slot,
 							  luaext_proxy_class *cls, zend_object *object)
 {
+	if (sandbox->proxy_gc_count == sandbox->proxy_gc_cap) {
+		size_t cap = sandbox->proxy_gc_cap == 0 ? 8 : sandbox->proxy_gc_cap * 2;
+
+		/* pemalloc never raises: on true OOM it ends the process rather than
+		 * longjmping, so growing here keeps this half raise-free. Grown
+		 * against the count consumed two lines below, so no window between
+		 * the test and the write can widen the gap. */
+		sandbox->proxy_gc_items = (luaext_proxy_ud **)perealloc(
+			sandbox->proxy_gc_items, cap * sizeof(*sandbox->proxy_gc_items), 1);
+		sandbox->proxy_gc_cap = cap;
+	}
+
 	slot->object = object;
 	GC_ADDREF(object);
 	slot->cls = cls;
