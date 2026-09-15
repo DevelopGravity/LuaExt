@@ -16,6 +16,7 @@
 
 #include "luaext_defer.h"
 #include "luaext_error.h"
+#include "luaext_exec.h"
 #include "luaext_phpcall.h"
 #include "luaext_sandbox.h"
 
@@ -1712,7 +1713,7 @@ static bool luaext_proxy_register_with(luaext_sandbox *sandbox, zend_class_entry
 	 * instance methods plants nothing and simply becomes eligible to cross.
 	 */
 	if (zend_hash_num_elements(record->static_methods) > 0 || record->constructor != NULL) {
-		lua_State *L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+		lua_State *L = luaext_exec_state(sandbox);
 		int status;
 
 		/* The running state can be a coroutine with no ambient slack; refuse

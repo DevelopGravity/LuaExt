@@ -42,6 +42,7 @@
 
 #include "luaext_alloc.h"
 #include "luaext_error.h"
+#include "luaext_exec.h"
 #include "luaext_timers.h"
 
 #include <string.h>
@@ -380,7 +381,7 @@ static bool luaext_output_flush(luaext_sandbox *sandbox, bool all)
  */
 static void luaext_output_report_exception(luaext_sandbox *sandbox)
 {
-	lua_State *L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+	lua_State *L = luaext_exec_state(sandbox);
 
 	if (EG(exception) == NULL || L == NULL || sandbox->in_lua <= 0) {
 		return;

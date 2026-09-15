@@ -1641,7 +1641,7 @@ ZEND_METHOD(DevelopGravity_LuaExt_Sandbox, unregister)
 		RETURN_THROWS();
 	}
 
-	L = sandbox->running_L != NULL ? sandbox->running_L : sandbox->L;
+	L = luaext_exec_state(sandbox);
 
 	/* The running state can be a coroutine with no ambient slack; refuse
 	 * like the registrars rather than trust it. */
