@@ -151,48 +151,109 @@ function findConstructorCalls(string $code): array
 
     for ($position = 0; $position < $count; $position++) {
         $token = $tokens[$position];
-        if (!is_array($token) || $token[0] !== T_NEW) {
+        if (!is_array($token)) {
             continue;
         }
 
-        // Collect the class name, which may be qualified.
-        $className = '';
+        if ($token[0] === T_NEW) {
+            [$call] = readNamedCall($tokens, $count, $position + 1);
+            if ($call !== null) {
+                $calls[] = $call;
+            }
+
+            continue;
+        }
+
+        // An attribute is a constructor call in everything but spelling, and
+        // the named arguments in one go stale exactly the same way. A group
+        // may hold several comma-separated attributes, so read until the `]`
+        // that closes the `#[` this token opened.
+        if ($token[0] !== T_ATTRIBUTE) {
+            continue;
+        }
+
         $cursor = $position + 1;
-        while ($cursor < $count && is_array($tokens[$cursor])
-            && in_array($tokens[$cursor][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
-            $className .= $tokens[$cursor][1];
+        $bracket = 1;
+
+        while ($cursor < $count && $bracket > 0) {
+            [$call, $next] = readNamedCall($tokens, $count, $cursor);
+
+            if ($next > $cursor) {
+                if ($call !== null) {
+                    $calls[] = $call;
+                }
+
+                $cursor = $next;
+
+                continue;
+            }
+
+            $current = $tokens[$cursor];
+            if ($current === '[') {
+                $bracket++;
+            } elseif ($current === ']') {
+                $bracket--;
+            }
+
             $cursor++;
         }
-        if ($className === '' || $cursor >= $count || $tokens[$cursor] !== '(') {
-            continue;
-        }
-
-        // Walk the argument list, recording `name:` pairs at the top level only.
-        $depth = 0;
-        $arguments = [];
-        for ($scan = $cursor; $scan < $count; $scan++) {
-            $current = $tokens[$scan];
-            if ($current === '(' || $current === '[') {
-                $depth++;
-                continue;
-            }
-            if ($current === ')' || $current === ']') {
-                $depth--;
-                if ($depth === 0) {
-                    break;
-                }
-                continue;
-            }
-            if ($depth === 1 && is_array($current) && $current[0] === T_STRING
-                && ($tokens[$scan + 1] ?? null) === ':') {
-                $arguments[] = $current[1];
-            }
-        }
-
-        $calls[] = ['class' => $className, 'arguments' => $arguments];
     }
 
     return $calls;
+}
+
+/**
+ * Read one `Name(...)` at $start: the qualified name, then the named arguments
+ * of its top-level argument list.
+ *
+ * Returns the call (null when there is no name, or a name with no argument
+ * list, neither of which can carry a stale argument name) and the position
+ * just past what was consumed, so a caller scanning a run of them can advance.
+ *
+ * @param list<array{int, string, int}|string> $tokens
+ * @return array{array{class: string, arguments: list<string>}|null, int}
+ */
+function readNamedCall(array $tokens, int $count, int $start): array
+{
+    $className = '';
+    $cursor = $start;
+
+    while ($cursor < $count && is_array($tokens[$cursor])
+        && in_array($tokens[$cursor][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+        $className .= $tokens[$cursor][1];
+        $cursor++;
+    }
+
+    if ($className === '' || $cursor >= $count || $tokens[$cursor] !== '(') {
+        return [null, $cursor];
+    }
+
+    // Walk the argument list, recording `name:` pairs at the top level only.
+    $depth = 0;
+    $arguments = [];
+    $scan = $cursor;
+
+    for (; $scan < $count; $scan++) {
+        $current = $tokens[$scan];
+        if ($current === '(' || $current === '[') {
+            $depth++;
+            continue;
+        }
+        if ($current === ')' || $current === ']') {
+            $depth--;
+            if ($depth === 0) {
+                $scan++;
+                break;
+            }
+            continue;
+        }
+        if ($depth === 1 && is_array($current) && $current[0] === T_STRING
+            && ($tokens[$scan + 1] ?? null) === ':') {
+            $arguments[] = $current[1];
+        }
+    }
+
+    return [['class' => $className, 'arguments' => $arguments], $scan];
 }
 
 /** Resolve a name as written in a sample to a declared API class, if it is one. */
