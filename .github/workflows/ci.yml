@@ -104,15 +104,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # arch x sanitizer, with the include: entries filling in per-arch and
-        # per-sanitizer detail on the four resulting combinations.
+        # arch x sanitizer, less the one exclusion below, with the include:
+        # entries filling in per-arch and per-sanitizer detail on the five
+        # resulting combinations.
         #
         # arm64 is not padding. It has a weaker memory model than x86, so the
         # interrupt flag's release/acquire pairing and the watchdog's
         # cross-thread writes can be perfectly correct on x64 and racy here.
         # TSan on arm64 is the only thing in this pipeline that would catch it.
         arch: [x64, arm64]
-        sanitizer: [asan-ubsan, tsan]
+        sanitizer: [asan-ubsan, tsan, asan-no-zend-mm]
+        exclude:
+          # One extra job, not two: the point of this leg is what the allocator
+          # hides, which is architecture-independent. arm64 already runs
+          # asan-ubsan for the memory-model reasons above.
+          - arch: arm64
+            sanitizer: asan-no-zend-mm
         include:
           - arch: x64
             os: ubuntu-latest
@@ -139,6 +146,19 @@ jobs:
             # clang+TSan-built-PHP) run to tests/02-limits/ per the project plan
             # rather than the full suite.
             test_scope: 'tests/02-limits'
+          # Same build as asan-ubsan, run with PHP's request allocator OFF.
+          # ZendMM sub-divides request allocations out of its own mmap'd chunks,
+          # so an emalloc'd block carries no redzone and is never quarantined --
+          # ASan cannot see an overflow or a use-after-free on one. Only with
+          # USE_ZEND_ALLOC=0 does every emalloc become a real malloc that the
+          # sanitizer instruments, which is the whole bug class the proxy layer
+          # lives in. php-src's own ASan CI sets this for the same reason.
+          - sanitizer: asan-no-zend-mm
+            luaext_sanitize: 'address,undefined'
+            php_src_configure_extra: '--enable-address-sanitizer --enable-undefined-sanitizer'
+            extension_cc: 'gcc'
+            test_scope: ''
+            use_zend_alloc: '0'
     env:
       ASAN_OPTIONS: 'exitcode=139'
       UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
@@ -227,10 +247,16 @@ jobs:
           REPORT_EXIT_STATUS: '1'
           NO_INTERACTION: '1'
           LUAEXT_TEST_SCOPE: ${{ matrix.test_scope }}
+          # Explicitly '1' on every other leg, NOT empty: PHP reads this with
+          # atol(), so an empty string would parse as 0 and quietly turn the
+          # request allocator off everywhere.
+          USE_ZEND_ALLOC: ${{ matrix.use_zend_alloc || '1' }}
           # Higher than the plain build matrix: a sanitized interpreter is
           # several times slower, and this leg is scoped to tests/02-limits/,
-          # which is where the deliberately-unbounded scripts live.
-          TEST_TIMEOUT: '60'
+          # which is where the deliberately-unbounded scripts live. Higher
+          # again without ZendMM, where every request allocation becomes a
+          # real instrumented malloc and the whole suite runs.
+          TEST_TIMEOUT: ${{ matrix.use_zend_alloc == '0' && '180' || '60' }}
         run: |
           SCOPE="$LUAEXT_TEST_SCOPE"
           if [ -n "$SCOPE" ] && [ ! -d "$SCOPE" ]; then
