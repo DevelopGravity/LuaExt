@@ -317,6 +317,15 @@ class HostAbortError extends FatalError
 
 /**
  * A Lua error handler failed while handling another error.
+ *
+ * No shipped code path reaches it from a script. The only handler installed
+ * over a call is the traceback handler, and it is written not to fail: a
+ * non-string error value is described rather than converted, so a __tostring
+ * that raises, loops or returns the wrong type degrades to a plain
+ * RuntimeError instead of failing the handler. The class stays because the
+ * status it maps (LUA_ERRERR) is one the interpreter can report and the
+ * hierarchy needs a name for, and because a future handler could be less
+ * careful. Catching it today catches nothing.
  */
 class ErrorHandlerError extends FatalError
 {
