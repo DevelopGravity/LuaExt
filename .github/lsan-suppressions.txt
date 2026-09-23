@@ -1,0 +1,53 @@
+# LeakSanitizer suppressions for luaext's gating sanitizer leg
+# (.github/workflows/ci.yml, job "sanitize-linux" / "asan-no-zend-mm").
+#
+# THE PATH AND NAME ARE NOT OURS TO CHOOSE. run-tests.php's --asan mode looks
+# for exactly __DIR__ . '/.github/lsan-suppressions.txt' and, when it exists,
+# points LSAN_OPTIONS at it with print_suppressions=0. Renaming or moving this
+# file silently disables it -- there is no error, the leg just starts failing
+# on upstream noise again.
+#
+# WHY IT EXISTS. LeakSanitizer is on by default wherever ASan runs on Linux --
+# it is not something that leg opts into -- and --asan runs the suite with
+# USE_ZEND_ALLOC=0. PHP's allocator model is "allocate freely, reclaim the arena
+# wholesale at request end", so with no arena, a request allocation still live
+# when the process exits can read as leaked. --asan also sets
+# USE_TRACKED_ALLOC=1, which frees what is outstanding at request shutdown and
+# so answers most of that on its own; this file is for whatever survives it,
+# which in practice means allocations stranded by a BAIL-OUT before tracking
+# could see them freed.
+#
+# THE STANDING RULE, same as tools/valgrind.supp: an entry here may only ever
+# describe someone else's allocation. Never add a suppression to make a genuine
+# leak in luaext's own code disappear. A finding with ANY src/luaext_*.c frame
+# in its stack is ours and must be fixed, not listed. The Lua arena is malloc'd
+# by default (luaext.use_zend_mm defaults to "0", src/luaext.c), so this leg is
+# the only GATED check that can see a leaked interpreter heap at all -- the
+# debug builds' Zend MM reports cannot, because it is not Zend memory. That is
+# the coverage this file exists to preserve, and every entry added here narrows
+# it.
+#
+# Format reference: https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer#suppressions
+# A `leak:` pattern matches if it appears in ANY frame of the allocation stack,
+# so naming one shared parent frame covers a direct allocation and its indirect
+# children without naming generic allocators that are used everywhere.
+
+# php-src leaks the attribute structures it built for a class declaration when
+# compilation of that class then fails: the fatal error longjmps out of the
+# compiler, and the emalloc'd zend_attribute (plus the zend_string and HashTable
+# hanging off it) are never freed, because ZendMM normally reclaims them with
+# the rest of the request arena.
+#
+# Hit by tests/00-build/lua-method-attribute-target.phpt, which deliberately
+# provokes "Attribute ... cannot target class" to prove the attribute's declared
+# target is enforced. The test's own assertion passes; only the appended leak
+# report failed it. Observed as 352 bytes in 6 allocations, every frame in
+# php-src's compiler and none in luaext:
+#
+#   zend_add_attribute -> zend_compile_attributes -> zend_compile_class_decl
+#     -> zend_compile -> compile_file
+#
+# Expected and safe: the process is on its way out with a fatal error, the
+# memory is bounded by the one class declaration that failed to compile, and
+# nothing in a real request can reach this path repeatedly.
+leak:zend_compile_attributes

@@ -146,13 +146,24 @@ jobs:
             # clang+TSan-built-PHP) run to tests/02-limits/ per the project plan
             # rather than the full suite.
             test_scope: 'tests/02-limits'
-          # Same build as asan-ubsan, run with PHP's request allocator OFF.
-          # ZendMM sub-divides request allocations out of its own mmap'd chunks,
-          # so an emalloc'd block carries no redzone and is never quarantined --
-          # ASan cannot see an overflow or a use-after-free on one. Only with
-          # USE_ZEND_ALLOC=0 does every emalloc become a real malloc that the
-          # sanitizer instruments, which is the whole bug class the proxy layer
-          # lives in. php-src's own ASan CI sets this for the same reason.
+          # Same build as asan-ubsan, run through run-tests.php's --asan mode,
+          # which turns PHP's request allocator OFF. ZendMM sub-divides request
+          # allocations out of its own mmap'd chunks, so an emalloc'd block
+          # carries no redzone and is never quarantined -- ASan cannot see an
+          # overflow or a use-after-free on one. Only with USE_ZEND_ALLOC=0
+          # does every emalloc become a real malloc the sanitizer instruments,
+          # which is the whole bug class the proxy layer lives in. php-src's
+          # own ASan CI runs this way for the same reason.
+          #
+          # Memory ERRORS are what this leg gates. Leak reports ride along
+          # regardless -- LeakSanitizer is on by default wherever ASan runs on
+          # Linux -- and with no arena, a php-src allocation still live on a
+          # bailout path can read as leaked. --asan handles that end for us:
+          # USE_TRACKED_ALLOC=1 frees what is outstanding at request shutdown,
+          # and .github/lsan-suppressions.txt names anything that survives it.
+          # Detection itself stays ON, because the Lua arena is malloc'd by
+          # default (luaext.use_zend_mm), which makes this the only gated check
+          # that can see a leaked interpreter heap at all.
           - sanitizer: asan-no-zend-mm
             luaext_sanitize: 'address,undefined'
             php_src_configure_extra: '--enable-address-sanitizer --enable-undefined-sanitizer'
@@ -247,10 +258,13 @@ jobs:
           REPORT_EXIT_STATUS: '1'
           NO_INTERACTION: '1'
           LUAEXT_TEST_SCOPE: ${{ matrix.test_scope }}
-          # Explicitly '1' on every other leg, NOT empty: PHP reads this with
-          # atol(), so an empty string would parse as 0 and quietly turn the
-          # request allocator off everywhere.
-          USE_ZEND_ALLOC: ${{ matrix.use_zend_alloc || '1' }}
+          # run-tests.php's own --asan mode, passed below. It sets
+          # USE_ZEND_ALLOC=0, USE_TRACKED_ALLOC=1 and the LSAN_OPTIONS pointing
+          # at .github/lsan-suppressions.txt, all resolved from run-tests' own
+          # __DIR__ -- so none of it has to be hand-rolled here, and none of it
+          # depends on which directory a given test happens to run from.
+          # Empty on every other leg, where the defaults apply.
+          LUAEXT_RUNTESTS_FLAGS: ${{ matrix.use_zend_alloc == '0' && '--asan' || '' }}
           # Higher than the plain build matrix: a sanitized interpreter is
           # several times slower, and this leg is scoped to tests/02-limits/,
           # which is where the deliberately-unbounded scripts live. Higher
@@ -263,7 +277,7 @@ jobs:
             echo "::notice::Test scope '$SCOPE' does not exist yet; running the full suite instead."
             SCOPE=""
           fi
-          make test TESTS="$SCOPE"
+          make test TESTS="$LUAEXT_RUNTESTS_FLAGS $SCOPE"
 
       - name: Upload failing test artifacts
         if: failure()
